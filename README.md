@@ -35,7 +35,7 @@ Windows CI (`.github/workflows/ci.yml`) is the gate: fmt, clippy `-D warnings`, 
 A normal build cannot apply anything: the restore-point gate is closed and the license is Free until Phases 3 and 7 exist. To exercise the engine yourself on a test machine:
 
 ```sh
-npx tauri dev -- --features dev-stubs   # from an elevated terminal
+npx tauri dev --features dev-stubs   # from an elevated terminal (not yet run by anyone)
 ```
 
 `dev-stubs` is never enabled in CI or release builds.

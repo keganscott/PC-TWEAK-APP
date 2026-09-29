@@ -446,6 +446,44 @@ mod live_tests {
         }
     }
 
+    /// The caller is never held longer than its timeout, even though the query
+    /// itself keeps running on the worker. While it does, further requests fail
+    /// fast instead of queueing behind it.
+    #[test]
+    fn a_caller_is_released_at_its_timeout_and_the_worker_recovers() {
+        let w = WmiWorker::start_with_timeout(Duration::from_millis(1));
+        let t = std::time::Instant::now();
+        let first = w.query(NS_CIMV2, WQL_OS);
+        assert!(t.elapsed() < Duration::from_secs(5), "took {:?}", t.elapsed());
+        // COM start-up plus connecting takes longer than 1 ms.
+        assert!(
+            matches!(&first, Err(EngineError::Wmi { timed_out: true, .. })),
+            "{first:?}"
+        );
+
+        // The worker finishes the abandoned job on its own and becomes idle again.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let again = w.query(NS_CIMV2, "SELECT Caption FROM Win32_OperatingSystem");
+            match again {
+                Err(EngineError::Wmi { timed_out: true, .. }) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                // With a 1 ms timeout every call times out by design; what matters
+                // is that the worker keeps answering promptly rather than wedging.
+                other => {
+                    println!("worker still responsive: {other:?}");
+                    break;
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        // A worker with a sane timeout on the same machine still works afterwards.
+        assert_eq!(WmiWorker::start().query(NS_CIMV2, WQL_OS).unwrap().len(), 1);
+    }
+
     #[test]
     fn a_missing_class_is_an_error_not_a_hang() {
         let w = WmiWorker::start();

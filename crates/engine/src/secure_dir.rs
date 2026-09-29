@@ -317,6 +317,59 @@ mod imp {
             assert!(matches!(err, EngineError::InsecureStorage { .. }), "{err:?}");
         }
 
+        /// The squatting attack the owner check exists for: a standard user
+        /// owns the directory (they pre-created it) so files in it are theirs.
+        /// CI creates a real standard local user and hands the directory to
+        /// them, then expects the engine to refuse it.
+        #[test]
+        fn a_directory_owned_by_a_standard_user_is_refused() {
+            let user = format!("ptsq{}", std::process::id() % 100_000);
+            let password = "Pt!Sq-7Tmp-9x2Qz";
+            let created = std::process::Command::new("net")
+                .args(["user", &user, password, "/add"])
+                .output()
+                .expect("net user");
+            if !created.status.success() {
+                println!(
+                    "NOT VERIFIED: could not create a local user here: {}",
+                    String::from_utf8_lossy(&created.stdout)
+                );
+                return;
+            }
+            struct DeleteUser(String);
+            impl Drop for DeleteUser {
+                fn drop(&mut self) {
+                    let _ = std::process::Command::new("net")
+                        .args(["user", &self.0, "/delete"])
+                        .output();
+                }
+            }
+            let _cleanup_user = DeleteUser(user.clone());
+
+            let path = scratch();
+            let _c = Cleanup(path.clone());
+            TrustedDir::ensure_at(&path).expect("created by us, so trusted");
+
+            let out = std::process::Command::new("icacls")
+                .arg(&path)
+                .args(["/setowner", &user])
+                .output()
+                .expect("icacls");
+            if !out.status.success() {
+                println!(
+                    "NOT VERIFIED: could not hand the directory to a standard user: {}",
+                    String::from_utf8_lossy(&out.stdout)
+                );
+                return;
+            }
+            let err = TrustedDir::ensure_at(&path).unwrap_err();
+            println!("refused: {err}");
+            assert!(
+                matches!(&err, EngineError::InsecureStorage { detail, .. } if detail.contains("owned by")),
+                "{err:?}"
+            );
+        }
+
         #[test]
         fn a_reparse_point_is_refused() {
             let base = scratch();

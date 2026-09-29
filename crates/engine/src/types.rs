@@ -349,6 +349,11 @@ pub trait Tweak: Send + Sync {
 
     /// Every registry key and value this tweak may change. `Transaction`
     /// refuses writes, deletes and journal replays outside this list.
+    ///
+    /// Revert replays old journal records against *this* list, so when a
+    /// release changes what a tweak writes, keep the old targets listed for as
+    /// long as any user may still have the old version applied. Dropping one
+    /// makes that user's revert fail with `ContextViolation`.
     fn touches(&self) -> Vec<RegTarget>;
 
     /// Cheap, pure, no I/O. Called on every refresh.

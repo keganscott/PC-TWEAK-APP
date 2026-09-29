@@ -62,6 +62,20 @@ pub enum EngineError {
     /// outside its declared registry allowlist.
     ContextViolation { tweak_id: String, detail: String },
 
+    /// An external command (PowerShell) failed, timed out or could not start.
+    Command {
+        what: String,
+        exit_code: Option<i32>,
+        detail: String,
+    },
+
+    /// A WMI query failed or timed out.
+    Wmi {
+        namespace: String,
+        detail: String,
+        timed_out: bool,
+    },
+
     /// An internal invariant failed (poisoned lock, panicked worker).
     Internal { detail: String },
 }
@@ -100,6 +114,15 @@ impl fmt::Display for EngineError {
             Self::ContextViolation { tweak_id, detail } => {
                 write!(f, "{tweak_id} violated its execution context: {detail}")
             }
+            Self::Command {
+                what,
+                exit_code,
+                detail,
+            } => match exit_code {
+                Some(c) => write!(f, "{what} failed (exit {c}): {detail}"),
+                None => write!(f, "{what} failed: {detail}"),
+            },
+            Self::Wmi { namespace, detail, .. } => write!(f, "WMI {namespace}: {detail}"),
             Self::Internal { detail } => write!(f, "internal error: {detail}"),
         }
     }

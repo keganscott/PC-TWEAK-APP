@@ -9,17 +9,30 @@ pub mod engine;
 pub mod env;
 pub mod error;
 pub mod fsutil;
+pub mod hardware;
 pub mod journal;
+pub mod probe;
 pub mod profile;
 pub mod reg_export;
 pub mod registry;
+pub mod restore;
 pub mod secure_dir;
+pub mod security;
+pub mod sysprobe;
+pub mod timeutil;
 pub mod transaction;
 pub mod tweaks;
 pub mod types;
+pub mod wmi;
 
 #[cfg(windows)]
 pub mod identity;
+#[cfg(windows)]
+pub mod osfacts;
+#[cfg(windows)]
+pub mod restore_win;
+#[cfg(windows)]
+pub mod shell;
 
 #[cfg(test)]
 mod contract;
@@ -31,3 +44,4 @@ mod tests;
 mod testutil;
 
 pub use engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, TweakView};
+pub use sysprobe::SystemAudit;

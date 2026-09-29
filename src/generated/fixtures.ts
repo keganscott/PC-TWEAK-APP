@@ -4,7 +4,9 @@ import type { ContextInfo } from "./ContextInfo";
 import type { EngineError } from "./EngineError";
 import type { JournalView } from "./JournalView";
 import type { Progress } from "./Progress";
+import type { RestoreOutcome } from "./RestoreOutcome";
 import type { RevertResult } from "./RevertResult";
+import type { SystemAudit } from "./SystemAudit";
 import type { TweakView } from "./TweakView";
 
 export const tweakViews = [
@@ -169,6 +171,15 @@ export const journalView = {
       "unixMs": 1700000000500,
       "tweakId": "input.mouseaccel",
       "action": "apply"
+    },
+    {
+      "record": "restore_point",
+      "seq": 5,
+      "unixMs": 1700000001000,
+      "sequenceNumber": 42,
+      "description": "PeakTweaks: before changes",
+      "method": "power_shell",
+      "protectionEnabledByUs": true
     }
   ],
   "warnings": [
@@ -252,10 +263,216 @@ export const engineErrors = [
     "detail": "d"
   },
   {
+    "kind": "command",
+    "what": "Checkpoint-Computer",
+    "exitCode": 1,
+    "detail": "d"
+  },
+  {
+    "kind": "wmi",
+    "namespace": "ROOT\\CIMV2",
+    "detail": "d",
+    "timedOut": true
+  },
+  {
     "kind": "internal",
     "detail": "d"
   }
 ] satisfies EngineError[];
+
+export const systemAudit = {
+  "env": {
+    "elevated": true,
+    "targetGame": "fortnite",
+    "restoreGateOpen": true,
+    "hardware": {
+      "os": {
+        "state": "yes",
+        "value": {
+          "build": 26100,
+          "caption": "Microsoft Windows 11 Pro",
+          "isServer": false
+        }
+      },
+      "cpu": {
+        "state": "yes",
+        "value": {
+          "name": "Example CPU",
+          "vendor": "ExampleVendor",
+          "cores": 8,
+          "logicalProcessors": 16
+        }
+      },
+      "memory": {
+        "state": "yes",
+        "value": {
+          "installedBytes": 17179869184,
+          "sticks": [
+            {
+              "capacityBytes": 8589934592,
+              "ratedMhz": 3200,
+              "configuredMhz": 2400,
+              "bankLabel": "BANK 0",
+              "deviceLocator": "DIMM_A1",
+              "kind": "DDR4"
+            },
+            {
+              "capacityBytes": 8589934592,
+              "ratedMhz": 3200,
+              "configuredMhz": 2400,
+              "bankLabel": "BANK 2",
+              "deviceLocator": "DIMM_B1",
+              "kind": "DDR4"
+            }
+          ],
+          "channels": {
+            "state": "yes",
+            "value": "multi"
+          }
+        }
+      },
+      "gpus": {
+        "state": "yes",
+        "value": [
+          {
+            "name": "Example GPU",
+            "vendorId": 4318,
+            "dedicatedVramBytes": 12884901888,
+            "sharedMemoryBytes": 8589934592,
+            "isSoftware": false
+          }
+        ]
+      },
+      "bootDisk": {
+        "state": "yes",
+        "value": {
+          "media": "ssd",
+          "name": "Example NVMe"
+        }
+      },
+      "display": {
+        "state": "yes",
+        "value": {
+          "width": 1920,
+          "height": 1080,
+          "currentHz": 60,
+          "maxHzAtCurrentResolution": 144
+        }
+      },
+      "isLaptop": {
+        "state": "no",
+        "reason": "not reported as a mobile system"
+      },
+      "rigClass": {
+        "state": "yes",
+        "value": "high"
+      }
+    },
+    "security": {
+      "secureBoot": {
+        "state": "no",
+        "reason": "Secure Boot is turned off in firmware"
+      },
+      "memoryIntegrity": {
+        "state": "yes",
+        "value": null
+      },
+      "tpm": {
+        "state": "unknown",
+        "reason": "cannot query the TPM: WMI ROOT\\CIMV2\\Security\\MicrosoftTpm: query failed: HRESULT Call failed with: 0x80041003"
+      },
+      "iommu": {
+        "state": "unknown",
+        "reason": "Windows exposes no reliable way to tell from a normal program whether the IOMMU (VT-d / AMD-Vi) is enabled; check the firmware setup screen (Win32_DeviceGuard.AvailableSecurityProperties: [1, 2, 3])"
+      }
+    },
+    "restore": {
+      "supported": {
+        "state": "yes",
+        "value": null
+      },
+      "disabledByPolicy": false,
+      "protection": {
+        "state": "unknown",
+        "reason": "fake"
+      },
+      "points": {
+        "state": "yes",
+        "value": [
+          {
+            "sequenceNumber": 41,
+            "description": "Windows Update",
+            "createdUnixMs": 1799989200000
+          }
+        ]
+      },
+      "creationFrequencyMinutes": null,
+      "newestPointAgeHours": 3,
+      "gateOpen": true
+    }
+  },
+  "antiCheat": {
+    "secureBoot": {
+      "state": "no",
+      "reason": "Secure Boot is turned off in firmware"
+    },
+    "tpm": {
+      "state": "unknown",
+      "reason": "cannot query the TPM: WMI ROOT\\CIMV2\\Security\\MicrosoftTpm: query failed: HRESULT Call failed with: 0x80041003"
+    },
+    "iommu": {
+      "state": "unknown",
+      "reason": "Windows exposes no reliable way to tell from a normal program whether the IOMMU (VT-d / AMD-Vi) is enabled; check the firmware setup screen (Win32_DeviceGuard.AvailableSecurityProperties: [1, 2, 3])"
+    },
+    "perGame": [
+      {
+        "gameId": "fortnite",
+        "requires": [
+          "secure_boot",
+          "tpm",
+          "iommu"
+        ],
+        "scope": "tournaments",
+        "source": "Epic's announcement of tournament requirements from 2026-02-19, as recorded in the dev plan (section 4.3). Not independently verified.",
+        "status": {
+          "status": "not_ready",
+          "missing": [
+            "secure_boot"
+          ],
+          "unresolved": [
+            "tpm",
+            "iommu"
+          ]
+        }
+      },
+      {
+        "gameId": "minecraft",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "roblox",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      }
+    ]
+  }
+} satisfies SystemAudit;
+
+export const restoreOutcome = {
+  "sequenceNumber": 42,
+  "description": "PeakTweaks: before changes",
+  "method": "api",
+  "protectionEnabledByUs": false
+} satisfies RestoreOutcome;
 
 export const progressEvent = {
   "stage": "apply",

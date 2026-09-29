@@ -10,6 +10,7 @@ const COMMANDS_RS: &str = include_str!("commands.rs");
 const MAIN_RS: &str = include_str!("main.rs");
 const BUILD_RS: &str = include_str!("../build.rs");
 const CAPABILITY: &str = include_str!("../capabilities/default.json");
+const IPC_TS: &str = include_str!("../../src/ipc.ts");
 
 /// The `(name, parameter text)` of every `#[tauri::command]` function.
 fn commands() -> Vec<(String, String)> {
@@ -112,4 +113,38 @@ fn the_capability_grants_no_plugin_permissions() {
         assert!(!CAPABILITY.contains(banned), "capability grants {banned}");
     }
     assert!(CAPABILITY.contains("\"core:default\""));
+}
+
+#[test]
+fn every_command_has_a_typed_client_call() {
+    for (name, _) in commands() {
+        assert!(
+            IPC_TS.contains(&format!("\"{name}\"")),
+            "{name} has no wrapper in src/ipc.ts"
+        );
+    }
+}
+
+#[test]
+fn the_client_never_sends_environment_license_or_gate_state() {
+    // Code only: the header comment explains this rule in those very words.
+    let code: String = IPC_TS
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            !(t.starts_with("//") || t.starts_with("/*") || t.starts_with('*'))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for banned in [
+        "systemEnv",
+        "SystemEnv",
+        "license",
+        "License",
+        "tier:",
+        "gateOpen",
+        "restoreGate",
+    ] {
+        assert!(!code.contains(banned), "src/ipc.ts mentions {banned}");
+    }
 }

@@ -63,14 +63,23 @@ pub struct Progress {
     pub message: String,
 }
 
+enum Slot {
+    Catalogue(usize),
+    Internal(usize),
+}
+
 pub struct Engine {
     resolver: ContextResolver,
     journal: Journal,
     tweaks: Vec<Box<dyn Tweak>>,
+    /// The engine's own tweaks (see `tweaks::internal`). Not listed, not
+    /// applicable over IPC, but revertable.
+    internal: Vec<Box<dyn Tweak>>,
     probe: Box<dyn EnvProbe>,
     license: License,
     env: SystemEnv,
     target_game: Option<String>,
+    restore: Option<std::sync::Arc<crate::restore::RestoreService>>,
 }
 
 impl Engine {
@@ -81,17 +90,35 @@ impl Engine {
         probe: Box<dyn EnvProbe>,
         license: License,
     ) -> Self {
-        let mut engine = Self {
+        // No probing here: constructing the engine happens on Tauri's main
+        // thread, and the probes take seconds. The first command that needs an
+        // environment (`rescan`, `audit`, `apply`) probes, on a worker thread.
+        let env = SystemEnv {
+            elevated: resolver.elevated(),
+            ..SystemEnv::default()
+        };
+        Self {
             resolver,
             journal,
             tweaks,
+            internal: crate::tweaks::internal(),
             probe,
             license,
-            env: SystemEnv::default(),
+            env,
             target_game: None,
-        };
-        engine.rescan();
-        engine
+            restore: None,
+        }
+    }
+
+    /// Attach the restore-point service (the real one on Windows). Without it,
+    /// `create_restore_point` reports that this build cannot make one.
+    pub fn with_restore_service(mut self, svc: std::sync::Arc<crate::restore::RestoreService>) -> Self {
+        self.restore = Some(svc);
+        self
+    }
+
+    pub fn restore_service(&self) -> Option<std::sync::Arc<crate::restore::RestoreService>> {
+        self.restore.clone()
     }
 
     pub fn context_info(&self) -> ContextInfo {
@@ -110,6 +137,19 @@ impl Engine {
         let mut env = self.probe.probe(self.resolver.elevated());
         env.target_game = self.target_game.clone();
         self.env = env;
+    }
+
+    /// Forget every cached probe result, then probe again. This is what the
+    /// user's "rescan" does; `rescan` alone may reuse recent results.
+    pub fn rescan_fresh(&mut self) {
+        self.probe.invalidate_all();
+        self.rescan();
+    }
+
+    /// Everything we know about this machine, freshly probed.
+    pub fn audit(&mut self) -> crate::sysprobe::SystemAudit {
+        self.rescan_fresh();
+        crate::sysprobe::SystemAudit::from_env(self.env.clone())
     }
 
     /// Pick (or clear) the target game. Only ids from `KNOWN_GAMES` are accepted.
@@ -139,6 +179,19 @@ impl Engine {
             .ok_or_else(|| EngineError::UnknownTweak {
                 tweak_id: id.to_string(),
             })
+    }
+
+    /// Where a tweak id lives: the catalogue or the engine's own list.
+    fn slot_of(&self, id: &str) -> Result<Slot> {
+        if let Some(i) = self.tweaks.iter().position(|t| t.id() == id) {
+            return Ok(Slot::Catalogue(i));
+        }
+        if let Some(i) = self.internal.iter().position(|t| t.id() == id) {
+            return Ok(Slot::Internal(i));
+        }
+        Err(EngineError::UnknownTweak {
+            tweak_id: id.to_string(),
+        })
     }
 
     pub fn list(&self) -> Result<Vec<TweakView>> {
@@ -215,7 +268,7 @@ impl Engine {
         let tweak = tweaks[idx].as_ref();
 
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
-        match tweak.apply(&mut tx) {
+        let result = match tweak.apply(&mut tx) {
             Ok(()) => tx.commit(),
             Err(e) => {
                 // Undo what this transaction already wrote. The original error
@@ -224,26 +277,34 @@ impl Engine {
                 let _ = tx.rollback();
                 Err(e)
             }
-        }
+        };
+        self.probe.invalidate();
+        result
     }
 
     /// Revert is never blocked by tier, predicates or the restore gate:
     /// getting back to how things were must always be possible.
     pub fn revert(&mut self, id: &str) -> Result<Vec<JournalEntry>> {
-        let idx = self.index_of(id)?;
+        let slot = self.slot_of(id)?;
         let Engine {
             resolver,
             journal,
             tweaks,
+            internal,
             ..
         } = self;
-        let tweak = tweaks[idx].as_ref();
+        let tweak = match slot {
+            Slot::Catalogue(i) => tweaks[i].as_ref(),
+            Slot::Internal(i) => internal[i].as_ref(),
+        };
 
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Revert)?;
         // A failed revert leaves the transaction uncommitted on purpose: the
         // applies stay outstanding and a retry finishes the job.
         tweak.revert(&mut tx)?;
-        tx.commit()
+        let result = tx.commit();
+        self.probe.invalidate();
+        result
     }
 
     /// Revert everything with an outstanding apply, most recently applied
@@ -276,6 +337,54 @@ impl Engine {
         (&self.resolver, &mut self.journal, &self.tweaks)
     }
 
+    /// Lift Windows' 24-hour restore-point limit. The one change allowed before
+    /// the restore gate opens: it is what makes the first restore point
+    /// possible. Journalled and revertable like any other change.
+    pub fn ensure_restore_frequency(&mut self) -> Result<()> {
+        let Slot::Internal(idx) = self.slot_of(crate::tweaks::system_restore::ID)? else {
+            return Err(EngineError::Internal {
+                detail: "the restore-frequency bootstrap tweak is not an internal tweak".into(),
+            });
+        };
+        let Engine {
+            resolver,
+            journal,
+            internal,
+            ..
+        } = self;
+        let tweak = internal[idx].as_ref();
+        let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
+        match tweak.apply(&mut tx) {
+            Ok(()) => tx.commit().map(|_| ()),
+            Err(e) => {
+                let _ = tx.rollback();
+                Err(e)
+            }
+        }
+    }
+
+    /// Journal a restore point that was created and verified, and make the next
+    /// gate check look at Windows again.
+    pub fn record_restore_point(
+        &mut self,
+        sequence_number: u32,
+        description: &str,
+        method: crate::journal::RestoreMethod,
+        protection_enabled_by_us: bool,
+    ) -> Result<()> {
+        let seq = self.journal.take_seq();
+        self.journal.append_restore_point(crate::journal::RestorePointRecord {
+            seq,
+            unix_ms: crate::journal::now_ms(),
+            sequence_number,
+            description: description.to_owned(),
+            method,
+            protection_enabled_by_us,
+        })?;
+        self.probe.invalidate();
+        Ok(())
+    }
+
     pub fn journal_view(&self) -> JournalView {
         JournalView {
             records: self.journal.records().to_vec(),
@@ -286,10 +395,40 @@ impl Engine {
 
 #[cfg(windows)]
 impl Engine {
-    /// Start on a real Windows machine: check elevation, create or verify the
-    /// protected ProgramData directory, resolve the interactive user, open the
-    /// journal. Any failure here means the app does not start mutating.
-    pub fn start_windows(tweaks: Vec<Box<dyn Tweak>>, probe: Box<dyn EnvProbe>, license: License) -> Result<Self> {
+    /// Start on a real Windows machine with the real probes and restore
+    /// service: check elevation, create or verify the protected ProgramData
+    /// directory, resolve the interactive user, open the journal. Any failure
+    /// here means the app does not start mutating.
+    pub fn start_windows(tweaks: Vec<Box<dyn Tweak>>, license: License) -> Result<Self> {
+        use std::sync::Arc;
+
+        use super::hardware::OsFacts;
+        use super::registry::windows::WinRegistry;
+        use super::registry::RegistryBackend;
+        use super::restore::RestoreService;
+        use super::restore_win::WindowsRestoreOps;
+        use super::sysprobe::SystemProbe;
+        use super::wmi::{WmiSource, WmiWorker};
+
+        let wmi: Arc<dyn WmiSource> = Arc::new(WmiWorker::start());
+        let reg: Arc<dyn RegistryBackend> = Arc::new(WinRegistry::new());
+        let facts: Arc<dyn OsFacts> = Arc::new(super::osfacts::WindowsFacts);
+        let restore = Arc::new(RestoreService::new(
+            Arc::new(WindowsRestoreOps::new(wmi.clone())),
+            reg.clone(),
+            wmi.clone(),
+        ));
+        let probe = SystemProbe::new(wmi, reg, facts, restore.clone());
+        Ok(Self::start_windows_with_probe(tweaks, Box::new(probe), license)?.with_restore_service(restore))
+    }
+
+    /// Like `start_windows` but with a caller-supplied probe. Used by the
+    /// `dev-stubs` build to open the gate by hand; never in a release.
+    pub fn start_windows_with_probe(
+        tweaks: Vec<Box<dyn Tweak>>,
+        probe: Box<dyn EnvProbe>,
+        license: License,
+    ) -> Result<Self> {
         let elevated = super::identity::is_elevated();
         let dir = super::secure_dir::TrustedDir::ensure_program_data()?;
         let resolver = ContextResolver::detect(elevated)?;

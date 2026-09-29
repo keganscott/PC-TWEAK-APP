@@ -6,23 +6,25 @@ mod commands;
 
 use std::sync::{Arc, Mutex};
 
-use peaktweaks_engine::env::{License, StubProbe};
+use peaktweaks_engine::env::License;
 use peaktweaks_engine::tweaks;
 use peaktweaks_engine::Engine;
 
-/// Probe and license for this build. Until Phase 3 (real probes and restore
-/// points) and Phase 7 (license tokens) exist, production builds are a closed
-/// restore gate and the Free tier: nothing can be applied. The `dev-stubs`
-/// feature opens both so the engine can be exercised by hand.
+/// Build the engine. A normal build uses the real probes and the real restore
+/// service, and the Free license until Phase 7 (licensing) exists, so nothing
+/// in the catalogue can be applied yet. The `dev-stubs` feature swaps in an open
+/// restore gate and an Ultimate license so the engine can be driven by hand.
 #[cfg(not(feature = "dev-stubs"))]
-fn probe_and_license() -> (StubProbe, License) {
-    (StubProbe::closed(), License::free())
+fn start_engine() -> peaktweaks_engine::error::Result<Engine> {
+    Engine::start_windows(tweaks::catalogue(), License::free())
 }
 
 #[cfg(feature = "dev-stubs")]
-fn probe_and_license() -> (StubProbe, License) {
-    (
-        StubProbe::open_for_dev(),
+fn start_engine() -> peaktweaks_engine::error::Result<Engine> {
+    use peaktweaks_engine::env::StubProbe;
+    Engine::start_windows_with_probe(
+        tweaks::catalogue(),
+        Box::new(StubProbe::open_for_dev()),
         License::dev(peaktweaks_engine::types::Tier::Ultimate),
     )
 }
@@ -45,9 +47,7 @@ fn main() {
     prepare_webview2_data_dir();
     tauri::Builder::default()
         .setup(|app| {
-            let (probe, license) = probe_and_license();
-            let engine = Engine::start_windows(tweaks::catalogue(), Box::new(probe), license)
-                .map_err(|e| format!("engine failed to start: {e}"))?;
+            let engine = start_engine().map_err(|e| format!("engine failed to start: {e}"))?;
             tauri::Manager::manage(app, Arc::new(Mutex::new(engine)) as commands::SharedEngine);
             Ok(())
         })
@@ -57,6 +57,8 @@ fn main() {
             commands::list_games,
             commands::select_target_game,
             commands::rescan,
+            commands::audit_system,
+            commands::create_restore_point,
             commands::apply_tweak,
             commands::revert_tweak,
             commands::revert_all,

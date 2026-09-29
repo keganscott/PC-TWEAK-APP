@@ -437,16 +437,19 @@ fn unknown_ids_are_rejected() {
 
 #[test]
 fn engine_env_comes_from_the_probe_only() {
-    let h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
-    assert!(h.engine.env().system_protection_enabled, "open dev probe");
-    let closed = build_engine(
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    assert!(!h.engine.env().restore_gate_open, "nothing is probed at construction");
+    h.engine.rescan();
+    assert!(h.engine.env().restore_gate_open, "open dev probe");
+    let mut closed = build_engine(
         &h.fake,
         h.dir.path(),
         one(TestTweak::new("t", KEY, &[("A", 1)])),
         false,
         Tier::Free,
     );
-    assert!(!closed.env().system_protection_enabled);
+    closed.rescan();
+    assert!(!closed.env().restore_gate_open);
     let _ = StubProbe::closed();
 }
 

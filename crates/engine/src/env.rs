@@ -16,6 +16,16 @@ pub trait EnvProbe: Send + Sync {
     /// True only while a restore point has been verified. Re-checked by
     /// `Engine::apply` immediately before it writes.
     fn restore_gate_open(&self) -> bool;
+
+    /// Forget anything cached. Called after a change that could alter the
+    /// answers (a restore point was created, a tweak was applied or reverted).
+    fn invalidate(&self) {}
+
+    /// Forget everything, including slow-changing hardware facts. Used by an
+    /// explicit rescan.
+    fn invalidate_all(&self) {
+        self.invalidate();
+    }
 }
 
 pub struct StubProbe {
@@ -39,7 +49,7 @@ impl EnvProbe for StubProbe {
     fn probe(&self, elevated: bool) -> SystemEnv {
         SystemEnv {
             elevated,
-            system_protection_enabled: self.gate_open,
+            restore_gate_open: self.gate_open,
             ..SystemEnv::default()
         }
     }

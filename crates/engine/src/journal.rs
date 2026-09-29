@@ -111,12 +111,40 @@ pub struct CommitRecord {
     pub action: CommitAction,
 }
 
+/// How a restore point was created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreMethod {
+    /// `SRSetRestorePointW` from srclient.dll.
+    Api,
+    /// `Checkpoint-Computer` through PowerShell.
+    PowerShell,
+}
+
+/// A restore point PeakTweaks created and verified, for the Backups tab and for
+/// support: which point to roll back to, and how it was made.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePointRecord {
+    pub seq: u64,
+    pub unix_ms: u64,
+    /// Windows' own sequence number for the point (`Get-ComputerRestorePoint`).
+    pub sequence_number: u32,
+    pub description: String,
+    pub method: RestoreMethod,
+    /// True when we turned System Protection on to do it.
+    pub protection_enabled_by_us: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "record", rename_all = "snake_case")]
 pub enum Record {
     Write(JournalEntry),
     Commit(CommitRecord),
+    RestorePoint(RestorePointRecord),
 }
 
 impl Record {
@@ -124,6 +152,7 @@ impl Record {
         match self {
             Self::Write(e) => e.seq,
             Self::Commit(c) => c.seq,
+            Self::RestorePoint(r) => r.seq,
         }
     }
 }
@@ -246,6 +275,7 @@ impl TweakIndex {
                 }
                 CommitAction::Rollback => self.outstanding.retain(|e| e.tx_id != c.tx_id),
             },
+            Record::RestorePoint(_) => {}
         }
     }
 }
@@ -300,7 +330,9 @@ impl Journal {
         let next_seq = parsed.records.iter().map(Record::seq).max().map_or(1, |m| m + 1);
         let mut index: HashMap<String, TweakIndex> = HashMap::new();
         for rec in &parsed.records {
-            index.entry(record_tweak(rec).to_owned()).or_default().observe(rec);
+            if let Some(id) = record_tweak(rec) {
+                index.entry(id.to_owned()).or_default().observe(rec);
+            }
         }
 
         Ok(Self {
@@ -385,6 +417,10 @@ impl Journal {
         self.append(Record::Commit(commit))
     }
 
+    pub fn append_restore_point(&mut self, rec: RestorePointRecord) -> Result<()> {
+        self.append(Record::RestorePoint(rec))
+    }
+
     /// Append one record on a fresh line and flush it to disk before returning.
     /// The in-memory state only changes once the record is durable.
     fn append(&mut self, rec: Record) -> Result<()> {
@@ -427,19 +463,20 @@ impl Journal {
             fsutil::sync_dir(&self.root)?;
         }
 
-        self.index
-            .entry(record_tweak(&rec).to_owned())
-            .or_default()
-            .observe(&rec);
+        if let Some(id) = record_tweak(&rec) {
+            self.index.entry(id.to_owned()).or_default().observe(&rec);
+        }
         self.records.push(rec);
         Ok(())
     }
 }
 
-fn record_tweak(rec: &Record) -> &str {
+/// The tweak a record belongs to, if any. Restore-point records belong to none.
+fn record_tweak(rec: &Record) -> Option<&str> {
     match rec {
-        Record::Write(e) => &e.tweak_id,
-        Record::Commit(c) => &c.tweak_id,
+        Record::Write(e) => Some(&e.tweak_id),
+        Record::Commit(c) => Some(&c.tweak_id),
+        Record::RestorePoint(_) => None,
     }
 }
 

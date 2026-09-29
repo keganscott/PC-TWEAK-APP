@@ -15,11 +15,12 @@ use tauri::{AppHandle, Emitter, State};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
 use peaktweaks_engine::journal::JournalEntry;
-use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, TweakView};
+use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
+use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, SystemAudit, TweakView};
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
 
-fn progress(app: &AppHandle, stage: &'static str, tweak_id: Option<&str>, message: impl Into<String>) {
+fn progress(app: &AppHandle, stage: &str, tweak_id: Option<&str>, message: impl Into<String>) {
     // Progress is advisory; a failed emit must never fail the operation.
     let _ = app.emit(
         "engine://progress",
@@ -58,7 +59,12 @@ pub async fn engine_context(engine: State<'_, SharedEngine>) -> Result<ContextIn
 
 #[tauri::command]
 pub async fn list_tweaks(engine: State<'_, SharedEngine>) -> Result<Vec<TweakView>> {
-    blocking(&engine, |e| e.list()).await
+    // `rescan` reuses recent probe results, so this is cheap after the first call.
+    blocking(&engine, |e| {
+        e.rescan();
+        e.list()
+    })
+    .await
 }
 
 #[tauri::command]
@@ -77,17 +83,63 @@ pub async fn select_target_game(engine: State<'_, SharedEngine>, game_id: Option
     .await
 }
 
-/// Re-run the probes inside the engine and return the refreshed list.
+/// Re-run every probe inside the engine (nothing cached) and return the
+/// refreshed list.
 #[tauri::command]
 pub async fn rescan(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<Vec<TweakView>> {
     progress(&app, "rescan", None, "Checking this PC");
     let out = blocking(&engine, |e| {
-        e.rescan();
+        e.rescan_fresh();
         e.list()
     })
     .await;
     progress(&app, "rescan_done", None, "Done");
     out
+}
+
+/// Probe this PC and report what was found: hardware, security state, restore
+/// state and anti-cheat readiness. Every field is Yes / No / Unknown, and the
+/// whole thing is built inside the engine.
+#[tauri::command]
+pub async fn audit_system(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<SystemAudit> {
+    progress(&app, "audit", None, "Checking this PC");
+    let out = blocking(&engine, |e| Ok(e.audit())).await;
+    progress(&app, "audit_done", None, "Done");
+    out
+}
+
+/// Turn on System Protection if needed, create a restore point and prove
+/// Windows recorded it. The slow Windows calls run without the engine lock held.
+#[tauri::command]
+pub async fn create_restore_point(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<RestoreOutcome> {
+    let shared = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let svc = shared
+            .lock()
+            .map_err(|_| EngineError::Internal {
+                detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+            })?
+            .restore_service()
+            .ok_or_else(|| EngineError::Internal {
+                detail: "this build has no restore-point service".into(),
+            })?;
+        let result = run_create_restore_point(&shared, &svc, &|stage, message| progress(&app, stage, None, message));
+        progress(
+            &app,
+            if result.is_ok() {
+                "restore_done"
+            } else {
+                "restore_failed"
+            },
+            None,
+            "",
+        );
+        result
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("restore worker failed: {e}"),
+    })?
 }
 
 #[tauri::command]

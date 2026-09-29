@@ -15,6 +15,9 @@ use ts_rs::TS;
 
 use super::context::ContextResolver;
 use super::error::Result;
+use super::hardware::HardwareReport;
+use super::restore::RestoreStatus;
+use super::security::SecurityReport;
 use super::transaction::Transaction;
 
 // ---------------------------------------------------------------------------
@@ -319,22 +322,35 @@ pub struct TweakMetadata {
 /// Snapshot of the machine that predicates evaluate against. Populated once per
 /// refresh so a hundred predicates do not each hit WMI.
 ///
-/// Built only by the engine, from probes (Phase 3). It is deliberately not
-/// `Deserialize`: nothing the webview sends can become a `SystemEnv`.
-#[derive(Debug, Clone, Default, Serialize)]
+/// Built only by the engine, from probes. It is deliberately not `Deserialize`:
+/// nothing the webview sends can become a `SystemEnv`. A probe that could not
+/// run leaves its report `None`; a probe that ran but could not tell says so
+/// inside the report (`Probe::Unknown`). Predicates must treat both as "not
+/// known", never as "no".
+#[derive(Debug, Clone, Default, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemEnv {
-    pub os_build: u32,
     pub elevated: bool,
-    pub cpu_vendor: String,
-    pub logical_processors: u32,
-    pub boot_media_is_rotational: bool,
-    pub secure_boot: bool,
-    pub tpm_ready: bool,
-    pub iommu_enabled: bool,
-    pub system_protection_enabled: bool,
     /// Currently selected target game id, if any. Drives anti-cheat predicates.
     pub target_game: Option<String>,
+    /// True while a fresh restore point exists (see `restore.rs`).
+    pub restore_gate_open: bool,
+    pub hardware: Option<HardwareReport>,
+    pub security: Option<SecurityReport>,
+    pub restore: Option<RestoreStatus>,
+}
+
+impl SystemEnv {
+    /// Logical processors, if known.
+    pub fn logical_processors(&self) -> Option<u32> {
+        self.hardware.as_ref()?.cpu.value().map(|c| c.logical_processors)
+    }
+
+    /// Windows build number, if known.
+    pub fn os_build(&self) -> Option<u32> {
+        self.hardware.as_ref()?.os.value().map(|o| o.build)
+    }
 }
 
 // ---------------------------------------------------------------------------

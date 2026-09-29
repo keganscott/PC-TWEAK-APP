@@ -7,6 +7,8 @@ const COMMANDS: &[&str] = &[
     "list_games",
     "select_target_game",
     "rescan",
+    "audit_system",
+    "create_restore_point",
     "apply_tweak",
     "revert_tweak",
     "revert_all",

@@ -7,17 +7,25 @@
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::context::UserResolution;
 use crate::engine::{ContextInfo, JournalView, Progress, RevertResult};
+use crate::env::EnvProbe;
 use crate::error::EngineError;
+use crate::hardware::{DisplayInfo, GpuAdapter, OsFacts, GIB};
 use crate::journal::{
-    CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind, Record,
+    CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind, Record, RestoreMethod,
+    RestorePointRecord,
 };
+use crate::registry::fake::FakeRegistry;
+use crate::restore::{FakeRestoreOps, FixedClock, RestoreOutcome, RestoreService};
+use crate::sysprobe::{SystemAudit, SystemProbe};
 use crate::testutil::*;
 use crate::types::{BlockedCode, BlockedReason, ExecutionContext, RawValue, RegRoot, Tweak};
+use crate::wmi::{FakeWmi, WmiValue, NS_CIMV2, NS_DEVICEGUARD, NS_STORAGE, NS_TPM};
 
 fn generated_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src/generated")
@@ -79,6 +87,14 @@ fn journal_view() -> JournalView {
                 tweak_id: "input.mouseaccel".into(),
                 action: CommitAction::Apply,
             }),
+            Record::RestorePoint(RestorePointRecord {
+                seq: 5,
+                unix_ms: 1_700_000_001_000,
+                sequence_number: 42,
+                description: "PeakTweaks: before changes".into(),
+                method: RestoreMethod::PowerShell,
+                protection_enabled_by_us: true,
+            }),
         ],
         warnings: vec![JournalWarning {
             line: 7,
@@ -86,6 +102,134 @@ fn journal_view() -> JournalView {
             detail: "skipped: expected value at line 1 column 1".into(),
         }],
     }
+}
+
+struct FixtureFacts;
+
+impl OsFacts for FixtureFacts {
+    fn system_drive(&self) -> String {
+        "C:".into()
+    }
+    fn display(&self) -> crate::error::Result<DisplayInfo> {
+        Ok(DisplayInfo {
+            width: 1920,
+            height: 1080,
+            current_hz: 60,
+            max_hz_at_current_resolution: 144,
+        })
+    }
+    fn gpu_adapters(&self) -> crate::error::Result<Vec<GpuAdapter>> {
+        Ok(vec![GpuAdapter {
+            name: "Example GPU".into(),
+            vendor_id: 4318,
+            dedicated_vram_bytes: 12 * GIB,
+            shared_memory_bytes: 8 * GIB,
+            is_software: false,
+        }])
+    }
+}
+
+/// A plausible mid-range PC as WMI would describe it, with one deliberately
+/// unreadable probe (the TPM) so the fixture contains Yes, No and Unknown.
+fn audit() -> SystemAudit {
+    let u = |n: u64| WmiValue::UInt(n);
+    let s = |t: &str| WmiValue::Str(t.into());
+    let arr = |v: &[u64]| WmiValue::Array(v.iter().map(|n| WmiValue::UInt(*n)).collect());
+    let wmi = Arc::new(
+        FakeWmi::new()
+            .with_rows(
+                NS_CIMV2,
+                crate::hardware::WQL_OS,
+                vec![vec![
+                    ("BuildNumber", s("26100")),
+                    ("Caption", s("Microsoft Windows 11 Pro")),
+                    ("ProductType", u(1)),
+                ]],
+            )
+            .with_rows(
+                NS_CIMV2,
+                crate::hardware::WQL_CPU,
+                vec![vec![
+                    ("Name", s("Example CPU")),
+                    ("Manufacturer", s("ExampleVendor")),
+                    ("NumberOfCores", u(8)),
+                    ("NumberOfLogicalProcessors", u(16)),
+                ]],
+            )
+            .with_rows(
+                NS_CIMV2,
+                crate::hardware::WQL_MEMORY,
+                vec![
+                    vec![
+                        ("Capacity", s("8589934592")),
+                        ("Speed", u(3200)),
+                        ("ConfiguredClockSpeed", u(2400)),
+                        ("DeviceLocator", s("DIMM_A1")),
+                        ("BankLabel", s("BANK 0")),
+                        ("SMBIOSMemoryType", u(26)),
+                    ],
+                    vec![
+                        ("Capacity", s("8589934592")),
+                        ("Speed", u(3200)),
+                        ("ConfiguredClockSpeed", u(2400)),
+                        ("DeviceLocator", s("DIMM_B1")),
+                        ("BankLabel", s("BANK 2")),
+                        ("SMBIOSMemoryType", u(26)),
+                    ],
+                ],
+            )
+            .with_rows(
+                NS_CIMV2,
+                crate::hardware::WQL_COMPUTER,
+                vec![vec![("PCSystemType", u(1))]],
+            )
+            .with_rows(
+                NS_CIMV2,
+                crate::restore::WQL_PRODUCT_TYPE,
+                vec![vec![("ProductType", u(1))]],
+            )
+            .with_rows(
+                NS_CIMV2,
+                "ASSOCIATORS OF {Win32_LogicalDisk.DeviceID='C:'} WHERE AssocClass = Win32_LogicalDiskToPartition",
+                vec![vec![("DiskIndex", u(0))]],
+            )
+            .with_rows(
+                NS_STORAGE,
+                "SELECT MediaType, FriendlyName FROM MSFT_PhysicalDisk WHERE DeviceId = '0'",
+                vec![vec![("MediaType", u(4)), ("FriendlyName", s("Example NVMe"))]],
+            )
+            .with_rows(
+                NS_DEVICEGUARD,
+                crate::security::WQL_DEVICE_GUARD,
+                vec![vec![
+                    ("SecurityServicesRunning", arr(&[1, 2])),
+                    ("SecurityServicesConfigured", arr(&[1, 2])),
+                    ("AvailableSecurityProperties", arr(&[1, 2, 3])),
+                ]],
+            )
+            .with_error(
+                NS_TPM,
+                crate::security::WQL_TPM,
+                "query failed: HRESULT Call failed with: 0x80041003",
+            ),
+    );
+    let reg = Arc::new(FakeRegistry::new());
+    reg.set_external(
+        crate::registry::Hive::LocalMachine,
+        r"SYSTEM\CurrentControlSet\Control\SecureBoot\State",
+        "UEFISecureBootEnabled",
+        RawValue::dword(0),
+    );
+    let now = 1_800_000_000_000u64;
+    let ops = Arc::new(FakeRestoreOps::new().with_point(41, "Windows Update", Some(now - 3 * 3_600_000)));
+    let restore = Arc::new(
+        RestoreService::new(ops, reg.clone(), wmi.clone())
+            .with_clock(Arc::new(FixedClock(now)))
+            .without_waiting(),
+    );
+    let mut env = SystemProbe::new(wmi, reg, Arc::new(FixtureFacts), restore).probe(true);
+    env.target_game = Some("fortnite".into());
+    SystemAudit::from_env(env)
 }
 
 fn errors() -> Vec<EngineError> {
@@ -131,6 +275,16 @@ fn errors() -> Vec<EngineError> {
             tweak_id: "t".into(),
             detail: "d".into(),
         },
+        EngineError::Command {
+            what: "Checkpoint-Computer".into(),
+            exit_code: Some(1),
+            detail: "d".into(),
+        },
+        EngineError::Wmi {
+            namespace: r"ROOT\CIMV2".into(),
+            detail: "d".into(),
+            timed_out: true,
+        },
         EngineError::Internal { detail: "d".into() },
     ]
 }
@@ -144,7 +298,9 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { EngineError } from \"./EngineError\";\n\
          import type { JournalView } from \"./JournalView\";\n\
          import type { Progress } from \"./Progress\";\n\
+         import type { RestoreOutcome } from \"./RestoreOutcome\";\n\
          import type { RevertResult } from \"./RevertResult\";\n\
+         import type { SystemAudit } from \"./SystemAudit\";\n\
          import type { TweakView } from \"./TweakView\";\n\n",
     );
 
@@ -179,6 +335,18 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
     );
     ts_const(&mut out, "journalView", "JournalView", &journal_view());
     ts_const(&mut out, "engineErrors", "EngineError[]", &errors());
+    ts_const(&mut out, "systemAudit", "SystemAudit", &audit());
+    ts_const(
+        &mut out,
+        "restoreOutcome",
+        "RestoreOutcome",
+        &RestoreOutcome {
+            sequence_number: 42,
+            description: "PeakTweaks: before changes".into(),
+            method: RestoreMethod::Api,
+            protection_enabled_by_us: false,
+        },
+    );
     ts_const(
         &mut out,
         "progressEvent",
@@ -214,6 +382,8 @@ fn every_engine_error_variant_has_a_fixture() {
             | EngineError::UnknownTweak { .. }
             | EngineError::UnknownGame { .. }
             | EngineError::ContextViolation { .. }
+            | EngineError::Command { .. }
+            | EngineError::Wmi { .. }
             | EngineError::Internal { .. } => {}
         }
     }

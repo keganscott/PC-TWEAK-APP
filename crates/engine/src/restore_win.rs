@@ -92,18 +92,16 @@ fn utf16_description(description: &str) -> [u16; 256] {
 fn create_via_api(description: &str) -> std::result::Result<u32, String> {
     unsafe {
         let mut lib = None;
-        for name in [w!("srclient.dll"), w!("sfc.dll")] {
+        for (label, name) in [("srclient.dll", w!("srclient.dll")), ("sfc.dll", w!("sfc.dll"))] {
             if let Some(h) = load_system32(name) {
                 if let Some(f) = GetProcAddress(h, s!("SRSetRestorePointW")) {
-                    lib = Some(std::mem::transmute::<
-                        unsafe extern "system" fn() -> isize,
-                        SrSetRestorePointW,
-                    >(f));
+                    let f = std::mem::transmute::<unsafe extern "system" fn() -> isize, SrSetRestorePointW>(f);
+                    lib = Some((label, f));
                     break;
                 }
             }
         }
-        let call = lib.ok_or("SRSetRestorePointW is not available on this system")?;
+        let (dll, call) = lib.ok_or("SRSetRestorePointW is not exported by srclient.dll or sfc.dll")?;
 
         let mut status = STATEMGRSTATUS {
             nStatus: WIN32_ERROR(0),
@@ -117,7 +115,9 @@ fn create_via_api(description: &str) -> std::result::Result<u32, String> {
         };
         if !call(&begin, &mut status).as_bool() {
             let code = status.nStatus.0;
-            return Err(format!("SRSetRestorePointW(BEGIN) failed with Win32 error {code}"));
+            return Err(format!(
+                "{dll}!SRSetRestorePointW(BEGIN) failed with Win32 error {code}"
+            ));
         }
         let seq = status.llSequenceNumber;
 
@@ -133,7 +133,7 @@ fn create_via_api(description: &str) -> std::result::Result<u32, String> {
         };
         if !call(&end, &mut end_status).as_bool() {
             let code = end_status.nStatus.0;
-            return Err(format!("SRSetRestorePointW(END) failed with Win32 error {code}"));
+            return Err(format!("{dll}!SRSetRestorePointW(END) failed with Win32 error {code}"));
         }
         u32::try_from(seq).map_err(|_| format!("Windows returned the out-of-range sequence number {seq}"))
     }

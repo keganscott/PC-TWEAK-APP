@@ -405,3 +405,17 @@ Open VERIFY markers left in place: `SPI_SETMOUSE` order (`mouse_accel.rs`), Fort
 9. **System Restore does not exist on Windows Server**, which is what GitHub's Windows runners are. So the Phase 3 gate item "restore point verified on Windows 10 22H2, Windows 11, and an Administrator Protection VM" **cannot be automated**; CI checks the logic against fakes and that the real code fails cleanly. Manual protocol: NOTES.md N24.
 10. **New IPC commands**: `audit_system`, `create_restore_point`; `rescan` now bypasses caches. `apply_tweak` still cannot reach the bootstrap tweak.
 
+### 15.5 Phase 3 status (evidence: CI run 36627022976)
+
+| Item | State |
+|---|---|
+| 4.1 dependencies | Done. `wmi` 0.14.5 pulls `windows` 0.59 next to our 0.58 (and Tauri's own); duplicates accepted as the plan allows. |
+| 4.2 WMI worker | Done and exercised on Windows (see NOTES.md C5). |
+| 4.3 security probes | Done. Secure Boot, TPM, Memory Integrity confirmed to return sensible answers on a Server VM; IOMMU always Unknown (N21); HVCI service code unverified (N20). |
+| 4.4 hardware probes + rig class | Done. Channel layout, disk media type codes and SMBIOS codes not yet checked on client hardware (N22). |
+| 4.5 restore engine | Logic done and tested (21 tests against fakes). Real creation **not yet achieved on any machine** (N24), protection on/off not detectable (N23). |
+| 4.6 live `SystemEnv` | Done. |
+| 4.7 IPC commands | Done: `audit_system`, `create_restore_point`, `rescan` (uncached). |
+| 4.8 frontend wiring | Typed client `src/ipc.ts` done; UI work blocked on the frontend files (N1, N30). |
+| **Gate** | **Not met.** Needs the manual restore-point runs (N24) and real-hardware checks (N22). |
+

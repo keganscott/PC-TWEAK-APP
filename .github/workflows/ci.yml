@@ -66,6 +66,12 @@ jobs:
       - name: Real restore operations on this runner
         run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1
 
+      # These two pass even when they cannot do their job (no permission to create
+      # a local user; no way to make WMI slow), and say NOT VERIFIED when so. The
+      # output is what tells which happened.
+      - name: Storage ownership and WMI timeout on this runner
+        run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
+
       # The tests above regenerate src/generated (ts-rs bindings and the JSON
       # fixtures). Anything they changed or added means the committed copy is stale.
       - name: Generated TypeScript is up to date

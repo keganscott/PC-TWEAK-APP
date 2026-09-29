@@ -99,8 +99,17 @@ fn real_registry(h: &Harness) -> [Option<u32>; 3] {
     out
 }
 
+/// 300 cases by default; CI's Windows job lowers it with `PROPTEST_CASES`
+/// because every case does real `fsync`s on NTFS.
+fn cases() -> u32 {
+    std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300)
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 300, ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
 
     #[test]
     fn registry_always_matches_the_model(ops in prop::collection::vec(op(), 1..30)) {

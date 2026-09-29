@@ -43,6 +43,9 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace
+        env:
+          # Real fsyncs on NTFS make each case slow; the Linux job runs the full 300.
+          PROPTEST_CASES: "60"
 
       # The tests above regenerate src/generated (ts-rs bindings and the JSON
       # fixtures). Anything they changed or added means the committed copy is stale.

@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(test)]
+mod command_audit;
 mod commands;
 
 use std::sync::{Arc, Mutex};

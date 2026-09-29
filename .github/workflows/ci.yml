@@ -145,7 +145,25 @@ jobs:
           if (-not (Test-Path $edge)) { Write-Host "Edge not found; skipping the real-frames check"; return }
           $proc = Start-Process $edge -ArgumentList "--user-data-dir=$env:RUNNER_TEMP\edge-ci","--no-first-run","--no-default-browser-check","--new-window","file:///$($page.Replace('\','/'))" -PassThru
           Start-Sleep -Seconds 6
-          $env:PEAKTWEAKS_REAL_CAPTURE_EXE = 'msedge.exe'
+
+          # Which processes present frames on this runner? Ask PresentMon itself.
+          $diag = Join-Path $env:RUNNER_TEMP 'pm-all.csv'
+          Write-Host "--- PresentMon, no process filter, 8 s"
+          & $pm --output_file $diag --timed 8 --terminate_after_timed --no_console_stats --session_name PeakTweaksDiag --stop_existing_session 2>&1 | Out-String | Write-Host
+          $target = 'msedge.exe'
+          if (Test-Path $diag) {
+            Write-Host "CSV header:"; Get-Content $diag -TotalCount 1
+            $rows = @(Import-Csv $diag)
+            Write-Host "rows: $($rows.Count)"
+            $top = @($rows | Group-Object Application | Sort-Object Count -Descending | Select-Object -First 5)
+            $top | ForEach-Object { Write-Host ("  {0,-32} {1} frames" -f $_.Name, $_.Count) }
+            $best = $top | Where-Object { $_.Count -ge 60 -and $_.Name -match '^[A-Za-z0-9._ +()-]+\.exe$' } | Select-Object -First 1
+            if ($best) { $target = $best.Name }
+          } else {
+            Write-Host "no CSV was written: nothing on this runner presented frames while PresentMon watched"
+          }
+          Write-Host "target for the end-to-end test: $target"
+          $env:PEAKTWEAKS_REAL_CAPTURE_EXE = $target
           try { cargo test --workspace real_presentmon_captures_real_frames -- --nocapture --test-threads=1 }
           finally { Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force }
 
@@ -168,6 +186,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (engine only)
         run: cargo test -p peaktweaks-engine
+      # Plan 6.4: the default (Starter) build has no networking crate.
+      - name: No networking crates in the default build
+        run: ./scripts/check-no-network-deps.sh
+
       - name: Generated TypeScript is up to date
         run: |
           if [ -n "$(git status --porcelain -- src/generated)" ]; then

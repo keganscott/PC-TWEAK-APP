@@ -269,7 +269,7 @@ unsafe fn sid_from_token(token: HANDLE) -> Result<String> {
     let sid = raw.to_string().map_err(|e| EngineError::UserContextUnresolved {
         detail: format!("SID string was not valid UTF-16: {e}"),
     })?;
-    let _ = LocalFree(Some(HLOCAL(raw.0 as *mut c_void)));
+    let _ = LocalFree(HLOCAL(raw.0 as *mut c_void));
 
     Ok(sid)
 }

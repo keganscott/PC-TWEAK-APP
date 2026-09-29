@@ -85,6 +85,27 @@ jobs:
           if ($admin -lt 1) { throw "manifest does not request requireAdministrator" }
           if ($cc6 -lt 1) { throw "manifest lost the Common Controls v6 dependency" }
 
+      # Starts the real exe. On a GitHub runner the token is already elevated and
+      # UAC is off, so this does NOT prove the UAC prompt; it proves the process
+      # starts, the engine initialises (elevation check, user resolution, the
+      # protected ProgramData directory), and nothing crashes for 20 seconds.
+      - name: Smoke test - launch, engine starts, storage is locked down
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:ProgramData 'PeakTweaks'
+          if (Test-Path $dir) { throw "$dir already exists on a fresh runner" }
+          $p = Start-Process -FilePath 'target\release\peaktweaks.exe' -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "peaktweaks.exe exited early with code $($p.ExitCode)" }
+          Write-Host "still running after 20s (pid $($p.Id))"
+          if (-not (Test-Path $dir)) { throw "engine did not create $dir" }
+          $acl = (icacls $dir) -join "`n"
+          Write-Host $acl
+          Stop-Process -Id $p.Id -Force
+          if ($acl -match 'Users|Everyone|Authenticated') { throw "storage directory grants access to a non-admin group" }
+          if ($acl -notmatch 'SYSTEM') { throw "expected SYSTEM in the storage ACL" }
+          if ($acl -notmatch 'Administrators') { throw "expected Administrators in the storage ACL" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: peaktweaks-exe

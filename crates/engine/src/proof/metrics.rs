@@ -350,4 +350,45 @@ mod tests {
         }
         assert!(j["definitions"].as_str().unwrap().contains("MsBetweenPresents"));
     }
+    /// The one test that uses PresentMon's real output. The file is captured on
+    /// a real desktop by `scripts/capture-presentmon-fixture.ps1` and committed;
+    /// until then this only says so (NOTES.md N39), it does not pass silently.
+    #[test]
+    fn a_real_presentmon_file_parses_and_gives_plausible_numbers() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/presentmon-real.csv");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            println!("NOT VERIFIED: {} is not committed yet (NOTES.md N39)", path.display());
+            return;
+        };
+        println!("header: {}", text.lines().next().unwrap_or(""));
+        let frames = parse_frame_times(&text).expect("a real PresentMon file must parse");
+        println!(
+            "frames {} (ignored {}, unusable {})",
+            frames.ms.len(),
+            frames.ignored_rows,
+            frames.unusable_rows
+        );
+        assert!(
+            frames.ms.len() >= MIN_FRAMES,
+            "the fixture must hold at least {MIN_FRAMES} frames"
+        );
+        assert!(
+            frames.unusable_rows * 10 <= frames.ms.len(),
+            "more than 10% of a real file was unusable: the column we read is probably wrong"
+        );
+        let stats = compute_stats(&frames.ms).unwrap();
+        println!("{stats:#?}");
+        // A screen shows something between about 1 and 1000 frames a second.
+        assert!(
+            (1.0..=1000.0).contains(&stats.avg_fps),
+            "implausible average: {}",
+            stats.avg_fps
+        );
+        assert!(
+            stats.p50_ms > 0.5 && stats.p50_ms < 1000.0,
+            "implausible median: {}",
+            stats.p50_ms
+        );
+        assert!(stats.one_percent_low_fps <= stats.avg_fps + 1e-9);
+    }
 }

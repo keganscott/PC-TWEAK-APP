@@ -193,10 +193,7 @@ mod tests {
     fn file_is_utf16le_with_bom_crlf_and_deletion_directive() {
         let bytes = reg_file_bytes(r"HKEY_USERS\S-1-5-21\Control Panel\Mouse", "MouseSpeed", None);
         assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
+        let units = crate::types::utf16le_units(&bytes[2..]);
         let text = String::from_utf16(&units).unwrap();
         assert_eq!(
             text,

@@ -138,14 +138,19 @@ impl RawValue {
         if self.vtype != 1 && self.vtype != 2 {
             return None;
         }
-        let units: Vec<u16> = self
-            .bytes
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .take_while(|&u| u != 0)
-            .collect();
+        let units: Vec<u16> = utf16le_units(&self.bytes).into_iter().take_while(|&u| u != 0).collect();
         String::from_utf16(&units).ok()
     }
+}
+
+/// Little-endian UTF-16 code units of `bytes`; a trailing odd byte is ignored.
+pub(crate) fn utf16le_units(bytes: &[u8]) -> Vec<u16> {
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
+        .collect()
 }
 
 /// Hex-string serialisation so journal files stay readable and hand-editable

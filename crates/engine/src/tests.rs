@@ -471,10 +471,7 @@ fn backups_are_written_before_the_registry_changes() {
     let path = h.dir.path().join(&written[0].backup_file);
     let bytes = std::fs::read(path).unwrap();
     assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
-    let units: Vec<u16> = bytes[2..]
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let units = crate::types::utf16le_units(&bytes[2..]);
     let text = String::from_utf16(&units).unwrap();
     assert!(text.contains("\"A\"=dword:00000028"), "{text}");
     assert!(text.contains(r"[HKEY_LOCAL_MACHINE\SOFTWARE\PeakTest\Sched]"), "{text}");

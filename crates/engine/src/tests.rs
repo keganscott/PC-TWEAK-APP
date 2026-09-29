@@ -626,3 +626,85 @@ fn the_engine_catalogue_ships_blocked_and_gated_by_default() {
     }
     assert!(fake.snapshot().is_empty());
 }
+
+/// Nothing the engine says about a change may promise a result. Only a stored
+/// proof run can, and its wording comes from `proof::verdict`. This scans every
+/// string literal in the tweak catalogue for claim words. (The frontend copy
+/// needs the same check once it exists: NOTES.md N1.)
+#[test]
+fn catalogue_copy_makes_no_efficacy_claims() {
+    let banned = [
+        "boost",
+        "faster",
+        "fps",
+        "smoother",
+        "smoothness",
+        "lag",
+        "improv",
+        "measured",
+        "benchmark",
+        "speed up",
+        "higher performance",
+        "more performance",
+        "% ",
+        "reduces latency",
+        "lower latency",
+    ];
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tweaks");
+    let mut scanned = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        // Only string literals on non-comment lines are user-facing copy.
+        for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+            let mut rest = line;
+            while let Some(start) = rest.find('"') {
+                let after = &rest[start + 1..];
+                let Some(end) = after.find('"') else { break };
+                let literal = after[..end].to_ascii_lowercase();
+                for word in banned {
+                    assert!(
+                        !literal.contains(word),
+                        "{}: copy contains the claim word {word:?}: {literal}",
+                        path.display()
+                    );
+                }
+                rest = &after[end + 1..];
+            }
+        }
+        scanned += 1;
+    }
+    assert!(scanned >= 3, "expected to scan the tweak files, saw {scanned}");
+}
+
+#[test]
+fn proof_verdict_text_is_the_only_place_a_result_is_worded() {
+    // The headline is built in exactly one function; nothing else in the
+    // engine formats "Better"/"Worse" for a user.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut hits = Vec::new();
+    fn walk(dir: &std::path::Path, hits: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                walk(&p, hits);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let src = std::fs::read_to_string(&p).unwrap();
+                for (n, line) in src.lines().enumerate() {
+                    let t = line.trim_start();
+                    if !t.starts_with("//") && (line.contains("\"Better\"") || line.contains("\"Worse\"")) {
+                        hits.push(format!("{}:{}", p.display(), n + 1));
+                    }
+                }
+            }
+        }
+    }
+    walk(&root, &mut hits);
+    assert!(
+        hits.iter().all(|h| h.contains("verdict.rs")),
+        "verdict wording outside proof/verdict.rs: {hits:?}"
+    );
+}

@@ -7,10 +7,10 @@
 //! this crate turns `Unknown` into a bool except through the explicit helpers
 //! below, which say which way they lean.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "state", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum Probe<T> {

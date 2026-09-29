@@ -36,6 +36,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The pinned, Intel-signed PresentMon that release builds embed. The script
+      # refuses anything whose hash, size or signature differs from PINNED.json.
+      - name: Fetch and verify PresentMon
+        shell: pwsh
+        run: ./scripts/fetch-presentmon.ps1
+
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
@@ -55,10 +61,10 @@ jobs:
       # operations do on a Windows runner. (Runners are Windows Server, where
       # System Restore does not exist, so the restore calls should fail cleanly.)
       - name: Live probes on this runner
-        run: cargo test -p peaktweaks-engine live_probe_report -- --nocapture --test-threads=1
+        run: cargo test --workspace live_probe_report -- --nocapture --test-threads=1
 
       - name: Real restore operations on this runner
-        run: cargo test -p peaktweaks-engine the_real_operations_fail_cleanly -- --nocapture --test-threads=1
+        run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1
 
       # The tests above regenerate src/generated (ts-rs bindings and the JSON
       # fixtures). Anything they changed or added means the committed copy is stale.
@@ -116,6 +122,32 @@ jobs:
           if ($acl -match 'Users|Everyone|Authenticated') { throw "storage directory grants access to a non-admin group" }
           if ($acl -notmatch 'SYSTEM') { throw "expected SYSTEM in the storage ACL" }
           if ($acl -notmatch 'Administrators') { throw "expected Administrators in the storage ACL" }
+
+      # Checks the assumptions the capture code makes against the real program,
+      # then captures real frames from a browser window running an animation and
+      # pushes them through our tool, parser and statistics.
+      - name: PresentMon reality check
+        shell: pwsh
+        run: |
+          $pm = (Resolve-Path vendor\presentmon\PresentMon-x64.exe).Path
+          $pin = Get-Content vendor\presentmon\PINNED.json -Raw | ConvertFrom-Json
+          $help = (& $pm --help 2>&1 | Out-String)
+          Write-Host ($help.Split("`n") | Select-Object -First 6 | Out-String)
+          if ($help -notmatch [regex]::Escape("PresentMon $($pin.version)")) { throw "the version banner does not say PresentMon $($pin.version)" }
+          foreach ($f in '--process_name','--output_file','--delay','--timed','--terminate_after_timed','--no_console_stats','--session_name','--stop_existing_session') {
+            if ($help -notmatch [regex]::Escape($f)) { throw "PresentMon --help does not list $f" }
+          }
+          Write-Host "all flags we use are listed by the real program"
+
+          $page = Join-Path $env:RUNNER_TEMP 'anim.html'
+          Set-Content $page '<body style="margin:0"><canvas id=c width=800 height=600></canvas><script>const x=c.getContext("2d");let t=0;function f(){t++;x.fillStyle="hsl("+(t%360)+",80%,50%)";x.fillRect(0,0,800,600);requestAnimationFrame(f)}f()</script>'
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $edge)) { Write-Host "Edge not found; skipping the real-frames check"; return }
+          $proc = Start-Process $edge -ArgumentList "--user-data-dir=$env:RUNNER_TEMP\edge-ci","--no-first-run","--no-default-browser-check","--new-window","file:///$($page.Replace('\','/'))" -PassThru
+          Start-Sleep -Seconds 6
+          $env:PEAKTWEAKS_REAL_CAPTURE_EXE = 'msedge.exe'
+          try { cargo test --workspace real_presentmon_captures_real_frames -- --nocapture --test-threads=1 }
+          finally { Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force }
 
       - uses: actions/upload-artifact@v4
         with:

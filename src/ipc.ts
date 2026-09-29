@@ -9,14 +9,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
 import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
 import type { JournalEntry } from "./generated/JournalEntry";
 import type { JournalView } from "./generated/JournalView";
 import type { Progress } from "./generated/Progress";
+import type { ProofRun } from "./generated/ProofRun";
+import type { ProofSession } from "./generated/ProofSession";
+import type { ProofSessionSummary } from "./generated/ProofSessionSummary";
 import type { RestoreOutcome } from "./generated/RestoreOutcome";
 import type { RevertResult } from "./generated/RevertResult";
+import type { Side } from "./generated/Side";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
 
@@ -82,6 +87,20 @@ export const engine = {
   revertTweak: (id: string) => call<JournalEntry[]>("revert_tweak", { id }),
   revertAll: () => call<RevertResult[]>("revert_all"),
   listJournal: () => call<JournalView>("list_journal"),
+};
+
+/** Measure whether a change did anything. Every number comes from stored runs. */
+export const proof = {
+  /** Start a before/after comparison. The free plan allows one. */
+  beginSession: (exe: string, gameId: string | null, gameBuild: string | null) =>
+    call<ProofSession>("proof_begin_session", { exe, gameId, gameBuild }),
+  /** Capture one run. Takes `delaySeconds + seconds`; listen to `onProgress`. */
+  capture: (sessionId: string, side: Side, seconds: number, delaySeconds: number) =>
+    call<ProofRun>("proof_capture", { sessionId, side, seconds, delaySeconds }),
+  /** Better / no measurable change / worse. Show `headline`; do not reword it. */
+  compare: (sessionId: string) => call<Comparison>("proof_compare", { sessionId }),
+  listSessions: () => call<ProofSessionSummary[]>("proof_list_sessions"),
+  runs: (sessionId: string) => call<ProofRun[]>("proof_runs", { sessionId }),
 };
 
 /** Subscribe to progress events from long-running commands. */

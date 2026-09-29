@@ -15,6 +15,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [features]
+# Embed the pinned PresentMon so the app stays one portable executable. Needs
+# vendor/presentmon/PresentMon-x64.exe (scripts/fetch-presentmon.ps1).
+default = ["bundle-presentmon"]
+bundle-presentmon = ["peaktweaks-engine/bundle-presentmon"]
 # Opens the restore gate and the paid tier so the engine can be driven by hand.
 # Never enabled in CI or release builds.
 dev-stubs = ["peaktweaks-engine/dev-stubs"]

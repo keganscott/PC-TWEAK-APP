@@ -11,10 +11,14 @@ publish.workspace = true
 test-support = []
 # Development-only stubs: an open restore gate and a paid license. Off by default.
 dev-stubs = []
+# Embed the pinned PresentMon binary (vendor/presentmon, fetched by
+# scripts/fetch-presentmon.ps1) so the app stays one portable executable.
+bundle-presentmon = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 ts-rs = { version = "12", default-features = false, features = ["serde-compat"] }
 
 # Registry and Win32 access. Pinned until Phase 3 compiles (plan R22).

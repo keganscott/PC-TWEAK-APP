@@ -17,6 +17,11 @@
     "allow-revert-all",
     "allow-list-journal",
     "allow-audit-system",
-    "allow-create-restore-point"
+    "allow-create-restore-point",
+    "allow-proof-begin-session",
+    "allow-proof-capture",
+    "allow-proof-compare",
+    "allow-proof-list-sessions",
+    "allow-proof-runs"
   ]
 }

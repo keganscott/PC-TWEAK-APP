@@ -80,6 +80,7 @@ pub struct Engine {
     env: SystemEnv,
     target_game: Option<String>,
     restore: Option<std::sync::Arc<crate::restore::RestoreService>>,
+    proof: Option<std::sync::Arc<crate::proof::service::ProofService>>,
 }
 
 impl Engine {
@@ -107,6 +108,7 @@ impl Engine {
             env,
             target_game: None,
             restore: None,
+            proof: None,
         }
     }
 
@@ -119,6 +121,35 @@ impl Engine {
 
     pub fn restore_service(&self) -> Option<std::sync::Arc<crate::restore::RestoreService>> {
         self.restore.clone()
+    }
+
+    /// Attach the proof (telemetry) service.
+    pub fn with_proof_service(mut self, svc: std::sync::Arc<crate::proof::service::ProofService>) -> Self {
+        self.proof = Some(svc);
+        self
+    }
+
+    pub fn proof_service(&self) -> Option<std::sync::Arc<crate::proof::service::ProofService>> {
+        self.proof.clone()
+    }
+
+    /// Catalogue tweaks with an outstanding apply, most recent first. Recorded
+    /// with every proof run so the result says what it measured. The engine's
+    /// own bookkeeping tweaks are not listed.
+    pub fn applied_tweak_ids(&self) -> Vec<String> {
+        self.journal
+            .applied_tweaks_newest_first()
+            .into_iter()
+            .filter(|id| self.tweaks.iter().any(|t| t.id() == id))
+            .collect()
+    }
+
+    /// What a proof session needs to know about this PC, from the engine's own
+    /// (recently cached) probes.
+    pub fn proof_context(&mut self) -> (Option<crate::hardware::RigClass>, super::types::Tier) {
+        self.rescan();
+        let rig = self.env.hardware.as_ref().and_then(|h| h.rig_class.value().copied());
+        (rig, self.license.tier())
     }
 
     pub fn context_info(&self) -> ContextInfo {
@@ -429,10 +460,31 @@ impl Engine {
         probe: Box<dyn EnvProbe>,
         license: License,
     ) -> Result<Self> {
+        use std::sync::Arc;
+
         let elevated = super::identity::is_elevated();
         let dir = super::secure_dir::TrustedDir::ensure_program_data()?;
         let resolver = ContextResolver::detect(elevated)?;
         let journal = Journal::open(&dir)?;
-        Ok(Self::new(resolver, journal, tweaks, probe, license))
+        let proof = Arc::new(build_proof_service(&dir));
+        Ok(Self::new(resolver, journal, tweaks, probe, license).with_proof_service(proof))
     }
+}
+
+/// The proof service for a real Windows install: PresentMon from the protected
+/// `tools` directory (hash-checked) when this build carries it, NVML for GPU
+/// throttle readings. If PresentMon cannot be provided the service still exists
+/// and says why when a capture is requested.
+#[cfg(windows)]
+fn build_proof_service(dir: &super::secure_dir::TrustedDir) -> crate::proof::service::ProofService {
+    use std::sync::Arc;
+
+    use crate::proof::capture::{CaptureTool, PresentMonTool, UnavailableTool};
+    use crate::proof::nvml::NvmlSampler;
+
+    let tool: Arc<dyn CaptureTool> = match crate::proof::presentmon::provision(dir) {
+        Ok(path) => Arc::new(PresentMonTool::new(path)),
+        Err(e) => Arc::new(UnavailableTool(e.to_string())),
+    };
+    crate::proof::service::ProofService::new(dir.path().join("proof"), tool).with_sampler(Arc::new(NvmlSampler::new()))
 }

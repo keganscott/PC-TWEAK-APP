@@ -79,8 +79,10 @@ pub fn run_powershell(what: &'static str, script: &'static str, timeout: Duratio
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = out.join();
-                let _ = err.join();
+                // Do not join the readers: a grandchild that inherited the
+                // pipes would keep them open and turn "stopped" into "waited
+                // for it anyway". They end when the pipes close.
+                drop((out, err));
                 return Err(fail(
                     format!("did not finish within {} s and was stopped", timeout.as_secs()),
                     None,

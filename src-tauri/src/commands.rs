@@ -15,6 +15,9 @@ use tauri::{AppHandle, Emitter, State};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
 use peaktweaks_engine::journal::JournalEntry;
+use peaktweaks_engine::proof::service::{BeginSession, ProofService};
+use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
+use peaktweaks_engine::proof::verdict::Comparison;
 use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
 use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, SystemAudit, TweakView};
 
@@ -140,6 +143,123 @@ pub async fn create_restore_point(app: AppHandle, engine: State<'_, SharedEngine
     .map_err(|e| EngineError::Internal {
         detail: format!("restore worker failed: {e}"),
     })?
+}
+
+/// The proof service, fetched under a brief engine lock.
+fn proof_service(shared: &SharedEngine) -> Result<Arc<ProofService>> {
+    shared
+        .lock()
+        .map_err(|_| EngineError::Internal {
+            detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+        })?
+        .proof_service()
+        .ok_or_else(|| EngineError::Internal {
+            detail: "this build has no proof service".into(),
+        })
+}
+
+/// Start a before/after comparison for a game. The free plan allows one.
+#[tauri::command]
+pub async fn proof_begin_session(
+    engine: State<'_, SharedEngine>,
+    exe: String,
+    game_id: Option<String>,
+    game_build: Option<String>,
+) -> Result<ProofSession> {
+    let shared = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let (rig, tier) = shared
+            .lock()
+            .map_err(|_| EngineError::Internal {
+                detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+            })?
+            .proof_context();
+        proof_service(&shared)?.begin_session(
+            BeginSession {
+                exe,
+                game_id,
+                game_build,
+            },
+            rig,
+            tier,
+        )
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("proof worker failed: {e}"),
+    })?
+}
+
+/// Capture one run on one side of a session. Takes as long as the delay plus the
+/// capture length; the engine lock is not held meanwhile.
+#[tauri::command]
+pub async fn proof_capture(
+    app: AppHandle,
+    engine: State<'_, SharedEngine>,
+    session_id: String,
+    side: Side,
+    seconds: u32,
+    delay_seconds: u32,
+) -> Result<ProofRun> {
+    let shared = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let (svc, applied) = {
+            let guard = shared.lock().map_err(|_| EngineError::Internal {
+                detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+            })?;
+            (
+                guard.proof_service().ok_or_else(|| EngineError::Internal {
+                    detail: "this build has no proof service".into(),
+                })?,
+                guard.applied_tweak_ids(),
+            )
+        };
+        let result = svc.capture(&session_id, side, seconds, delay_seconds, applied, &|stage, message| {
+            progress(&app, stage, None, message)
+        });
+        progress(
+            &app,
+            if result.is_ok() { "proof_done" } else { "proof_failed" },
+            None,
+            "",
+        );
+        result
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("proof worker failed: {e}"),
+    })?
+}
+
+/// Better / no measurable change / worse, from the stored runs only.
+#[tauri::command]
+pub async fn proof_compare(engine: State<'_, SharedEngine>, session_id: String) -> Result<Comparison> {
+    let shared = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.compare(&session_id))
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("proof worker failed: {e}"),
+        })?
+}
+
+#[tauri::command]
+pub async fn proof_list_sessions(engine: State<'_, SharedEngine>) -> Result<Vec<ProofSessionSummary>> {
+    let shared = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.sessions())
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("proof worker failed: {e}"),
+        })?
+}
+
+#[tauri::command]
+pub async fn proof_runs(engine: State<'_, SharedEngine>, session_id: String) -> Result<Vec<ProofRun>> {
+    let shared = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.runs(&session_id))
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("proof worker failed: {e}"),
+        })?
 }
 
 #[tauri::command]

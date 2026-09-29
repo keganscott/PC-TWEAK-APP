@@ -2190,6 +2190,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "ts-rs",
  "windows 0.58.0",

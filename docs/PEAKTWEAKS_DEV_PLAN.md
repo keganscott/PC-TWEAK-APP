@@ -419,3 +419,12 @@ Open VERIFY markers left in place: `SPI_SETMOUSE` order (`mouse_accel.rs`), Fort
 | 4.8 frontend wiring | Typed client `src/ipc.ts` done; UI work blocked on the frontend files (N1, N30). |
 | **Gate** | **Not met.** Needs the manual restore-point runs (N24) and real-hardware checks (N22). |
 
+### 15.6 Phase 4 design decisions (Claude)
+
+1. **PresentMon is embedded in `peaktweaks.exe`**, not downloaded. The Starter tier gets a proof run yet must contain no networking, and the app must stay one portable binary, so a run-time download is out. `vendor/presentmon/PINNED.json` pins version, SHA-256, size and signer (Intel Corporation); `scripts/fetch-presentmon.ps1` (used by CI and developers) refuses anything else, including an invalid Authenticode signature; at run time the embedded copy is written to the protected `tools` folder and hashed again before every capture. MIT license text ships in `vendor/presentmon/`.
+2. **Verified against upstream rather than memory:** the flags and CSV columns the plan marked VERIFY exist in PresentMon 2.6.0 (see NOTES.md C9).
+3. **A "proof" is a session**: several "before" runs and several "after" runs of the same scene, all stored with their CSV. A difference is called Better or Worse only when it strictly exceeds the run-to-run spread (max minus min of the repeats) and at least 1% of the baseline; each side needs at least 2 runs; a change that hurts either average or 1% low is never called an improvement. The wording of the result is produced in one function (`proof/verdict.rs`) and a test fails if verdict wording appears anywhere else.
+4. **Runs record what they measured**: tweaks applied at capture time, PresentMon version, rig class, and (when an NVIDIA GPU is present) the GPU throttle reasons seen while capturing, sampled at the start, about once a second, and at the end. A run held back by heat or power adds a warning to the comparison.
+5. **Efficacy claims are linted in Rust**: every string literal in the tweak catalogue is scanned for claim words (boost, faster, FPS, smoother, measured, ...). The same check for frontend copy belongs with the frontend (NOTES.md N38).
+6. **Two bugs found and fixed on the way**: killing a timed-out child process no longer waits for the output pipes a grandchild may still hold (this also affected the Phase 3 PowerShell runner), and the capture command line is built only from validated values (game names that could be read as options or paths are refused).
+

@@ -428,3 +428,13 @@ Open VERIFY markers left in place: `SPI_SETMOUSE` order (`mouse_accel.rs`), Fort
 5. **Efficacy claims are linted in Rust**: every string literal in the tweak catalogue is scanned for claim words (boost, faster, FPS, smoother, measured, ...). The same check for frontend copy belongs with the frontend (NOTES.md N38).
 6. **Two bugs found and fixed on the way**: killing a timed-out child process no longer waits for the output pipes a grandchild may still hold (this also affected the Phase 3 PowerShell runner), and the capture command line is built only from validated values (game names that could be read as options or paths are refused).
 
+
+### 15.7 Phase 5 design decisions (Claude) — first slice only
+
+1. **The scanner is a pure function of `SystemEnv`** (`crates/engine/src/scanner.rs`), returned inside `SystemAudit.scan`. It reads nothing itself, so it needs no new IPC command and no new frontend-supplied input, and it is unit-tested on Linux from hand-built machines.
+2. **Every finding is `guidedOnly` with `fixTweakId: null`** because none of the one-click fixes in plan 6.2 exist as tweaks yet. A finding never names a fix that does not exist.
+3. **Three states, not two**: a finding is Attention, Fine ("what is already right", plan 6.2) or Unknown with the reason. A probe that could not tell is never shown as fine or as a problem.
+4. **Built (6 checks):** single memory channel, memory below rated speed, refresh rate below the display's maximum, Windows on a hard drive, Windows 10 or older, Memory Integrity state (reading only; the scanner never suggests turning it off). Not built, with reasons: NOTES.md N42.
+5. **Ordering** is "Attention, Unknown, Fine" and then rule order. The plan says "order by expected gain"; gain needs proof runs, so this is a stated judgement (NOTES.md N41), not a measurement.
+6. **Copy is linted**: the scanner's string literals are scanned for the same claim words as the tweak catalogue.
+7. **Gate: not met.** "Scanner findings match hand-verified results on at least three real machines" is manual. The other half of the gate (no networking dependency in the Starter build) is enforced by `scripts/check-no-network-deps.sh` in CI (NOTES.md C11).

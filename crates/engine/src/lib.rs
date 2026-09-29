@@ -17,6 +17,7 @@ pub mod proof;
 pub mod reg_export;
 pub mod registry;
 pub mod restore;
+pub mod scanner;
 pub mod secure_dir;
 pub mod security;
 pub mod sysprobe;

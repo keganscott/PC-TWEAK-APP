@@ -16,6 +16,7 @@ use super::hardware::{probe_hardware, HardwareReport, OsFacts};
 use super::journal::now_ms;
 use super::registry::RegistryBackend;
 use super::restore::RestoreService;
+use super::scanner::{scan, ScanReport};
 use super::security::{anti_cheat_readiness, probe_security, AntiCheatReadiness, SecurityReport};
 use super::types::SystemEnv;
 use super::wmi::WmiSource;
@@ -30,12 +31,15 @@ const STATE_TTL_MS: u64 = 30 * 1000;
 pub struct SystemAudit {
     pub env: SystemEnv,
     pub anti_cheat: Option<AntiCheatReadiness>,
+    /// Findings from the scanner, computed from `env` alone.
+    pub scan: ScanReport,
 }
 
 impl SystemAudit {
     pub fn from_env(env: SystemEnv) -> Self {
         let anti_cheat = env.security.as_ref().map(anti_cheat_readiness);
-        Self { env, anti_cheat }
+        let scan = scan(&env);
+        Self { env, anti_cheat, scan }
     }
 }
 

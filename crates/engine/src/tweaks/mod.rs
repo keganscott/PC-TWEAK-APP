@@ -2,13 +2,13 @@
 
 use crate::types::Tweak;
 
+pub mod ifeo_priority;
 pub mod mouse_accel;
-pub mod priority_separation;
 
 /// Every tweak the engine knows about, in display order.
 pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     vec![
         Box::new(mouse_accel::MouseAcceleration),
-        Box::new(priority_separation::PrioritySeparation),
+        Box::new(ifeo_priority::IfeoPriority::fortnite()),
     ]
 }

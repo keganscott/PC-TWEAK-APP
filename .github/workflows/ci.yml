@@ -44,6 +44,18 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      # The tests above regenerate src/generated (ts-rs bindings and the JSON
+      # fixtures). Anything they changed or added means the committed copy is stale.
+      - name: Generated TypeScript is up to date
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain -- src/generated
+          if ($changes) {
+            Write-Host $changes
+            git diff -- src/generated
+            throw "src/generated is stale: run 'cargo test -p peaktweaks-engine' and commit the result"
+          }
+
       - name: npm ci
         run: npm ci
 
@@ -73,3 +85,23 @@ jobs:
           name: peaktweaks-exe
           path: target/release/peaktweaks.exe
           if-no-files-found: error
+
+  # Fast cross-OS check: the engine's journal and transaction logic runs against
+  # the in-memory registry, so it is tested on Linux too.
+  engine-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (engine only)
+        run: cargo test -p peaktweaks-engine
+      - name: Generated TypeScript is up to date
+        run: |
+          if [ -n "$(git status --porcelain -- src/generated)" ]; then
+            git status --porcelain -- src/generated
+            git diff -- src/generated
+            echo "src/generated is stale" >&2
+            exit 1
+          fi

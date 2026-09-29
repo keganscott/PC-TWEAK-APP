@@ -1,3 +1,18 @@
+/// Commands the webview may call. Restricting them here means a command that is
+/// registered but not listed cannot be invoked, and each needs an explicit
+/// `allow-<name>` permission in `capabilities/default.json`.
+const COMMANDS: &[&str] = &[
+    "engine_context",
+    "list_tweaks",
+    "list_games",
+    "select_target_game",
+    "rescan",
+    "apply_tweak",
+    "revert_tweak",
+    "revert_all",
+    "list_journal",
+];
+
 fn main() {
     // The app is a single elevated binary (`requireAdministrator`). The custom
     // manifest replaces Tauri's default one; it keeps the Common Controls v6
@@ -6,6 +21,9 @@ fn main() {
     // (tauri-apps/tauri#6732, #10154).
     let windows = tauri_build::WindowsAttributes::new().app_manifest(include_str!("peaktweaks.manifest"));
 
-    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
-        .expect("failed to run tauri-build");
+    let attributes = tauri_build::Attributes::new()
+        .windows_attributes(windows)
+        .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS));
+
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }

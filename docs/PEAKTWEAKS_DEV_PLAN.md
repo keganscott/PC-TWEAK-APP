@@ -3,6 +3,8 @@
 Author: Kegan Griffiths (owner). Written 2026-09-29 after a full code review and market research pass.
 Hand this file to Claude Code together with the existing code (the `src-tauri/` Rust tree, the React/TypeScript files, and the three reference docs `tweak-dictionary.md`, `competitive-audit.md`, `tweak-framework.md`).
 
+> **Revision note (2026-09-29, Claude):** Section 15 at the end lists every place the implementation departs from, or sharpens, the text below, with the reason. Nothing in Section 1 (Locked decisions) was changed.
+
 ---
 
 ## 0. How to work on this (read first)
@@ -334,3 +336,38 @@ Full write-up with sources: the report document "PeakTweaks: Code Review, Market
 ## 14. Estimates (guesses for one developer)
 
 Phase 2.1 about 1 week; Phase 3 two to three weeks; Phase 4 two weeks; Phase 5 three to four weeks; Phase 6 three to four weeks; Phase 7 about a month. Roughly four months end to end. The gates matter more than the dates.
+
+---
+
+## 15. Revision log and status (Claude, 2026-09-29)
+
+### 15.1 Changes to the plan, and why
+
+Each item is an amendment to the text above. Kegan can veto any of them; none touches Section 1.
+
+1. **Workspace layout (P0).** The engine is its own crate, `crates/engine` (no Tauri dependency), and `src-tauri` is a thin shell over it. Reason: the journal, transaction and fake-registry tests then run on plain Linux and Windows without WebView2/GTK, and `cargo check --target x86_64-pc-windows-msvc` from Linux catches Windows compile errors before CI. The plan's `src-tauri/src/engine/...` paths map to `crates/engine/src/...`.
+2. **R4 design, two refinements.** (a) `tx_id` is a sequence number reserved when the transaction *begins*, not "the first write's seq", so a transaction that writes nothing (everything already at target) still has an id and can be committed. (b) The plan's R6 says a failed apply appends "a Commit for a Revert". That would erase the outstanding writes of an *earlier* successful apply of the same tweak. A third commit action, `Rollback`, cancels only its own transaction's writes.
+3. **R18: `created_keys: Vec<String>` instead of `created_key: bool`.** The IFEO tweak creates two levels (`<exe>` and `PerfOptions`); a bool cannot say which to remove.
+4. **R1: `Tweak::touches()` returns `Vec<RegTarget>` (owned), not `&'static [RegTarget]`.** The IFEO key depends on the game's exe name. For the same reason `Tweak::id()` returns `&str` and `TweakMetadata` text fields are `Cow<'static, str>`.
+5. **R1: `restore_journalled()` takes no argument.** It always restores the transaction's own tweak, so one tweak cannot replay another's records. Every outstanding record is validated against the allowlist *before* the first write, so a bad line cannot cause a half-restore followed by an error.
+6. **R1: strict startup.** If `%ProgramData%\PeakTweaks` fails verification (owner not SYSTEM/Administrators, a non-admin principal with write access, reparse point, NULL DACL, or the same for `journal.jsonl`) the engine refuses to start; it does not start read-only, and it never repairs a bad directory (planted files could be journal lines). `TrustedDir` is a witness type: `Journal::open` cannot be called without one.
+7. **R11: ts-rs chosen** (stable 12.x; specta is still a release candidate). The "fixtures round-trip" test is done without a JS test runner: a Rust test writes `src/generated/fixtures.ts`, real serialized values wrapped in `satisfies <GeneratedType>`, and `tsc` fails on any drift. CI also fails if `src/generated` is stale. The `Progress` event type lives in the engine crate so all bindings come from one place. Journal records are now camelCase on disk as well as over IPC (nothing had shipped).
+8. **MSRV.** `Cargo.toml` said `rust-version = "1.77"`; Tauri 2.12's dependencies require 1.90. Set to 1.90.
+9. **R15.** `Win32PrioritySeparation` tweak and its "We measured no difference" message are deleted. Replaced by `priority.ifeo.<game>` (IFEO `CpuPriorityClass` = 3). It is blocked for every game (`CLEARED_GAMES` is empty) because the plan says not to enable it for any title until tested per anti-cheat vendor.
+10. **R12 / production defaults.** Until Phase 3 (restore points) and Phase 7 (licensing) exist, a normal build has a closed restore gate and the Free tier, so **nothing can be applied in a production build**. That is deliberate. To drive the engine by hand use `--features dev-stubs` (never enabled in CI or release). `BlockedCode::TierRequired` was added.
+11. **Known games list** contains only Fortnite, Minecraft and Roblox (the titles named in the plan's game cards). Which other anti-cheat titles to support is still Kegan's decision (Section 11, item 5).
+12. **R14** sets `WEBVIEW2_USER_DATA_FOLDER` only when the process identity differs from the interactive user (the Administrator Protection / alternate-credentials case), and never overrides a value already set.
+13. **R17 detail.** `.reg` export no longer writes wrong data for malformed values: a malformed REG_DWORD or a REG_SZ that does not round-trip exactly is exported as typed hex, not `0` or an empty string.
+14. **`revert_all` order** is by most recent outstanding write, descending, taken from the in-memory journal index.
+15. **Revert is never gated** by tier, predicates or the restore gate. Getting back to how things were must always be possible.
+
+### 15.2 Things in the original code the plan did not list
+
+- `sid_from_token` read a `TOKEN_USER` from a `Vec<u8>` (not 8-byte aligned) and leaked the SID string if UTF-16 conversion failed. Fixed.
+- `Journal::is_applied` and `entries_for` re-read and re-parsed the file per call (R9), and `next_seq` used `.last()` rather than the maximum.
+- The mouse tweak treated a missing `MouseSpeed` as "0" (off), so a fresh profile could read as Applied. A missing value now counts as Windows defaults (acceleration on).
+- `main.rs` swallowed a poisoned engine lock message into `UserContextUnresolved`; it is now `EngineError::Internal`.
+
+### 15.3 Status against the Phase 2.1 gate
+
+See the gate report in the pull request or chat for the command output. Items that can only be checked by hand on real machines, and are **not** done: UAC prompt on launch, Windows 10 22H2 / Windows 11 24H2/25H2 / RDP / alternate-credential runs (R13 matrix), Administrator Protection VM (R14), WebView2 start under Administrator Protection.

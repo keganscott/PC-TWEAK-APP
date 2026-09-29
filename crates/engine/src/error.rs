@@ -2,15 +2,17 @@
 //!
 //! Every variant is `Serialize` because these cross the Tauri boundary and the
 //! frontend renders them. Errors name what failed and what the operator can do
-//! about it — a bare `io::Error` reaching the UI is a bug.
+//! about it; a bare `io::Error` reaching the UI is a bug.
 
 use serde::Serialize;
 use std::fmt;
+use ts_rs::TS;
 
 pub type Result<T> = std::result::Result<T, EngineError>;
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum EngineError {
     /// The process is not running elevated. Nothing mutating can proceed.
     NotElevated,
@@ -30,15 +32,19 @@ pub enum EngineError {
         detail: String,
     },
 
+    /// A registry value has a type we cannot back up and restore exactly, so we
+    /// refuse to change it.
+    UnsupportedValueType { path: String, value: String, vtype: u32 },
+
     /// A Win32 call failed. `code` is the raw GetLastError / HRESULT.
-    Win32 {
-        call: &'static str,
-        code: u32,
-        detail: String,
-    },
+    Win32 { call: String, code: u32, detail: String },
 
     /// Filesystem failure writing a backup or journal entry.
     Storage { path: String, detail: String },
+
+    /// The journal / backup directory is not protected against non-admin
+    /// writes, so its contents cannot be trusted and mutation is refused.
+    InsecureStorage { path: String, detail: String },
 
     /// The journal has no record of this tweak, so there is nothing to restore.
     NoJournalEntry { tweak_id: String },
@@ -49,8 +55,15 @@ pub enum EngineError {
     /// Unknown tweak id from the frontend.
     UnknownTweak { tweak_id: String },
 
-    /// A tweak tried to mutate outside its declared execution context.
+    /// Unknown game id from the frontend.
+    UnknownGame { game_id: String },
+
+    /// A tweak tried to mutate outside its declared execution context or
+    /// outside its declared registry allowlist.
     ContextViolation { tweak_id: String, detail: String },
+
+    /// An internal invariant failed (poisoned lock, panicked worker).
+    Internal { detail: String },
 }
 
 impl fmt::Display for EngineError {
@@ -67,16 +80,27 @@ impl fmt::Display for EngineError {
                 Some(v) => write!(f, "registry {path}\\{v}: {detail}"),
                 None => write!(f, "registry {path}: {detail}"),
             },
+            Self::UnsupportedValueType { path, value, vtype } => {
+                write!(
+                    f,
+                    "registry {path}\\{value} has type {vtype}, which cannot be restored exactly; leaving it alone"
+                )
+            }
             Self::Win32 { call, code, detail } => write!(f, "{call} failed ({code}): {detail}"),
             Self::Storage { path, detail } => write!(f, "{path}: {detail}"),
+            Self::InsecureStorage { path, detail } => {
+                write!(f, "{path} is not safe to trust: {detail}")
+            }
             Self::NoJournalEntry { tweak_id } => {
                 write!(f, "no journal entry for {tweak_id}")
             }
             Self::Blocked { reason } => write!(f, "blocked: {}", reason.message),
             Self::UnknownTweak { tweak_id } => write!(f, "unknown tweak: {tweak_id}"),
+            Self::UnknownGame { game_id } => write!(f, "unknown game: {game_id}"),
             Self::ContextViolation { tweak_id, detail } => {
                 write!(f, "{tweak_id} violated its execution context: {detail}")
             }
+            Self::Internal { detail } => write!(f, "internal error: {detail}"),
         }
     }
 }
@@ -99,9 +123,18 @@ impl EngineError {
         }
     }
 
+    pub fn registry_msg(path: impl Into<String>, value: Option<&str>, detail: impl Into<String>) -> Self {
+        Self::Registry {
+            path: path.into(),
+            value: value.map(str::to_owned),
+            detail: detail.into(),
+        }
+    }
+
+    #[cfg(windows)]
     pub fn win32(call: &'static str, e: windows::core::Error) -> Self {
         Self::Win32 {
-            call,
+            call: call.to_owned(),
             code: e.code().0 as u32,
             detail: e.message(),
         }

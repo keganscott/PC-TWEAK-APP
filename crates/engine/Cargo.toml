@@ -5,9 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# Exposes the in-memory registry, TrustedDir::insecure_for_tests and dev stubs
+# to other crates' tests. Never enabled in a release build.
+test-support = []
+# Development-only stubs: an open restore gate and a paid license. Off by default.
+dev-stubs = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ts-rs = { version = "12", default-features = false, features = ["serde-compat"] }
 
 # Registry and Win32 access. Pinned until Phase 3 compiles (plan R22).
 [target.'cfg(windows)'.dependencies]
@@ -19,8 +27,15 @@ features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ]
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"

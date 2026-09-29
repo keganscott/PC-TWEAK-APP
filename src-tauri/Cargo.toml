@@ -14,10 +14,7 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-[target.'cfg(windows)'.dependencies.windows]
-version = "0.58"
-features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_System_Threading",
-]
+[features]
+# Opens the restore gate and the paid tier so the engine can be driven by hand.
+# Never enabled in CI or release builds.
+dev-stubs = ["peaktweaks-engine/dev-stubs"]

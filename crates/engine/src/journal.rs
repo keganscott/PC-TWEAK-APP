@@ -1,56 +1,84 @@
-//! Transactional journal, `.reg` backup export, and the mutation gateway.
+//! Transactional journal.
 //!
-//! Three guarantees this module exists to provide:
+//! Guarantees this module exists to provide:
 //!
 //! 1. **Nothing is written before its prior value is durable.** Each mutation
 //!    captures the current value, appends a journal record, `fsync`s it, and
 //!    only then touches the registry. A power loss mid-apply leaves a journal
-//!    that describes more than was actually changed, which is recoverable.
-//!    The reverse ordering would leave changes with no record, which is not.
+//!    that describes more than was actually changed, which is recoverable. The
+//!    reverse ordering would leave changes with no record, which is not.
 //!
 //! 2. **Absence is recorded as a value.** If a value did not exist before, the
 //!    journal stores `None` and the `.reg` backup emits `"Name"=-`. Restoring a
 //!    tweak that created a value therefore deletes it rather than writing a
-//!    guessed default. This is the single most commonly botched part of a
-//!    rollback engine.
+//!    guessed default.
 //!
 //! 3. **The journal is readable without this binary.** It is line-delimited
-//!    JSON, one self-contained record per line, with values as comma-separated
-//!    hex. A torn final line from an unclean shutdown is discarded on parse
-//!    rather than poisoning the file. Someone in WinPE with Notepad and the
-//!    `.reg` files can recover a machine that will not boot — which is exactly
-//!    the scenario MSI-mode tweaks can produce.
+//!    JSON, one self-contained record per line, values as comma-separated hex.
+//!    Someone in WinPE with Notepad and the `.reg` files can recover a machine
+//!    that will not boot.
+//!
+//! 4. **A damaged journal degrades, it does not vanish.** A torn final line
+//!    (crash mid-append) is cut off at open and kept in a side file. A bad line
+//!    in the middle is skipped and reported as a `JournalWarning`. Every append
+//!    starts on a fresh line.
+//!
+//! Record kinds: a `write` is one registry change; a `commit` closes a
+//! transaction. Which writes are still "outstanding" (applied and not since
+//! reverted) is derived from the commits, and is what revert replays.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-use super::context::ContextResolver;
 use super::error::{EngineError, Result};
+use super::fsutil;
+use super::secure_dir::TrustedDir;
 use super::types::{ExecutionContext, RawValue, RegRoot};
 
-const JOURNAL_FILE: &str = "journal.jsonl";
-const BACKUP_DIR: &str = "peaktweaks_backups";
+pub const JOURNAL_FILE: &str = "journal.jsonl";
 
 // ---------------------------------------------------------------------------
-// Journal records
+// Records
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// What a transaction was doing when it wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum JournalAction {
     Apply,
     Revert,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// How a transaction ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitAction {
+    /// An apply finished. Its writes are outstanding until a revert commits.
+    Apply,
+    /// A revert finished. Every earlier outstanding apply is now undone.
+    Revert,
+    /// An apply failed and its own writes were undone. Cancels only that
+    /// transaction's writes; earlier applies stay outstanding.
+    Rollback,
+}
+
+/// One registry change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct JournalEntry {
-    /// Monotonic within a file. Rollback replays descending.
+    /// Monotonic within a file.
     pub seq: u64,
-    pub unix_ms: u128,
+    /// The transaction this write belongs to (a `seq` reserved at begin).
+    pub tx_id: u64,
+    pub unix_ms: u64,
     pub tweak_id: String,
     pub action: JournalAction,
     pub context: ExecutionContext,
@@ -63,8 +91,163 @@ pub struct JournalEntry {
     /// `None` means the value did not exist. Restoring it means deleting.
     pub previous: Option<RawValue>,
     pub written: Option<RawValue>,
-    /// Companion `.reg` file, relative to the backup root.
+    /// Companion `.reg` file, relative to the journal directory.
     pub backup_file: String,
+    /// Keys this write had to create, shallowest first, as paths relative to
+    /// `root`. Revert removes them again if they are empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub created_keys: Vec<String>,
+}
+
+/// Closes a transaction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitRecord {
+    pub seq: u64,
+    pub tx_id: u64,
+    pub unix_ms: u64,
+    pub tweak_id: String,
+    pub action: CommitAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "record", rename_all = "snake_case")]
+pub enum Record {
+    Write(JournalEntry),
+    Commit(CommitRecord),
+}
+
+impl Record {
+    pub fn seq(&self) -> u64 {
+        match self {
+            Self::Write(e) => e.seq,
+            Self::Commit(c) => c.seq,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Warnings
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum JournalWarningKind {
+    /// A complete line that is not a valid record. Skipped.
+    UnparsableLine,
+    /// The file ended mid-record. Cut off at open and saved to a side file.
+    TornTail,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct JournalWarning {
+    /// 1-based line number in the journal file.
+    pub line: usize,
+    pub kind: JournalWarningKind,
+    pub detail: String,
+}
+
+// ---------------------------------------------------------------------------
+// Parsing (pure, no I/O)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+pub(crate) struct Parsed {
+    pub records: Vec<Record>,
+    pub warnings: Vec<JournalWarning>,
+    /// Bytes of the file worth keeping; anything after is a torn tail.
+    pub keep_len: usize,
+    /// The last kept record has no trailing newline; one must be added.
+    pub needs_newline: bool,
+    /// The dropped torn tail, if any.
+    pub torn_tail: Option<Vec<u8>>,
+}
+
+pub(crate) fn parse_journal(bytes: &[u8]) -> Parsed {
+    let mut out = Parsed::default();
+    let mut pos = 0usize;
+    let mut line_no = 0usize;
+
+    while pos < bytes.len() {
+        let (line, next, complete) = match bytes[pos..].iter().position(|&b| b == b'\n') {
+            Some(i) => (&bytes[pos..pos + i], pos + i + 1, true),
+            None => (&bytes[pos..], bytes.len(), false),
+        };
+        line_no += 1;
+        let trimmed = line.trim_ascii();
+
+        if trimmed.is_empty() {
+            if complete {
+                out.keep_len = next;
+            } else {
+                // Trailing whitespace with no newline: drop it silently.
+                out.keep_len = pos;
+            }
+            pos = next;
+            continue;
+        }
+
+        match serde_json::from_slice::<Record>(trimmed) {
+            Ok(rec) => {
+                out.records.push(rec);
+                out.keep_len = next;
+                if !complete {
+                    out.needs_newline = true;
+                }
+            }
+            Err(e) if complete => {
+                out.warnings.push(JournalWarning {
+                    line: line_no,
+                    kind: JournalWarningKind::UnparsableLine,
+                    detail: format!("skipped: {e}"),
+                });
+                out.keep_len = next;
+            }
+            Err(e) => {
+                out.warnings.push(JournalWarning {
+                    line: line_no,
+                    kind: JournalWarningKind::TornTail,
+                    detail: format!("{} bytes cut off the end: {e}", line.len()),
+                });
+                out.torn_tail = Some(bytes[pos..].to_vec());
+                out.keep_len = pos;
+            }
+        }
+        pos = next;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Index
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct TweakIndex {
+    /// Apply writes not yet undone, oldest first.
+    outstanding: Vec<JournalEntry>,
+    last_committed: Option<CommitAction>,
+}
+
+impl TweakIndex {
+    fn observe(&mut self, rec: &Record) {
+        match rec {
+            Record::Write(e) if e.action == JournalAction::Apply => self.outstanding.push(e.clone()),
+            Record::Write(_) => {}
+            Record::Commit(c) => match c.action {
+                CommitAction::Apply => self.last_committed = Some(CommitAction::Apply),
+                CommitAction::Revert => {
+                    self.outstanding.retain(|e| e.seq > c.tx_id);
+                    self.last_committed = Some(CommitAction::Revert);
+                }
+                CommitAction::Rollback => self.outstanding.retain(|e| e.tx_id != c.tx_id),
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,22 +258,58 @@ pub struct Journal {
     root: PathBuf,
     journal_path: PathBuf,
     next_seq: u64,
+    records: Vec<Record>,
+    index: HashMap<String, TweakIndex>,
+    warnings: Vec<JournalWarning>,
 }
 
 impl Journal {
-    /// `app_data` is the Tauri app data dir; backups land in
-    /// `<app_data>/peaktweaks_backups/`.
-    pub fn open(app_data: &Path) -> Result<Self> {
-        let root = app_data.join(BACKUP_DIR);
-        fs::create_dir_all(&root).map_err(|e| EngineError::storage(root.display().to_string(), e))?;
-
+    /// Open (or create) the journal in a trusted directory, repairing a torn
+    /// tail. Reads the file once; everything after is served from memory.
+    pub fn open(dir: &TrustedDir) -> Result<Self> {
+        let root = dir.path().to_path_buf();
+        fsutil::create_dir_durable(&root)?;
         let journal_path = root.join(JOURNAL_FILE);
-        let next_seq = Self::read_all_at(&journal_path)?.last().map(|e| e.seq + 1).unwrap_or(1);
+
+        let bytes = match fs::read(&journal_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(EngineError::storage(journal_path.display().to_string(), e)),
+        };
+
+        let parsed = parse_journal(&bytes);
+
+        if let Some(tail) = &parsed.torn_tail {
+            // Keep the evidence, then cut the file back to the last good record.
+            let side = root.join(format!("{JOURNAL_FILE}.torn-{}", now_ms()));
+            fsutil::write_durable(&side, tail)?;
+            fsutil::truncate_durable(&journal_path, parsed.keep_len as u64)?;
+        } else if (parsed.keep_len as usize) < bytes.len() {
+            fsutil::truncate_durable(&journal_path, parsed.keep_len as u64)?;
+        }
+        if parsed.needs_newline {
+            let mut f = OpenOptions::new()
+                .append(true)
+                .open(&journal_path)
+                .map_err(|e| EngineError::storage(journal_path.display().to_string(), e))?;
+            f.write_all(b"\n")
+                .and_then(|()| f.sync_data())
+                .map_err(|e| EngineError::storage(journal_path.display().to_string(), e))?;
+        }
+
+        let next_seq = parsed.records.iter().map(Record::seq).max().map_or(1, |m| m + 1);
+        let mut index: HashMap<String, TweakIndex> = HashMap::new();
+        for rec in &parsed.records {
+            index.entry(record_tweak(rec).to_owned()).or_default().observe(rec);
+        }
 
         Ok(Self {
             root,
             journal_path,
             next_seq,
+            records: parsed.records,
+            index,
+            warnings: parsed.warnings,
         })
     }
 
@@ -98,469 +317,373 @@ impl Journal {
         &self.root
     }
 
-    pub fn entries(&self) -> Result<Vec<JournalEntry>> {
-        Self::read_all_at(&self.journal_path)
+    pub fn journal_path(&self) -> &Path {
+        &self.journal_path
     }
 
-    /// Entries for one tweak, oldest first.
-    pub fn entries_for(&self, tweak_id: &str) -> Result<Vec<JournalEntry>> {
-        Ok(self.entries()?.into_iter().filter(|e| e.tweak_id == tweak_id).collect())
+    /// Warnings found when the file was opened. Shown in the Backups tab.
+    pub fn warnings(&self) -> &[JournalWarning] {
+        &self.warnings
     }
 
-    /// True when the tweak has an apply that has not since been reverted.
-    /// This is what separates `Applied` from `Foreign` in `read_state`.
-    pub fn is_applied(&self, tweak_id: &str) -> Result<bool> {
-        Ok(self
-            .entries_for(tweak_id)?
-            .last()
-            .is_some_and(|e| matches!(e.action, JournalAction::Apply)))
+    pub fn records(&self) -> &[Record] {
+        &self.records
     }
 
-    fn read_all_at(path: &Path) -> Result<Vec<JournalEntry>> {
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(EngineError::storage(path.display().to_string(), e)),
-        };
-
-        let mut out = Vec::new();
-        for line in BufReader::new(file).lines() {
-            let line = match line {
-                Ok(l) => l,
-                // A torn tail from an unclean shutdown. Everything before it is
-                // still valid, so stop rather than fail.
-                Err(_) => break,
-            };
-            if line.trim().is_empty() {
-                continue;
-            }
-            match serde_json::from_str::<JournalEntry>(&line) {
-                Ok(entry) => out.push(entry),
-                Err(_) => break,
-            }
-        }
-        Ok(out)
+    /// Reserve the next sequence number.
+    pub fn take_seq(&mut self) -> u64 {
+        let s = self.next_seq;
+        self.next_seq += 1;
+        s
     }
 
-    /// Append one record and flush it to disk before returning.
-    fn append(&mut self, entry: &JournalEntry) -> Result<()> {
-        let mut line = serde_json::to_string(entry).map_err(|e| EngineError::Storage {
+    /// Writes for one tweak, oldest first.
+    pub fn entries_for(&self, tweak_id: &str) -> Vec<JournalEntry> {
+        self.records
+            .iter()
+            .filter_map(|r| match r {
+                Record::Write(e) if e.tweak_id == tweak_id => Some(e.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Apply writes for this tweak that have not been undone, oldest first.
+    /// This is exactly what a revert replays (newest first).
+    pub fn outstanding(&self, tweak_id: &str) -> &[JournalEntry] {
+        self.index.get(tweak_id).map_or(&[], |i| i.outstanding.as_slice())
+    }
+
+    /// True when the tweak has an apply that has not since been reverted. This
+    /// is what separates `Applied` from `Foreign` in `read_state`.
+    pub fn is_applied(&self, tweak_id: &str) -> bool {
+        !self.outstanding(tweak_id).is_empty()
+    }
+
+    pub fn last_committed(&self, tweak_id: &str) -> Option<CommitAction> {
+        self.index.get(tweak_id).and_then(|i| i.last_committed)
+    }
+
+    /// Tweaks with outstanding applies, most recently applied first. Reverting
+    /// in this order undoes overlapping tweaks in the reverse of how they were
+    /// stacked.
+    pub fn applied_tweaks_newest_first(&self) -> Vec<String> {
+        let mut v: Vec<(u64, String)> = self
+            .index
+            .iter()
+            .filter_map(|(id, i)| i.outstanding.iter().map(|e| e.seq).max().map(|s| (s, id.clone())))
+            .collect();
+        v.sort_by(|a, b| b.0.cmp(&a.0));
+        v.into_iter().map(|(_, id)| id).collect()
+    }
+
+    pub fn append_write(&mut self, entry: JournalEntry) -> Result<()> {
+        self.append(Record::Write(entry))
+    }
+
+    pub fn append_commit(&mut self, commit: CommitRecord) -> Result<()> {
+        self.append(Record::Commit(commit))
+    }
+
+    /// Append one record on a fresh line and flush it to disk before returning.
+    /// The in-memory state only changes once the record is durable.
+    fn append(&mut self, rec: Record) -> Result<()> {
+        let storage = |e: std::io::Error| EngineError::storage(self.journal_path.display().to_string(), e);
+
+        let mut line = serde_json::to_vec(&rec).map_err(|e| EngineError::Storage {
             path: self.journal_path.display().to_string(),
-            detail: format!("serialising journal entry: {e}"),
+            detail: format!("serialising journal record: {e}"),
         })?;
-        line.push('\n');
+        line.push(b'\n');
 
+        let existed = self.journal_path.exists();
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
+            .read(true)
             .open(&self.journal_path)
-            .map_err(|e| EngineError::storage(self.journal_path.display().to_string(), e))?;
+            .map_err(storage)?;
 
-        // Single write_all keeps the record contiguous; sync_data makes it
-        // durable before the registry is touched.
-        f.write_all(line.as_bytes())
-            .map_err(|e| EngineError::storage(self.journal_path.display().to_string(), e))?;
-        f.sync_data()
-            .map_err(|e| EngineError::storage(self.journal_path.display().to_string(), e))?;
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// .reg export
-// ---------------------------------------------------------------------------
-
-/// Emit a `.reg` file restoring one value to `previous`.
-///
-/// Written as UTF-16LE with a BOM, which is what `regedit.exe` requires for the
-/// "Windows Registry Editor Version 5.00" header. A UTF-8 `.reg` file imports
-/// as mojibake and is a classic silent-corruption bug.
-fn write_reg_backup(
-    dir: &Path,
-    file_stem: &str,
-    display_path: &str,
-    value_name: &str,
-    previous: Option<&RawValue>,
-) -> Result<PathBuf> {
-    fs::create_dir_all(dir).map_err(|e| EngineError::storage(dir.display().to_string(), e))?;
-    let path = dir.join(format!("{file_stem}.reg"));
-
-    let mut text = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
-    text.push_str(&format!("[{display_path}]\r\n"));
-    text.push_str(&format!("{}\r\n", reg_value_line(value_name, previous)));
-
-    let mut bytes: Vec<u8> = vec![0xFF, 0xFE]; // UTF-16LE BOM
-    bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
-
-    fs::write(&path, &bytes).map_err(|e| EngineError::storage(path.display().to_string(), e))?;
-    Ok(path)
-}
-
-/// One `.reg` value line. `None` produces a deletion directive.
-fn reg_value_line(name: &str, value: Option<&RawValue>) -> String {
-    let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
-
-    let Some(v) = value else {
-        // The value did not exist. Restoring means removing it.
-        return format!("\"{escaped}\"=-");
-    };
-
-    match v.vtype {
-        // REG_SZ
-        1 => {
-            let s = v.as_sz().unwrap_or_default();
-            let s = s.replace('\\', "\\\\").replace('"', "\\\"");
-            format!("\"{escaped}\"=\"{s}\"")
-        }
-        // REG_DWORD
-        4 => format!("\"{escaped}\"=dword:{:08x}", v.as_dword().unwrap_or(0)),
-        // REG_BINARY
-        3 => format!("\"{escaped}\"=hex:{}", hex_wrapped(&v.bytes, escaped.len() + 7)),
-        // Everything else uses the typed hex form: hex(2) expand_sz,
-        // hex(7) multi_sz, hex(b) qword, hex(0) none.
-        other => format!(
-            "\"{escaped}\"=hex({:x}):{}",
-            other,
-            hex_wrapped(&v.bytes, escaped.len() + 12)
-        ),
-    }
-}
-
-/// Comma-separated hex with `\` continuations. `.reg` lines wrap at 80 columns;
-/// regedit tolerates longer but other parsers do not, so we conform.
-fn hex_wrapped(bytes: &[u8], first_line_prefix: usize) -> String {
-    if bytes.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-    let mut col = first_line_prefix;
-
-    for (i, b) in bytes.iter().enumerate() {
-        let last = i == bytes.len() - 1;
-        let chunk = if last { format!("{b:02x}") } else { format!("{b:02x},") };
-
-        if col + chunk.len() > 76 {
-            out.push_str("\\\r\n  ");
-            col = 2;
-        }
-        col += chunk.len();
-        out.push_str(&chunk);
-    }
-    out
-}
-
-// ---------------------------------------------------------------------------
-// Transaction — the only path to a mutation
-// ---------------------------------------------------------------------------
-
-/// Handed to `Tweak::apply` and `Tweak::revert`. Every write goes through here,
-/// so every write is backed up and journalled. There is no escape hatch, which
-/// is the point.
-pub struct Transaction<'a> {
-    tweak_id: &'static str,
-    context: ExecutionContext,
-    resolver: &'a ContextResolver,
-    journal: &'a mut Journal,
-    session_dir: PathBuf,
-    action: JournalAction,
-    written: Vec<JournalEntry>,
-}
-
-impl<'a> Transaction<'a> {
-    pub fn begin(
-        tweak_id: &'static str,
-        context: ExecutionContext,
-        resolver: &'a ContextResolver,
-        journal: &'a mut Journal,
-        action: JournalAction,
-    ) -> Result<Self> {
-        if !resolver.elevated() {
-            return Err(EngineError::NotElevated);
-        }
-        let session_dir = journal.root().join(date_stamp());
-        Ok(Self {
-            tweak_id,
-            context,
-            resolver,
-            journal,
-            session_dir,
-            action,
-            written: Vec::new(),
-        })
-    }
-
-    /// Records touched by this transaction, for the UI and for undo.
-    pub fn written(&self) -> &[JournalEntry] {
-        &self.written
-    }
-
-    pub fn set_dword(&mut self, root: RegRoot, key: &str, name: &str, value: u32) -> Result<()> {
-        self.set_raw(root, key, name, RawValue::dword(value))
-    }
-
-    pub fn set_string(&mut self, root: RegRoot, key: &str, name: &str, value: &str) -> Result<()> {
-        self.set_raw(root, key, name, RawValue::sz(value))
-    }
-
-    /// Core mutation. Read prior value, back it up, journal it, then write.
-    pub fn set_raw(&mut self, root: RegRoot, key: &str, name: &str, value: RawValue) -> Result<()> {
-        self.guard_context(root)?;
-
-        let display_path = self.resolver.display_path(root, key);
-        let previous = self.read_current(root, key, name)?;
-
-        // No-op writes still cost a journal entry and a backup file, so skip
-        // them. Reverting to a value that is already set is common — a user
-        // toggling twice — and should not litter the backup directory.
-        if previous.as_ref() == Some(&value) {
-            return Ok(());
-        }
-
-        let seq = self.journal.next_seq;
-        let stem = format!("{}_{}_{}", seq, sanitise(self.tweak_id), sanitise(name));
-        let backup = write_reg_backup(&self.session_dir, &stem, &display_path, name, previous.as_ref())?;
-        let backup_rel = backup
-            .strip_prefix(self.journal.root())
-            .unwrap_or(&backup)
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        let entry = JournalEntry {
-            seq,
-            unix_ms: now_ms(),
-            tweak_id: self.tweak_id.to_string(),
-            action: self.action.clone(),
-            context: self.context,
-            root,
-            key_path: key.to_string(),
-            display_path: display_path.clone(),
-            value_name: name.to_string(),
-            previous,
-            written: Some(value.clone()),
-            backup_file: backup_rel,
-        };
-
-        // Durable before the registry moves. Ordering is load-bearing.
-        self.journal.append(&entry)?;
-        self.journal.next_seq += 1;
-
-        let regkey = self.resolver.open(root, key, true)?;
-        let raw = winreg::RegValue {
-            bytes: value.bytes.clone(),
-            vtype: vtype_from_u32(value.vtype),
-        };
-        regkey
-            .set_raw_value(name, &raw)
-            .map_err(|e| EngineError::registry(display_path, Some(name), e))?;
-
-        self.written.push(entry);
-        Ok(())
-    }
-
-    /// Delete a value, recording its prior contents so it can come back.
-    pub fn delete_value(&mut self, root: RegRoot, key: &str, name: &str) -> Result<()> {
-        self.guard_context(root)?;
-
-        let display_path = self.resolver.display_path(root, key);
-        let Some(previous) = self.read_current(root, key, name)? else {
-            return Ok(()); // already absent
-        };
-
-        let seq = self.journal.next_seq;
-        let stem = format!("{}_{}_{}", seq, sanitise(self.tweak_id), sanitise(name));
-        let backup = write_reg_backup(&self.session_dir, &stem, &display_path, name, Some(&previous))?;
-        let backup_rel = backup
-            .strip_prefix(self.journal.root())
-            .unwrap_or(&backup)
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        let entry = JournalEntry {
-            seq,
-            unix_ms: now_ms(),
-            tweak_id: self.tweak_id.to_string(),
-            action: self.action.clone(),
-            context: self.context,
-            root,
-            key_path: key.to_string(),
-            display_path: display_path.clone(),
-            value_name: name.to_string(),
-            previous: Some(previous),
-            written: None,
-            backup_file: backup_rel,
-        };
-
-        self.journal.append(&entry)?;
-        self.journal.next_seq += 1;
-
-        let regkey = self.resolver.open(root, key, false)?;
-        regkey
-            .delete_value(name)
-            .map_err(|e| EngineError::registry(display_path, Some(name), e))?;
-
-        self.written.push(entry);
-        Ok(())
-    }
-
-    /// Default revert path: replay this tweak's apply records in reverse,
-    /// putting each value back to `previous` — deleting it when `previous` was
-    /// `None`, which is the case that matters.
-    pub fn restore_journalled(&mut self, tweak_id: &str) -> Result<()> {
-        let mut applies: Vec<JournalEntry> = self
-            .journal
-            .entries_for(tweak_id)?
-            .into_iter()
-            .filter(|e| matches!(e.action, JournalAction::Apply))
-            .collect();
-
-        if applies.is_empty() {
-            return Err(EngineError::NoJournalEntry {
-                tweak_id: tweak_id.to_string(),
-            });
-        }
-
-        applies.sort_by_key(|e| std::cmp::Reverse(e.seq));
-
-        for entry in applies {
-            match entry.previous.clone() {
-                Some(prev) => self.set_raw(entry.root, &entry.key_path, &entry.value_name, prev)?,
-                None => self.delete_value(entry.root, &entry.key_path, &entry.value_name)?,
+        // A previous append that failed midway can leave a partial line. Start
+        // on a fresh line so the new record is never glued to it.
+        let len = f.metadata().map_err(storage)?.len();
+        let mut buf = Vec::with_capacity(line.len() + 1);
+        if len > 0 {
+            let mut last = [0u8; 1];
+            f.seek(SeekFrom::End(-1)).map_err(storage)?;
+            f.read_exact(&mut last).map_err(storage)?;
+            if last[0] != b'\n' {
+                buf.push(b'\n');
             }
         }
-        Ok(())
-    }
+        buf.extend_from_slice(&line);
 
-    /// A `User`-context tweak must not reach HKLM, and vice versa. Without this
-    /// the context split is a naming convention rather than a guarantee.
-    fn guard_context(&self, root: RegRoot) -> Result<()> {
-        if root.required_context() != self.context {
-            return Err(EngineError::ContextViolation {
-                tweak_id: self.tweak_id.to_string(),
-                detail: format!("declared {:?} but attempted a write to {:?}", self.context, root),
-            });
+        // One write_all keeps the record contiguous; sync_data makes it durable
+        // before the registry is touched.
+        f.write_all(&buf).map_err(storage)?;
+        f.sync_data().map_err(storage)?;
+        drop(f);
+        if !existed {
+            fsutil::sync_dir(&self.root)?;
         }
-        Ok(())
-    }
 
-    fn read_current(&self, root: RegRoot, key: &str, name: &str) -> Result<Option<RawValue>> {
-        let Ok(regkey) = self.resolver.open_read(root, key) else {
-            return Ok(None); // key absent means value absent
-        };
-        match regkey.get_raw_value(name) {
-            Ok(v) => Ok(Some(RawValue {
-                vtype: v.vtype as u32,
-                bytes: v.bytes,
-            })),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(EngineError::registry(
-                self.resolver.display_path(root, key),
-                Some(name),
-                e,
-            )),
-        }
+        self.index
+            .entry(record_tweak(&rec).to_owned())
+            .or_default()
+            .observe(&rec);
+        self.records.push(rec);
+        Ok(())
     }
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-fn vtype_from_u32(v: u32) -> winreg::enums::RegType {
-    use winreg::enums::RegType::*;
-    match v {
-        1 => REG_SZ,
-        2 => REG_EXPAND_SZ,
-        3 => REG_BINARY,
-        4 => REG_DWORD,
-        5 => REG_DWORD_BIG_ENDIAN,
-        6 => REG_LINK,
-        7 => REG_MULTI_SZ,
-        11 => REG_QWORD,
-        _ => REG_NONE,
+fn record_tweak(rec: &Record) -> &str {
+    match rec {
+        Record::Write(e) => &e.tweak_id,
+        Record::Commit(c) => &c.tweak_id,
     }
 }
 
-fn now_ms() -> u128 {
+pub fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// `YYYY-MM-DD` without pulling in chrono. Days since epoch via civil-from-days.
-fn date_stamp() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// Howard Hinnant's civil_from_days.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-/// Registry value names allow characters that filenames do not.
-fn sanitise(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ExecutionContext;
 
-    #[test]
-    fn absent_value_becomes_a_deletion_directive() {
-        assert_eq!(
-            reg_value_line("Win32PrioritySeparation", None),
-            "\"Win32PrioritySeparation\"=-"
-        );
+    pub(crate) fn entry(seq: u64, tx_id: u64, tweak: &str, action: JournalAction) -> JournalEntry {
+        JournalEntry {
+            seq,
+            tx_id,
+            unix_ms: 0,
+            tweak_id: tweak.into(),
+            action,
+            context: ExecutionContext::Service,
+            root: RegRoot::LocalMachine,
+            key_path: "K".into(),
+            display_path: "HKEY_LOCAL_MACHINE\\K".into(),
+            value_name: "V".into(),
+            previous: Some(RawValue::dword(1)),
+            written: Some(RawValue::dword(2)),
+            backup_file: "b.reg".into(),
+            created_keys: vec![],
+        }
+    }
+
+    pub(crate) fn commit(seq: u64, tx_id: u64, tweak: &str, action: CommitAction) -> CommitRecord {
+        CommitRecord {
+            seq,
+            tx_id,
+            unix_ms: 0,
+            tweak_id: tweak.into(),
+            action,
+        }
+    }
+
+    fn line(rec: &Record) -> Vec<u8> {
+        let mut v = serde_json::to_vec(rec).unwrap();
+        v.push(b'\n');
+        v
+    }
+
+    fn open_in(dir: &tempfile::TempDir) -> Journal {
+        Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap()
+    }
+
+    fn write_raw(dir: &tempfile::TempDir, bytes: &[u8]) {
+        fs::write(dir.path().join(JOURNAL_FILE), bytes).unwrap();
     }
 
     #[test]
-    fn dword_is_eight_hex_digits() {
-        let line = reg_value_line("X", Some(&RawValue::dword(0x26)));
-        assert_eq!(line, "\"X\"=dword:00000026");
+    fn records_round_trip_as_single_lines() {
+        let rec = Record::Write(entry(1, 1, "t", JournalAction::Apply));
+        let bytes = line(&rec);
+        assert_eq!(bytes.iter().filter(|&&b| b == b'\n').count(), 1);
+        let p = parse_journal(&bytes);
+        assert_eq!(p.records, vec![rec]);
+        assert!(p.warnings.is_empty());
+        assert_eq!(p.keep_len, bytes.len());
     }
 
     #[test]
-    fn sz_roundtrips_through_utf16() {
-        let v = RawValue::sz("0");
-        assert_eq!(v.as_sz().as_deref(), Some("0"));
-        assert_eq!(reg_value_line("MouseSpeed", Some(&v)), "\"MouseSpeed\"=\"0\"");
+    fn empty_file_opens_with_seq_one() {
+        let d = tempfile::tempdir().unwrap();
+        write_raw(&d, b"");
+        let mut j = open_in(&d);
+        assert_eq!(j.take_seq(), 1);
+        assert!(j.warnings().is_empty());
     }
 
     #[test]
-    fn long_binary_values_wrap() {
-        let v = RawValue {
-            vtype: 3,
-            bytes: vec![0xAB; 64],
-        };
-        let line = reg_value_line("Curve", Some(&v));
-        assert!(line.contains("\\\r\n"), "expected a continuation, got: {line}");
+    fn torn_final_line_is_cut_off_saved_and_next_append_is_readable() {
+        let d = tempfile::tempdir().unwrap();
+        let good = Record::Write(entry(1, 1, "t", JournalAction::Apply));
+        let mut bytes = line(&good);
+        let second = line(&Record::Write(entry(2, 1, "t", JournalAction::Apply)));
+        bytes.extend_from_slice(&second[..second.len() / 2]); // torn, no newline
+        write_raw(&d, &bytes);
+
+        let mut j = open_in(&d);
+        assert_eq!(j.records().len(), 1);
+        assert_eq!(j.warnings().len(), 1);
+        assert_eq!(j.warnings()[0].kind, JournalWarningKind::TornTail);
+        // Evidence kept.
+        let torn: Vec<_> = fs::read_dir(d.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".torn-"))
+            .collect();
+        assert_eq!(torn.len(), 1);
+        // File cut back to the good record.
+        assert_eq!(fs::read(d.path().join(JOURNAL_FILE)).unwrap(), line(&good));
+
+        let seq = j.take_seq();
+        assert_eq!(seq, 2);
+        j.append_write(entry(seq, 1, "t", JournalAction::Apply)).unwrap();
+        let reopened = open_in(&d);
+        assert_eq!(reopened.records().len(), 2);
+        assert!(reopened.warnings().is_empty());
     }
 
     #[test]
-    fn backslashes_in_names_are_escaped() {
-        assert_eq!(reg_value_line("a\\b", None), "\"a\\\\b\"=-");
+    fn complete_final_record_without_newline_is_kept_and_terminated() {
+        let d = tempfile::tempdir().unwrap();
+        let mut bytes = line(&Record::Write(entry(1, 1, "t", JournalAction::Apply)));
+        bytes.pop(); // drop the newline only
+        write_raw(&d, &bytes);
+
+        let mut j = open_in(&d);
+        assert_eq!(j.records().len(), 1);
+        assert!(j.warnings().is_empty());
+        let seq = j.take_seq();
+        j.append_write(entry(seq, 1, "t", JournalAction::Apply)).unwrap();
+        assert_eq!(open_in(&d).records().len(), 2);
+    }
+
+    #[test]
+    fn garbage_mid_file_is_skipped_with_a_warning_and_later_records_survive() {
+        let d = tempfile::tempdir().unwrap();
+        let mut bytes = line(&Record::Write(entry(1, 1, "t", JournalAction::Apply)));
+        bytes.extend_from_slice(b"{this is not json\n");
+        bytes.extend_from_slice(&line(&Record::Commit(commit(2, 1, "t", CommitAction::Apply))));
+        write_raw(&d, &bytes);
+
+        let j = open_in(&d);
+        assert_eq!(j.records().len(), 2, "records after the garbage line must survive");
+        assert_eq!(j.warnings().len(), 1);
+        assert_eq!(j.warnings()[0].kind, JournalWarningKind::UnparsableLine);
+        assert_eq!(j.warnings()[0].line, 2);
+        assert!(j.is_applied("t"));
+        assert_eq!(j.last_committed("t"), Some(CommitAction::Apply));
+    }
+
+    #[test]
+    fn trailing_partial_utf8_is_treated_as_a_torn_tail() {
+        let d = tempfile::tempdir().unwrap();
+        let mut bytes = line(&Record::Write(entry(1, 1, "t", JournalAction::Apply)));
+        bytes.extend_from_slice(&[b'{', b'"', 0xE2, 0x82]); // half of a 3-byte char
+        write_raw(&d, &bytes);
+
+        let mut j = open_in(&d);
+        assert_eq!(j.records().len(), 1);
+        assert_eq!(j.warnings()[0].kind, JournalWarningKind::TornTail);
+        let seq = j.take_seq();
+        j.append_commit(commit(seq, 1, "t", CommitAction::Apply)).unwrap();
+        assert_eq!(open_in(&d).records().len(), 2);
+    }
+
+    #[test]
+    fn append_after_a_failed_partial_append_starts_a_new_line() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open_in(&d);
+        let s = j.take_seq();
+        j.append_write(entry(s, s, "t", JournalAction::Apply)).unwrap();
+        // Simulate a partial write left by a failed append.
+        let path = d.path().join(JOURNAL_FILE);
+        let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(b"{\"record\":\"wri").unwrap();
+        drop(f);
+
+        let s = j.take_seq();
+        j.append_write(entry(s, s, "t", JournalAction::Apply)).unwrap();
+        let reopened = open_in(&d);
+        assert_eq!(reopened.records().len(), 2);
+        assert_eq!(reopened.warnings().len(), 1, "the partial line is reported, not fatal");
+    }
+
+    #[test]
+    fn seq_is_monotonic_across_reopen() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open_in(&d);
+        let mut last = 0;
+        for _ in 0..3 {
+            let s = j.take_seq();
+            assert!(s > last);
+            last = s;
+            j.append_write(entry(s, s, "t", JournalAction::Apply)).unwrap();
+        }
+        let mut j2 = open_in(&d);
+        assert!(j2.take_seq() > last);
+    }
+
+    #[test]
+    fn outstanding_tracks_commits() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open_in(&d);
+        // tx 1: apply, committed
+        j.append_write(entry(2, 1, "t", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(3, 1, "t", CommitAction::Apply)).unwrap();
+        assert!(j.is_applied("t"));
+        // tx 4: revert, committed
+        j.append_write(entry(5, 4, "t", JournalAction::Revert)).unwrap();
+        j.append_commit(commit(6, 4, "t", CommitAction::Revert)).unwrap();
+        assert!(!j.is_applied("t"));
+        assert_eq!(j.last_committed("t"), Some(CommitAction::Revert));
+        // tx 7: apply that gets rolled back must not disturb earlier state
+        j.append_write(entry(8, 7, "t", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(9, 7, "t", CommitAction::Rollback)).unwrap();
+        assert!(!j.is_applied("t"));
+    }
+
+    #[test]
+    fn rollback_cancels_only_its_own_transaction() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open_in(&d);
+        j.append_write(entry(2, 1, "t", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(3, 1, "t", CommitAction::Apply)).unwrap();
+        j.append_write(entry(5, 4, "t", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(6, 4, "t", CommitAction::Rollback)).unwrap();
+        assert_eq!(j.outstanding("t").len(), 1);
+        assert_eq!(j.outstanding("t")[0].seq, 2);
+    }
+
+    #[test]
+    fn uncommitted_trailing_apply_counts_as_outstanding() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open_in(&d);
+        j.append_write(entry(2, 1, "t", JournalAction::Apply)).unwrap();
+        let re = open_in(&d);
+        assert!(re.is_applied("t"));
+        assert_eq!(re.last_committed("t"), None);
+    }
+
+    #[test]
+    fn applied_tweaks_are_ordered_by_last_apply_newest_first() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open_in(&d);
+        j.append_write(entry(2, 1, "a", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(3, 1, "a", CommitAction::Apply)).unwrap();
+        j.append_write(entry(5, 4, "b", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(6, 4, "b", CommitAction::Apply)).unwrap();
+        assert_eq!(j.applied_tweaks_newest_first(), vec!["b", "a"]);
+        // Re-applying "a" makes it the newest.
+        j.append_write(entry(8, 7, "a", JournalAction::Apply)).unwrap();
+        j.append_commit(commit(9, 7, "a", CommitAction::Apply)).unwrap();
+        assert_eq!(j.applied_tweaks_newest_first(), vec!["a", "b"]);
     }
 }

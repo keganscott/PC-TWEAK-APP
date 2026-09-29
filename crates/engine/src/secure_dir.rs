@@ -324,15 +324,18 @@ mod imp {
         #[test]
         fn a_directory_owned_by_a_standard_user_is_refused() {
             let user = format!("ptsq{}", std::process::id() % 100_000);
-            let password = "Pt!Sq-7Tmp-9x2Qz";
+            // 14 characters or fewer: `net user` stops to ask a question above that
+            // (it warns about pre-Windows-2000 machines), which fails without a console.
+            let password = "Pt!Sq7Tm-9x2Q";
             let created = std::process::Command::new("net")
                 .args(["user", &user, password, "/add"])
                 .output()
                 .expect("net user");
             if !created.status.success() {
                 println!(
-                    "NOT VERIFIED: could not create a local user here: {}",
-                    String::from_utf8_lossy(&created.stdout)
+                    "NOT VERIFIED: could not create a local user here: {} {}",
+                    String::from_utf8_lossy(&created.stdout),
+                    String::from_utf8_lossy(&created.stderr)
                 );
                 return;
             }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window: core defaults plus the explicit PeakTweaks command list. No fs, shell, http or opener plugins.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -11,10 +11,10 @@
 //! close to nothing on 8 threads or more. It is graded `Moderate` for that
 //! reason, not because it is risky.
 
-use crate::engine::context::ContextResolver;
-use crate::engine::error::Result;
-use crate::engine::journal::Transaction;
-use crate::engine::types::{
+use crate::context::ContextResolver;
+use crate::error::Result;
+use crate::journal::Transaction;
+use crate::types::{
     BlockedCode, BlockedReason, ExecutionContext, Impact, PredicateOutcome, RegRoot, SafetyTier, SystemEnv, Tier,
     Tweak, TweakMetadata, TweakState,
 };

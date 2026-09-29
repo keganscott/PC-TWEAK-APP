@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # The real gate: the app only ever runs on Windows.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo check
+        run: cargo check --workspace --all-targets
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: npm ci
+        run: npm ci
+
+      - name: tsc --noEmit
+        run: npm run typecheck
+
+      - name: vite build
+        run: npm run build
+
+      - name: tauri build (no bundle)
+        run: npx tauri build --no-bundle
+
+      - name: Check the manifest was embedded once and asks for admin
+        shell: pwsh
+        run: |
+          $exe = "target\release\peaktweaks.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not built" }
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          $admin = ([regex]::Matches($text, 'requireAdministrator')).Count
+          $cc6 = ([regex]::Matches($text, 'Microsoft\.Windows\.Common-Controls')).Count
+          Write-Host "requireAdministrator x$admin, Common-Controls x$cc6"
+          if ($admin -lt 1) { throw "manifest does not request requireAdministrator" }
+          if ($cc6 -lt 1) { throw "manifest lost the Common Controls v6 dependency" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peaktweaks-exe
+          path: target/release/peaktweaks.exe
+          if-no-files-found: error

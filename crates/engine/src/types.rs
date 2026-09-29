@@ -73,7 +73,10 @@ pub struct RawValue {
 
 impl RawValue {
     pub fn dword(v: u32) -> Self {
-        Self { vtype: 4, bytes: v.to_le_bytes().to_vec() }
+        Self {
+            vtype: 4,
+            bytes: v.to_le_bytes().to_vec(),
+        }
     }
 
     pub fn sz(s: &str) -> Self {
@@ -184,7 +187,11 @@ pub struct BlockedReason {
 
 impl BlockedReason {
     pub fn new(code: BlockedCode, message: impl Into<String>) -> Self {
-        Self { code, trigger: None, message: message.into() }
+        Self {
+            code,
+            trigger: None,
+            message: message.into(),
+        }
     }
 
     pub fn with_trigger(mut self, trigger: impl Into<String>) -> Self {

@@ -27,7 +27,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use winreg::enums::REG_NONE;
 
 use super::context::ContextResolver;
 use super::error::{EngineError, Result};
@@ -86,12 +85,13 @@ impl Journal {
         fs::create_dir_all(&root).map_err(|e| EngineError::storage(root.display().to_string(), e))?;
 
         let journal_path = root.join(JOURNAL_FILE);
-        let next_seq = Self::read_all_at(&journal_path)?
-            .last()
-            .map(|e| e.seq + 1)
-            .unwrap_or(1);
+        let next_seq = Self::read_all_at(&journal_path)?.last().map(|e| e.seq + 1).unwrap_or(1);
 
-        Ok(Self { root, journal_path, next_seq })
+        Ok(Self {
+            root,
+            journal_path,
+            next_seq,
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -436,10 +436,7 @@ impl<'a> Transaction<'a> {
         if root.required_context() != self.context {
             return Err(EngineError::ContextViolation {
                 tweak_id: self.tweak_id.to_string(),
-                detail: format!(
-                    "declared {:?} but attempted a write to {:?}",
-                    self.context, root
-                ),
+                detail: format!("declared {:?} but attempted a write to {:?}", self.context, root),
             });
         }
         Ok(())
@@ -517,7 +514,13 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// Registry value names allow characters that filenames do not.
 fn sanitise(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -527,7 +530,10 @@ mod tests {
 
     #[test]
     fn absent_value_becomes_a_deletion_directive() {
-        assert_eq!(reg_value_line("Win32PrioritySeparation", None), "\"Win32PrioritySeparation\"=-");
+        assert_eq!(
+            reg_value_line("Win32PrioritySeparation", None),
+            "\"Win32PrioritySeparation\"=-"
+        );
     }
 
     #[test]
@@ -545,7 +551,10 @@ mod tests {
 
     #[test]
     fn long_binary_values_wrap() {
-        let v = RawValue { vtype: 3, bytes: vec![0xAB; 64] };
+        let v = RawValue {
+            vtype: 3,
+            bytes: vec![0xAB; 64],
+        };
         let line = reg_value_line("Curve", Some(&v));
         assert!(line.contains("\\\r\n"), "expected a continuation, got: {line}");
     }

@@ -1,12 +1,12 @@
-//! Engine orchestration and Tauri command surface.
+//! Engine orchestration.
 
 pub mod context;
 pub mod error;
 pub mod journal;
+pub mod tweaks;
 pub mod types;
 
 use std::path::Path;
-use std::sync::Mutex;
 
 use serde::Serialize;
 
@@ -45,8 +45,16 @@ impl Engine {
     pub fn new(app_data: &Path, elevated: bool, tweaks: Vec<Box<dyn Tweak>>) -> Result<Self> {
         let resolver = ContextResolver::detect(elevated)?;
         let journal = Journal::open(app_data)?;
-        let env = SystemEnv { elevated, ..Default::default() };
-        Ok(Self { resolver, journal, tweaks, env })
+        let env = SystemEnv {
+            elevated,
+            ..Default::default()
+        };
+        Ok(Self {
+            resolver,
+            journal,
+            tweaks,
+            env,
+        })
     }
 
     pub fn context_info(&self) -> ContextInfo {
@@ -75,7 +83,9 @@ impl Engine {
             .iter()
             .find(|t| t.id() == id)
             .map(|b| b.as_ref())
-            .ok_or_else(|| EngineError::UnknownTweak { tweak_id: id.to_string() })
+            .ok_or_else(|| EngineError::UnknownTweak {
+                tweak_id: id.to_string(),
+            })
     }
 
     pub fn list(&self) -> Result<Vec<TweakView>> {
@@ -91,9 +101,7 @@ impl Engine {
                     let applied = self.journal.is_applied(tweak.id())?;
                     // A read failure is a state, not a crash — a missing key on
                     // an unusual SKU should degrade to Default, not kill the list.
-                    tweak
-                        .read_state(&self.resolver, applied)
-                        .unwrap_or(TweakState::Default)
+                    tweak.read_state(&self.resolver, applied).unwrap_or(TweakState::Default)
                 }
             };
 
@@ -131,9 +139,16 @@ impl Engine {
             .tweaks
             .iter()
             .position(|t| t.id() == id_static)
-            .ok_or_else(|| EngineError::UnknownTweak { tweak_id: id.to_string() })?;
+            .ok_or_else(|| EngineError::UnknownTweak {
+                tweak_id: id.to_string(),
+            })?;
 
-        let Engine { resolver, journal, tweaks, .. } = self;
+        let Engine {
+            resolver,
+            journal,
+            tweaks,
+            ..
+        } = self;
         let tweak = &tweaks[idx];
 
         let mut tx = Transaction::begin(id_static, ctx, resolver, journal, JournalAction::Apply)?;
@@ -146,10 +161,17 @@ impl Engine {
             .tweaks
             .iter()
             .position(|t| t.id() == id)
-            .ok_or_else(|| EngineError::UnknownTweak { tweak_id: id.to_string() })?;
+            .ok_or_else(|| EngineError::UnknownTweak {
+                tweak_id: id.to_string(),
+            })?;
 
         let (id_static, ctx) = (self.tweaks[idx].id(), self.tweaks[idx].execution_context());
-        let Engine { resolver, journal, tweaks, .. } = self;
+        let Engine {
+            resolver,
+            journal,
+            tweaks,
+            ..
+        } = self;
         let tweak = &tweaks[idx];
 
         let mut tx = Transaction::begin(id_static, ctx, resolver, journal, JournalAction::Revert)?;
@@ -181,56 +203,4 @@ impl Engine {
     pub fn journal_entries(&self) -> Result<Vec<JournalEntry>> {
         self.journal.entries()
     }
-}
-
-// ---------------------------------------------------------------------------
-// Tauri commands
-// ---------------------------------------------------------------------------
-
-pub type EngineState = Mutex<Engine>;
-
-/// The mutex is poisoned only if a command panicked while holding it, which
-/// means engine state is untrustworthy. Surface that rather than papering over
-/// it with `into_inner`.
-fn lock(state: &EngineState) -> Result<std::sync::MutexGuard<'_, Engine>> {
-    state.lock().map_err(|_| EngineError::UserContextUnresolved {
-        detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
-    })
-}
-
-#[tauri::command]
-pub fn engine_context(state: tauri::State<'_, EngineState>) -> Result<ContextInfo> {
-    Ok(lock(&state)?.context_info())
-}
-
-#[tauri::command]
-pub fn list_tweaks(state: tauri::State<'_, EngineState>) -> Result<Vec<TweakView>> {
-    lock(&state)?.list()
-}
-
-#[tauri::command]
-pub fn set_environment(state: tauri::State<'_, EngineState>, env: SystemEnv) -> Result<Vec<TweakView>> {
-    let mut engine = lock(&state)?;
-    engine.set_env(env);
-    engine.list()
-}
-
-#[tauri::command]
-pub fn apply_tweak(state: tauri::State<'_, EngineState>, id: String) -> Result<Vec<JournalEntry>> {
-    lock(&state)?.apply(&id)
-}
-
-#[tauri::command]
-pub fn revert_tweak(state: tauri::State<'_, EngineState>, id: String) -> Result<Vec<JournalEntry>> {
-    lock(&state)?.revert(&id)
-}
-
-#[tauri::command]
-pub fn revert_all(state: tauri::State<'_, EngineState>) -> Result<Vec<(String, Option<String>)>> {
-    lock(&state)?.revert_all()
-}
-
-#[tauri::command]
-pub fn list_journal(state: tauri::State<'_, EngineState>) -> Result<Vec<JournalEntry>> {
-    lock(&state)?.journal_entries()
 }

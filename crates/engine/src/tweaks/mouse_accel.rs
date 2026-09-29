@@ -24,12 +24,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SystemParametersInfoW, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_SETMOUSE,
 };
 
-use crate::engine::context::ContextResolver;
-use crate::engine::error::Result;
-use crate::engine::journal::Transaction;
-use crate::engine::types::{
-    ExecutionContext, Impact, RegRoot, SafetyTier, Tier, Tweak, TweakMetadata, TweakState,
-};
+use crate::context::ContextResolver;
+use crate::error::Result;
+use crate::journal::Transaction;
+use crate::types::{ExecutionContext, Impact, RegRoot, SafetyTier, Tier, Tweak, TweakMetadata, TweakState};
 
 const KEY: &str = r"Control Panel\Mouse";
 const SPEED: &str = "MouseSpeed";

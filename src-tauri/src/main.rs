@@ -1,14 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod engine;
-mod tweaks;
+mod commands;
 
 use std::sync::Mutex;
 
 use tauri::Manager;
 
-use engine::types::SystemEnv;
-use engine::Engine;
+use peaktweaks_engine::tweaks;
+use peaktweaks_engine::types::SystemEnv;
+use peaktweaks_engine::Engine;
 
 /// True when the process token carries the Administrators group with the
 /// enabled attribute. The manifest requests `requireAdministrator`, so this
@@ -54,19 +54,22 @@ fn main() {
             // apart from the restore-point gate, which reads false and so blocks
             // every mutation. That is the correct failure direction.
             let mut engine = engine;
-            engine.set_env(SystemEnv { elevated, ..Default::default() });
+            engine.set_env(SystemEnv {
+                elevated,
+                ..Default::default()
+            });
 
             app.manage(Mutex::new(engine));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            engine::engine_context,
-            engine::list_tweaks,
-            engine::set_environment,
-            engine::apply_tweak,
-            engine::revert_tweak,
-            engine::revert_all,
-            engine::list_journal,
+            commands::engine_context,
+            commands::list_tweaks,
+            commands::set_environment,
+            commands::apply_tweak,
+            commands::revert_tweak,
+            commands::revert_all,
+            commands::list_journal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PeakTweaks");

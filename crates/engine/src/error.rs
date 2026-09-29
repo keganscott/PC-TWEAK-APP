@@ -31,7 +31,11 @@ pub enum EngineError {
     },
 
     /// A Win32 call failed. `code` is the raw GetLastError / HRESULT.
-    Win32 { call: &'static str, code: u32, detail: String },
+    Win32 {
+        call: &'static str,
+        code: u32,
+        detail: String,
+    },
 
     /// Filesystem failure writing a backup or journal entry.
     Storage { path: String, detail: String },

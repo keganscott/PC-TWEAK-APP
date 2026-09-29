@@ -34,7 +34,7 @@
 use std::ffi::c_void;
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, LocalFree, HLOCAL};
+use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -211,13 +211,11 @@ fn interactive_shell_sid() -> Result<Option<String>> {
         loop {
             if process_name_is(&entry.szExeFile, "explorer.exe") {
                 let mut session = 0u32;
-                let in_console = ProcessIdToSessionId(entry.th32ProcessID, &mut session).is_ok()
-                    && session == console_session;
+                let in_console =
+                    ProcessIdToSessionId(entry.th32ProcessID, &mut session).is_ok() && session == console_session;
 
                 if in_console {
-                    if let Ok(proc) =
-                        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, entry.th32ProcessID)
-                    {
+                    if let Ok(proc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, entry.th32ProcessID) {
                         let proc_guard = HandleGuard(proc);
                         let mut token = HANDLE::default();
                         if OpenProcessToken(proc_guard.0, TOKEN_QUERY, &mut token).is_ok() {

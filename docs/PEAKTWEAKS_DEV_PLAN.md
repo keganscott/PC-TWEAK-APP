@@ -370,4 +370,24 @@ Each item is an amendment to the text above. Kegan can veto any of them; none to
 
 ### 15.3 Status against the Phase 2.1 gate
 
-See the gate report in the pull request or chat for the command output. Items that can only be checked by hand on real machines, and are **not** done: UAC prompt on launch, Windows 10 22H2 / Windows 11 24H2/25H2 / RDP / alternate-credential runs (R13 matrix), Administrator Protection VM (R14), WebView2 start under Administrator Protection.
+Evidence is GitHub Actions run 36621445888 (commit `73159c5`, `windows-latest`, Rust 1.98.1 pinned): fmt, `clippy --all-targets -D warnings`, check, test (97 engine tests + 5 IPC audit tests), generated-bindings freshness, `npm ci`, `tsc --noEmit`, `vite build`, `tauri build --no-bundle`, manifest scan (`requireAdministrator` x1, Common Controls x1), launch smoke test. The `ubuntu-latest` job runs the same engine tests plus the freshness check.
+
+| Item | State |
+|---|---|
+| P0 compile fix (`LocalFree`) | Done. Checked against `windows-0.58.0` source and on Windows CI. |
+| P0 scaffold, capability, manifest, CI | Done and green. Command list is enforced at build time (app manifest) and by a test. |
+| P0 `RegistryBackend` + fake | Done. |
+| R1 ProgramData DACL, verify on start, allowlist | Done. 4 ACL tests run on real NTFS in CI (create, ordinary dir refused, Users-write detected, junction refused). The exe was launched in CI and its directory ACL is SYSTEM + Administrators only. **Not tested:** a *non-admin* user pre-creating the directory (owner check), because CI runs as admin. |
+| R2, R12 engine-owned env, gate, tier | Done. `set_environment` deleted; audit test stops it coming back. |
+| R3, R4, R6, R8, R9, R17, R18, R19 | Done. Includes a property test (300 cases on Linux, 60 on Windows) and a mutation check that breaks R4 and fails 4 tests. |
+| R7 mouse tweak | Done except the `SPI_SETMOUSE` array order, still marked VERIFY: Microsoft docs are unreachable from the build sandbox. |
+| R10 async commands, progress events | Done. Compiles and passes the audit; **not exercised from a running webview.** |
+| R11 one serde contract | Done via ts-rs + `fixtures.ts` under `tsc`. Frontend `types.ts` duplicates do not exist in the repo yet, so none were deleted. |
+| R13 session-anchored user resolution | Code done. The manual matrix (Windows 10 22H2, 11 24H2/25H2, RDP, alternate credentials, Administrator Protection) is **not done**. |
+| R14 WebView2 data folder | Code done, pure parts tested. **Not tested under Administrator Protection.** |
+| R15 reference tweak | Done. IFEO `CpuPriorityClass`=3, blocked for every game. |
+| R16, R22 | Done (stale comment removed; `winreg` 0.52 / `windows` 0.58 pinned). |
+| R20, R21 frontend | **Not started.** The React frontend files are not in the repository. |
+| UAC prompt on launch | **Not tested.** GitHub runners are already elevated with UAC off. |
+
+Open VERIFY markers left in place: `SPI_SETMOUSE` order (`mouse_accel.rs`), Fortnite executable name (`ifeo_priority.rs`), and the plan's claim that `Win32PrioritySeparation` 0x26 equals the client default (the tweak is deleted; the claim was not independently checked).

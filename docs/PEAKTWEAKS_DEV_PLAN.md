@@ -391,3 +391,17 @@ Evidence is GitHub Actions run 36621445888 (commit `73159c5`, `windows-latest`, 
 | UAC prompt on launch | **Not tested.** GitHub runners are already elevated with UAC off. |
 
 Open VERIFY markers left in place: `SPI_SETMOUSE` order (`mouse_accel.rs`), Fortnite executable name (`ifeo_priority.rs`), and the plan's claim that `Win32PrioritySeparation` 0x26 equals the client default (the tweak is deleted; the claim was not independently checked).
+
+### 15.4 Phase 3 design decisions (Claude)
+
+1. **Everything OS-specific sits behind a trait**, so the logic runs in unit tests on any OS: `WmiSource` (queries), `OsFacts` (system drive, display modes, DXGI adapters), `RestoreOps` (enable protection, create point, list points), plus the existing `RegistryBackend`. Real implementations are Windows-only; fakes are used in tests. This matches the plan's tri-state rule: every probe returns `Probe<T>` (`yes` / `no` with reason / `unknown` with reason), and a probe that cannot run yields Unknown, not an error and not a guess.
+2. **WMI runs on one dedicated MTA thread** (`WmiWorker`) with a per-query timeout and a "stuck worker" guard. A live Windows test runs a query from a thread that is itself in a single-threaded apartment, which is the situation on Tauri's main thread.
+3. **GPU memory comes from DXGI**, not `Win32_VideoController.AdapterRAM` (capped at 4 GB) and not the registry. Plan 4.4 allowed either.
+4. **`SystemEnv` now carries the structured reports** (`hardware`, `security`, `restore`) instead of loose booleans; predicates ask `env.logical_processors()` and get `None` when unknown. It is still built only by the engine and never deserialized.
+5. **The restore gate is derived from Windows' own restore-point list** (freshness window in `restore.rs`), re-read immediately before every apply, cached for 10 s. Creating a point is a three-part flow: (a) slow Windows calls (enable protection, create) run **without** the engine lock, (b) two short journalled steps take the lock, (c) success is claimed only after a *new* sequence number appears in Windows' list. A "success" that produces no new point is reported as a failure.
+6. **Bootstrap exemption** for `SystemRestorePointCreationFrequency = 0` (NOTES.md N26): the plan's "through Transaction" and "no change before a verified restore point" cannot both hold for this one setting.
+7. **`Engine::new` no longer probes.** Constructing the engine happens on Tauri's main thread and probing takes seconds. The first command that needs an environment probes, in `spawn_blocking`.
+8. **New journal record kind** `restore_point` (Backups tab material). It belongs to no tweak, so it is not part of the revert index.
+9. **System Restore does not exist on Windows Server**, which is what GitHub's Windows runners are. So the Phase 3 gate item "restore point verified on Windows 10 22H2, Windows 11, and an Administrator Protection VM" **cannot be automated**; CI checks the logic against fakes and that the real code fails cleanly. Manual protocol: NOTES.md N24.
+10. **New IPC commands**: `audit_system`, `create_restore_point`; `rescan` now bypasses caches. `apply_tweak` still cannot reach the bootstrap tweak.
+

@@ -51,6 +51,15 @@ jobs:
           # Real fsyncs on NTFS make each case slow; the Linux job runs the full 300.
           PROPTEST_CASES: "60"
 
+      # Evidence, not just pass/fail: what the real probes and the real restore
+      # operations do on a Windows runner. (Runners are Windows Server, where
+      # System Restore does not exist, so the restore calls should fail cleanly.)
+      - name: Live probes on this runner
+        run: cargo test -p peaktweaks-engine live_probe_report -- --nocapture --test-threads=1
+
+      - name: Real restore operations on this runner
+        run: cargo test -p peaktweaks-engine the_real_operations_fail_cleanly -- --nocapture --test-threads=1
+
       # The tests above regenerate src/generated (ts-rs bindings and the JSON
       # fixtures). Anything they changed or added means the committed copy is stale.
       - name: Generated TypeScript is up to date

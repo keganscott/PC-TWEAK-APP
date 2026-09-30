@@ -236,12 +236,24 @@ mod worker {
         }
 
         pub fn start_with_timeout(timeout: Duration) -> Self {
+            Self::start_inner(timeout, Duration::ZERO)
+        }
+
+        /// Test seam: the first job the worker takes stalls for `stall` before it
+        /// runs, standing in for a slow provider, so a timeout is certain rather
+        /// than a race against how fast this machine answers.
+        #[cfg(test)]
+        pub fn start_with_first_job_stalled(timeout: Duration, stall: Duration) -> Self {
+            Self::start_inner(timeout, stall)
+        }
+
+        fn start_inner(timeout: Duration, stall_first: Duration) -> Self {
             let (tx, rx) = mpsc::channel::<Job>();
             let busy_since = std::sync::Arc::new(AtomicU64::new(0));
             let busy = busy_since.clone();
             std::thread::Builder::new()
                 .name("peaktweaks-wmi".into())
-                .spawn(move || run(rx, busy))
+                .spawn(move || run(rx, busy, stall_first))
                 .expect("spawn WMI worker thread");
             Self {
                 tx: Mutex::new(tx),
@@ -288,7 +300,7 @@ mod worker {
         }
     }
 
-    fn run(rx: mpsc::Receiver<Job>, busy_since: std::sync::Arc<AtomicU64>) {
+    fn run(rx: mpsc::Receiver<Job>, busy_since: std::sync::Arc<AtomicU64>, mut stall_first: Duration) {
         // `COMLibrary::new` initialises COM in the multithreaded apartment and
         // then security. `RPC_E_TOO_LATE` (security already set process-wide,
         // for example by WebView2) is handled inside the crate. A fresh thread
@@ -299,6 +311,9 @@ mod worker {
 
         while let Ok(job) = rx.recv() {
             busy_since.store(now_ms(), Ordering::Relaxed);
+            if !stall_first.is_zero() {
+                std::thread::sleep(std::mem::take(&mut stall_first));
+            }
             let result = match &com {
                 Err(e) => Err(wmi_error(
                     &job.namespace,
@@ -448,40 +463,56 @@ mod live_tests {
 
     /// The caller is never held longer than its timeout, even though the query
     /// itself keeps running on the worker. While it does, further requests fail
-    /// fast instead of queueing behind it.
+    /// fast instead of queueing behind it, and the worker answers again once the
+    /// abandoned job is done. The stall is injected, so none of this depends on
+    /// how quickly the machine answers WMI.
     #[test]
     fn a_caller_is_released_at_its_timeout_and_the_worker_recovers() {
-        let w = WmiWorker::start_with_timeout(Duration::from_millis(1));
+        let w = WmiWorker::start_with_first_job_stalled(Duration::from_millis(500), Duration::from_secs(3));
+
         let t = std::time::Instant::now();
         let first = w.query(NS_CIMV2, WQL_OS);
-        assert!(t.elapsed() < Duration::from_secs(5), "took {:?}", t.elapsed());
-        // COM start-up plus connecting takes longer than 1 ms.
+        let took = t.elapsed();
         assert!(
             matches!(&first, Err(EngineError::Wmi { timed_out: true, .. })),
             "{first:?}"
         );
+        assert!(
+            took >= Duration::from_millis(400) && took < Duration::from_secs(2),
+            "took {took:?}"
+        );
 
-        // The worker finishes the abandoned job on its own and becomes idle again.
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        // Well past twice the timeout, the worker is still stalled: the next
+        // caller is refused at once rather than made to wait.
+        std::thread::sleep(Duration::from_millis(1300));
+        let t = std::time::Instant::now();
+        let stuck = w.query(NS_CIMV2, WQL_OS);
+        assert!(
+            matches!(&stuck, Err(EngineError::Wmi { timed_out: true, detail, .. }) if detail.contains("stuck")),
+            "{stuck:?}"
+        );
+        assert!(
+            t.elapsed() < Duration::from_millis(250),
+            "refusal took {:?}",
+            t.elapsed()
+        );
+
+        // Once the stalled job has finished, the worker answers real queries.
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         loop {
-            let again = w.query(NS_CIMV2, "SELECT Caption FROM Win32_OperatingSystem");
-            match again {
-                Err(EngineError::Wmi { timed_out: true, .. }) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-                // With a 1 ms timeout every call times out by design; what matters
-                // is that the worker keeps answering promptly rather than wedging.
-                other => {
-                    println!("worker still responsive: {other:?}");
+            match w.query(NS_CIMV2, WQL_OS) {
+                Ok(rows) => {
+                    println!("worker recovered: {} row(s)", rows.len());
+                    assert_eq!(rows.len(), 1);
                     break;
                 }
-            }
-            if std::time::Instant::now() >= deadline {
-                break;
+                Err(e) if std::time::Instant::now() < deadline => {
+                    println!("still recovering: {e}");
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                Err(e) => panic!("the worker never recovered: {e}"),
             }
         }
-        // A worker with a sane timeout on the same machine still works afterwards.
-        assert_eq!(WmiWorker::start().query(NS_CIMV2, WQL_OS).unwrap().len(), 1);
     }
 
     #[test]

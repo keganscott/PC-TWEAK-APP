@@ -81,6 +81,8 @@ pub struct Engine {
     target_game: Option<String>,
     restore: Option<std::sync::Arc<crate::restore::RestoreService>>,
     proof: Option<std::sync::Arc<crate::proof::service::ProofService>>,
+    settings: crate::settings::Settings,
+    settings_store: crate::settings::SettingsStore,
 }
 
 impl Engine {
@@ -109,6 +111,8 @@ impl Engine {
             target_game: None,
             restore: None,
             proof: None,
+            settings: crate::settings::Settings::default(),
+            settings_store: crate::settings::SettingsStore::in_memory(),
         }
     }
 
@@ -117,6 +121,32 @@ impl Engine {
     pub fn with_restore_service(mut self, svc: std::sync::Arc<crate::restore::RestoreService>) -> Self {
         self.restore = Some(svc);
         self
+    }
+
+    /// Keep settings in the protected data directory and load what is there.
+    pub fn with_settings_in(mut self, dir: &super::secure_dir::TrustedDir) -> Self {
+        self.settings_store = crate::settings::SettingsStore::in_dir(dir);
+        self.settings = self.settings_store.load();
+        self
+    }
+
+    pub fn settings(&self) -> crate::settings::Settings {
+        self.settings.clone()
+    }
+
+    /// Replace the settings. Saved first; the in-memory copy changes only if the
+    /// save worked, so what the UI shows is what is on disk.
+    pub fn set_settings(&mut self, settings: crate::settings::Settings) -> Result<crate::settings::Settings> {
+        self.settings_store.save(&settings)?;
+        self.settings = settings;
+        Ok(self.settings.clone())
+    }
+
+    /// The rig class in use: the user's override, else the detected one.
+    pub fn effective_rig_class(&self) -> Option<crate::hardware::RigClass> {
+        self.settings
+            .rig_class_override
+            .or_else(|| self.env.hardware.as_ref().and_then(|h| h.rig_class.value().copied()))
     }
 
     pub fn restore_service(&self) -> Option<std::sync::Arc<crate::restore::RestoreService>> {
@@ -148,8 +178,7 @@ impl Engine {
     /// (recently cached) probes.
     pub fn proof_context(&mut self) -> (Option<crate::hardware::RigClass>, super::types::Tier) {
         self.rescan();
-        let rig = self.env.hardware.as_ref().and_then(|h| h.rig_class.value().copied());
-        (rig, self.license.tier())
+        (self.effective_rig_class(), self.license.tier())
     }
 
     pub fn context_info(&self) -> ContextInfo {
@@ -180,7 +209,7 @@ impl Engine {
     /// Everything we know about this machine, freshly probed.
     pub fn audit(&mut self) -> crate::sysprobe::SystemAudit {
         self.rescan_fresh();
-        crate::sysprobe::SystemAudit::from_env(self.env.clone())
+        crate::sysprobe::SystemAudit::from_env(self.env.clone(), self.settings.clone(), self.effective_rig_class())
     }
 
     /// Pick (or clear) the target game. Only ids from `KNOWN_GAMES` are accepted.
@@ -467,7 +496,9 @@ impl Engine {
         let resolver = ContextResolver::detect(elevated)?;
         let journal = Journal::open(&dir)?;
         let proof = Arc::new(build_proof_service(&dir));
-        Ok(Self::new(resolver, journal, tweaks, probe, license).with_proof_service(proof))
+        Ok(Self::new(resolver, journal, tweaks, probe, license)
+            .with_proof_service(proof)
+            .with_settings_in(&dir))
     }
 }
 

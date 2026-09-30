@@ -538,7 +538,12 @@ export const systemAudit = {
         "fixTweakId": null
       }
     ]
-  }
+  },
+  "settings": {
+    "rigClassOverride": null,
+    "language": "plain"
+  },
+  "effectiveRigClass": "mid"
 } satisfies SystemAudit;
 
 export const proofRun = {

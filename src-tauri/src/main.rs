@@ -55,6 +55,8 @@ fn main() {
             commands::engine_context,
             commands::list_tweaks,
             commands::list_games,
+            commands::get_settings,
+            commands::set_settings,
             commands::select_target_game,
             commands::rescan,
             commands::audit_system,

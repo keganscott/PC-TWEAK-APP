@@ -21,6 +21,7 @@ pub mod restore;
 pub mod scanner;
 pub mod secure_dir;
 pub mod security;
+pub mod settings;
 pub mod sysprobe;
 pub mod timeutil;
 pub mod transaction;

@@ -21,6 +21,7 @@ import type { ProofSession } from "./generated/ProofSession";
 import type { ProofSessionSummary } from "./generated/ProofSessionSummary";
 import type { RestoreOutcome } from "./generated/RestoreOutcome";
 import type { RevertResult } from "./generated/RevertResult";
+import type { Settings } from "./generated/Settings";
 import type { Side } from "./generated/Side";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
@@ -75,6 +76,10 @@ export const engine = {
   context: () => call<ContextInfo>("engine_context"),
   listTweaks: () => call<TweakView[]>("list_tweaks"),
   listGames: () => call<GameInfo[]>("list_games"),
+  /** Preferences: rig-class override and plain/technical wording. Never a gate or licence. */
+  getSettings: () => call<Settings>("get_settings"),
+  /** Replace the preferences; resolves to what is now stored. */
+  setSettings: (settings: Settings) => call<Settings>("set_settings", { settings }),
   /** Pick a known game, or `null` to clear. The id is validated in Rust. */
   selectTargetGame: (gameId: string | null) => call<TweakView[]>("select_target_game", { gameId }),
   /** Re-run every probe (nothing cached) and return the refreshed list. */

@@ -10,6 +10,8 @@
     "allow-engine-context",
     "allow-list-tweaks",
     "allow-list-games",
+    "allow-get-settings",
+    "allow-set-settings",
     "allow-select-target-game",
     "allow-rescan",
     "allow-apply-tweak",

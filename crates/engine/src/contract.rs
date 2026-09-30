@@ -233,7 +233,11 @@ fn audit() -> SystemAudit {
     );
     let mut env = SystemProbe::new(wmi, reg, Arc::new(FixtureFacts), restore).probe(true);
     env.target_game = Some("fortnite".into());
-    SystemAudit::from_env(env)
+    SystemAudit::from_env(
+        env,
+        crate::settings::Settings::default(),
+        Some(crate::hardware::RigClass::Mid),
+    )
 }
 
 fn proof_run(

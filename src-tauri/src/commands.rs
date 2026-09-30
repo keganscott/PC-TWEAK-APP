@@ -19,6 +19,7 @@ use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use peaktweaks_engine::proof::verdict::Comparison;
 use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
+use peaktweaks_engine::settings::Settings;
 use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, SystemAudit, TweakView};
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
@@ -68,6 +69,20 @@ pub async fn list_tweaks(engine: State<'_, SharedEngine>) -> Result<Vec<TweakVie
         e.list()
     })
     .await
+}
+
+/// The user's preferences (rig-class override, wording). Preferences only: they
+/// change defaults and copy, never a gate, licence or safety check.
+#[tauri::command]
+pub async fn get_settings(engine: State<'_, SharedEngine>) -> Result<Settings> {
+    blocking(&engine, |e| Ok(e.settings())).await
+}
+
+/// Replace the preferences. The engine saves them before it uses them and
+/// returns what is now stored.
+#[tauri::command]
+pub async fn set_settings(engine: State<'_, SharedEngine>, settings: Settings) -> Result<Settings> {
+    blocking(&engine, move |e| e.set_settings(settings)).await
 }
 
 #[tauri::command]

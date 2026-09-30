@@ -12,12 +12,14 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::env::EnvProbe;
+use super::hardware::RigClass;
 use super::hardware::{probe_hardware, HardwareReport, OsFacts};
 use super::journal::now_ms;
 use super::registry::RegistryBackend;
 use super::restore::RestoreService;
 use super::scanner::{scan, ScanReport};
 use super::security::{anti_cheat_readiness, probe_security, AntiCheatReadiness, SecurityReport};
+use super::settings::Settings;
 use super::types::SystemEnv;
 use super::wmi::WmiSource;
 
@@ -33,13 +35,22 @@ pub struct SystemAudit {
     pub anti_cheat: Option<AntiCheatReadiness>,
     /// Findings from the scanner, computed from `env` alone.
     pub scan: ScanReport,
+    pub settings: Settings,
+    /// The user's override if set, else the detected rig class.
+    pub effective_rig_class: Option<RigClass>,
 }
 
 impl SystemAudit {
-    pub fn from_env(env: SystemEnv) -> Self {
+    pub fn from_env(env: SystemEnv, settings: Settings, effective_rig_class: Option<RigClass>) -> Self {
         let anti_cheat = env.security.as_ref().map(anti_cheat_readiness);
         let scan = scan(&env);
-        Self { env, anti_cheat, scan }
+        Self {
+            env,
+            anti_cheat,
+            scan,
+            settings,
+            effective_rig_class,
+        }
     }
 }
 
@@ -227,10 +238,12 @@ mod tests {
     #[test]
     fn the_audit_carries_anti_cheat_readiness_only_when_security_was_probed() {
         let (p, _) = probe();
-        let audit = SystemAudit::from_env(p.probe(true));
+        let audit = SystemAudit::from_env(p.probe(true), Settings::default(), None);
         let ac = audit.anti_cheat.expect("security was probed");
         assert_eq!(ac.per_game.len(), crate::env::KNOWN_GAMES.len());
-        assert!(SystemAudit::from_env(SystemEnv::default()).anti_cheat.is_none());
+        assert!(SystemAudit::from_env(SystemEnv::default(), Settings::default(), None)
+            .anti_cheat
+            .is_none());
     }
 }
 
@@ -261,7 +274,7 @@ mod live_tests {
         let started = std::time::Instant::now();
         let env = probe.probe(crate::identity::is_elevated());
         let took = started.elapsed();
-        let audit = SystemAudit::from_env(env.clone());
+        let audit = SystemAudit::from_env(env.clone(), Settings::default(), None);
         println!("probed in {took:?}");
         println!("{}", serde_json::to_string_pretty(&audit).unwrap());
 

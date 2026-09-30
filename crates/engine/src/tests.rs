@@ -708,3 +708,66 @@ fn proof_verdict_text_is_the_only_place_a_result_is_worded() {
         "verdict wording outside proof/verdict.rs: {hits:?}"
     );
 }
+
+#[test]
+fn settings_persist_and_the_override_wins_over_the_detected_rig_class() {
+    use crate::hardware::RigClass;
+    use crate::settings::{Language, Settings};
+
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let trusted = TrustedDir::insecure_for_tests(dir.path());
+    let mut engine = build_engine(&fake, dir.path(), vec![], true, Tier::Free).with_settings_in(&trusted);
+    assert_eq!(engine.settings(), Settings::default());
+    assert_eq!(engine.effective_rig_class(), None, "nothing probed and no override");
+
+    engine
+        .set_settings(Settings {
+            rig_class_override: Some(RigClass::High),
+            language: Language::Technical,
+        })
+        .unwrap();
+    assert_eq!(engine.effective_rig_class(), Some(RigClass::High));
+    assert_eq!(
+        engine.proof_context().0,
+        Some(RigClass::High),
+        "proof runs record the effective class"
+    );
+    assert_eq!(engine.audit().effective_rig_class, Some(RigClass::High));
+
+    // A new engine on the same directory sees the same choices.
+    let again = build_engine(&fake, dir.path(), vec![], true, Tier::Free).with_settings_in(&trusted);
+    assert_eq!(again.settings().language, Language::Technical);
+    assert_eq!(again.settings().rig_class_override, Some(RigClass::High));
+}
+
+#[test]
+fn settings_never_touch_the_gate_the_licence_or_the_environment() {
+    use crate::settings::Settings;
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(&fake, dir.path(), vec![], false, Tier::Free);
+    let before = engine.audit().env.restore_gate_open;
+    engine.set_settings(Settings::default()).unwrap();
+    let after = engine.audit();
+    assert_eq!(before, after.env.restore_gate_open);
+    assert!(!after.env.restore_gate_open);
+}
+
+#[test]
+fn a_failed_save_leaves_the_settings_unchanged() {
+    use crate::hardware::RigClass;
+    use crate::settings::Settings;
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let trusted = TrustedDir::insecure_for_tests(dir.path());
+    let mut engine = build_engine(&fake, dir.path(), vec![], true, Tier::Free).with_settings_in(&trusted);
+    // Make the target a directory so the rename over it fails.
+    std::fs::create_dir(dir.path().join("settings.json")).unwrap();
+    let r = engine.set_settings(Settings {
+        rig_class_override: Some(RigClass::Low),
+        ..Settings::default()
+    });
+    assert!(r.is_err());
+    assert_eq!(engine.settings(), Settings::default(), "memory must match disk");
+}

@@ -372,6 +372,15 @@ impl Engine {
         result
     }
 
+    /// After a panic on a worker thread: drop what is held in memory about the
+    /// journal and the probes and read them again from disk and Windows, so a
+    /// revert works from what is really there, not from a half-updated index.
+    pub fn recover_after_panic(&mut self) -> Result<()> {
+        self.journal.reload()?;
+        self.rescan_fresh();
+        Ok(())
+    }
+
     /// Revert everything with an outstanding apply, most recently applied
     /// first. A failure on one tweak does not stop the rest: a partial revert
     /// is strictly better than stopping halfway.
@@ -393,6 +402,16 @@ impl Engine {
             }
         }
         results
+    }
+
+    /// Test only: simulate an in-memory journal that lost track of its file.
+    #[cfg(test)]
+    pub(crate) fn forget_journal_for_test(&mut self) {
+        let empty = tempfile::tempdir().unwrap();
+        let mut blank = Journal::open(&crate::secure_dir::TrustedDir::insecure_for_tests(empty.path())).unwrap();
+        // Point the blank journal back at the real directory so reload() reads it.
+        blank.set_root_for_test(self.journal.root().to_path_buf());
+        self.journal = blank;
     }
 
     /// Test access to the pieces a `Transaction` needs, so tests can simulate a

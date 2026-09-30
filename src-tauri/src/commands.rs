@@ -43,11 +43,41 @@ where
     T: Send + 'static,
     F: FnOnce(&mut Engine) -> Result<T> + Send + 'static,
 {
+    run(engine, false, f).await
+}
+
+/// Like `blocking`, for getting back to how things were. Undoing must always be
+/// possible, so after a panic this re-reads the journal and probes from disk and
+/// Windows, clears the poison, and carries on, instead of asking for a restart.
+async fn blocking_recovering<T, F>(engine: &State<'_, SharedEngine>, f: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Engine) -> Result<T> + Send + 'static,
+{
+    run(engine, true, f).await
+}
+
+async fn run<T, F>(engine: &State<'_, SharedEngine>, recover: bool, f: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Engine) -> Result<T> + Send + 'static,
+{
     let engine = Arc::clone(engine.inner());
     tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = engine.lock().map_err(|_| EngineError::Internal {
-            detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
-        })?;
+        let mut guard = match engine.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) if recover => {
+                let mut guard = poisoned.into_inner();
+                guard.recover_after_panic()?;
+                engine.clear_poison();
+                guard
+            }
+            Err(_) => {
+                return Err(EngineError::Internal {
+                    detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+                })
+            }
+        };
         f(&mut guard)
     })
     .await
@@ -295,7 +325,7 @@ pub async fn apply_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: St
 pub async fn revert_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: String) -> Result<Vec<JournalEntry>> {
     progress(&app, "revert", Some(&id), "Undoing");
     let tid = id.clone();
-    let out = blocking(&engine, move |e| e.revert(&tid)).await;
+    let out = blocking_recovering(&engine, move |e| e.revert(&tid)).await;
     progress(
         &app,
         if out.is_ok() { "revert_done" } else { "revert_failed" },
@@ -308,12 +338,12 @@ pub async fn revert_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: S
 #[tauri::command]
 pub async fn revert_all(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<Vec<RevertResult>> {
     progress(&app, "revert_all", None, "Undoing everything");
-    let out = blocking(&engine, |e| Ok(e.revert_all())).await;
+    let out = blocking_recovering(&engine, |e| Ok(e.revert_all())).await;
     progress(&app, "revert_all_done", None, "Done");
     out
 }
 
 #[tauri::command]
 pub async fn list_journal(engine: State<'_, SharedEngine>) -> Result<JournalView> {
-    blocking(&engine, |e| Ok(e.journal_view())).await
+    blocking_recovering(&engine, |e| Ok(e.journal_view())).await
 }

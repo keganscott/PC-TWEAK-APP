@@ -825,3 +825,21 @@ fn a_per_user_change_is_not_reverted_into_another_accounts_hive() {
     alice_again.revert("u").unwrap();
     assert!(fake.snapshot().is_empty());
 }
+
+/// After a panic the engine re-reads the journal from disk, so a revert works
+/// from what is really recorded even if the in-memory index was left half-updated.
+#[test]
+fn recovery_after_a_panic_rebuilds_from_disk_and_revert_still_works() {
+    let mut h = Harness::new(vec![Box::new(TestTweak::new("a", "SOFTWARE\\T", &[("X", 1)]))]);
+    h.engine.apply("a").unwrap();
+    assert!(h.engine.journal_view().records.len() > 0);
+
+    // Damage the in-memory copy the way an interrupted append might.
+    h.engine.forget_journal_for_test();
+    assert!(h.engine.journal_view().records.is_empty());
+
+    h.engine.recover_after_panic().unwrap();
+    assert!(h.engine.journal_view().records.len() > 0);
+    h.engine.revert("a").unwrap();
+    assert!(h.fake.snapshot().is_empty());
+}

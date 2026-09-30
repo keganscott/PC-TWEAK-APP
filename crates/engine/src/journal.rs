@@ -297,7 +297,18 @@ impl Journal {
     /// Open (or create) the journal in a trusted directory, repairing a torn
     /// tail. Reads the file once; everything after is served from memory.
     pub fn open(dir: &TrustedDir) -> Result<Self> {
-        let root = dir.path().to_path_buf();
+        Self::load(dir.path().to_path_buf())
+    }
+
+    /// Throw away the in-memory copy and read the file again. Used after a panic
+    /// that may have interrupted an append, so the index is never trusted over
+    /// what is on disk. The directory was vetted when the journal was opened.
+    pub fn reload(&mut self) -> Result<()> {
+        *self = Self::load(self.root.clone())?;
+        Ok(())
+    }
+
+    fn load(root: PathBuf) -> Result<Self> {
         fsutil::create_dir_durable(&root)?;
         let journal_path = root.join(JOURNAL_FILE);
 
@@ -343,6 +354,12 @@ impl Journal {
             index,
             warnings: parsed.warnings,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_root_for_test(&mut self, root: PathBuf) {
+        self.journal_path = root.join(JOURNAL_FILE);
+        self.root = root;
     }
 
     pub fn root(&self) -> &Path {

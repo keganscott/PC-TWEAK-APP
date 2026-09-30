@@ -57,21 +57,6 @@ jobs:
           # Real fsyncs on NTFS make each case slow; the Linux job runs the full 300.
           PROPTEST_CASES: "60"
 
-      # Evidence, not just pass/fail: what the real probes and the real restore
-      # operations do on a Windows runner. (Runners are Windows Server, where
-      # System Restore does not exist, so the restore calls should fail cleanly.)
-      - name: Live probes on this runner
-        run: cargo test --workspace live_probe_report -- --nocapture --test-threads=1
-
-      - name: Real restore operations on this runner
-        run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1
-
-      # These two pass even when they cannot do their job (no permission to create
-      # a local user; no way to make WMI slow), and say NOT VERIFIED when so. The
-      # output is what tells which happened.
-      - name: Storage ownership and WMI timeout on this runner
-        run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
-
       # The tests above regenerate src/generated (ts-rs bindings and the JSON
       # fixtures). Anything they changed or added means the committed copy is stale.
       - name: Generated TypeScript is up to date
@@ -172,6 +157,22 @@ jobs:
           $env:PEAKTWEAKS_REAL_CAPTURE_EXE = $target
           try { cargo test --workspace real_presentmon_captures_real_frames -- --nocapture --test-threads=1 }
           finally { Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force }
+
+      # Evidence steps run last so the end of the job log holds them.
+      # Evidence, not just pass/fail: what the real probes and the real restore
+      # operations do on a Windows runner. (Runners are Windows Server, where
+      # System Restore does not exist, so the restore calls should fail cleanly.)
+      - name: Live probes on this runner
+        run: cargo test --workspace live_probe_report -- --nocapture --test-threads=1
+
+      - name: Real restore operations on this runner
+        run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1
+
+      # These two pass even when they cannot do their job (no permission to create
+      # a local user; no way to make WMI slow), and say NOT VERIFIED when so. The
+      # output is what tells which happened.
+      - name: Storage ownership and WMI timeout on this runner
+        run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
 
       - uses: actions/upload-artifact@v4
         with:

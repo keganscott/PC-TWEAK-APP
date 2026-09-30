@@ -19,6 +19,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::hardware::{ChannelLayout, DiskMedia, HardwareReport};
+use super::power::{PowerPlan, PowerPlanKind};
 use super::probe::Probe;
 use super::types::SystemEnv;
 
@@ -83,6 +84,13 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
         findings.extend(refresh_rate(hw));
         findings.extend(boot_disk(hw));
         findings.extend(windows_support(hw));
+    }
+    if let Some(plan) = &env.power_plan {
+        let laptop = env
+            .hardware
+            .as_ref()
+            .is_some_and(|hw| matches!(hw.is_laptop, Probe::Yes { value: true }));
+        findings.push(power_plan(plan, laptop));
     }
     if let Some(sec) = &env.security {
         findings.push(memory_integrity(&sec.memory_integrity));
@@ -309,6 +317,59 @@ fn windows_support(hw: &HardwareReport) -> Option<Finding> {
             false,
         ),
     })
+}
+
+/// Reads the power *plan*. Windows 11 also has a separate "power mode" setting
+/// that is not read here, so the copy names the plan and points at both places
+/// (NOTES.md N43). No one-click fix exists yet, so this is guided only.
+fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
+    const ID: &str = "power.plan";
+    const TITLE: &str = "Power plan";
+    let remedy = if laptop {
+        "In Windows Settings > System > Power & battery, the Power mode setting, or Control Panel > Power \
+         Options, you can pick a plan that favours performance. On a laptop that uses more battery and \
+         makes more heat, so many people only do this while plugged in."
+    } else {
+        "In Windows Settings > System > Power & battery, the Power mode setting, or Control Panel > Power \
+         Options, you can pick a plan that favours performance. It uses more electricity."
+    };
+    match plan {
+        Probe::Unknown { reason } | Probe::No { reason } => unknown(ID, TITLE, reason),
+        Probe::Yes { value } => match value.kind {
+            PowerPlanKind::HighPerformance | PowerPlanKind::UltimatePerformance => finding(
+                ID,
+                Status::Fine,
+                "A performance power plan is active",
+                "The active power plan is one of Windows' performance plans.".to_owned(),
+                None,
+                false,
+            ),
+            PowerPlanKind::Custom => finding(
+                ID,
+                Status::Fine,
+                "A custom power plan is active",
+                "The active power plan is not one of the four Windows ships, so it was left alone and not judged."
+                    .to_owned(),
+                None,
+                false,
+            ),
+            PowerPlanKind::Balanced | PowerPlanKind::PowerSaver => {
+                let name = if value.kind == PowerPlanKind::Balanced {
+                    "Balanced"
+                } else {
+                    "Power saver"
+                };
+                finding(
+                    ID,
+                    Status::Attention,
+                    "The power plan is not a performance plan",
+                    format!("The active power plan is {name}."),
+                    Some(remedy),
+                    true,
+                )
+            }
+        },
+    }
 }
 
 /// Reading only. Memory Integrity is a security feature and this scanner never
@@ -567,6 +628,49 @@ mod tests {
         assert!(!remedy.contains("turn off") && !remedy.contains("disable"), "{remedy}");
         let unknown = scan(&sec(Probe::unknown("no signal")));
         assert_eq!(get(&unknown, "security.memory_integrity").status, Status::Unknown);
+    }
+
+    fn env_with_plan(plan: Probe<PowerPlan>, laptop: bool) -> SystemEnv {
+        let mut hw = hardware();
+        hw.is_laptop = if laptop { Probe::yes(true) } else { Probe::no("desktop") };
+        SystemEnv {
+            hardware: Some(hw),
+            power_plan: Some(plan),
+            ..SystemEnv::default()
+        }
+    }
+
+    fn plan(kind: PowerPlanKind) -> Probe<PowerPlan> {
+        Probe::yes(PowerPlan { kind, guid: "x".into() })
+    }
+
+    #[test]
+    fn only_balanced_and_power_saver_are_flagged_and_customs_are_left_alone() {
+        for (kind, status) in [
+            (PowerPlanKind::Balanced, Status::Attention),
+            (PowerPlanKind::PowerSaver, Status::Attention),
+            (PowerPlanKind::HighPerformance, Status::Fine),
+            (PowerPlanKind::UltimatePerformance, Status::Fine),
+            (PowerPlanKind::Custom, Status::Fine),
+        ] {
+            let r = scan(&env_with_plan(plan(kind), false));
+            let f = get(&r, "power.plan");
+            assert_eq!(f.status, status, "{kind:?}");
+            assert_eq!(f.remedy.is_some(), status == Status::Attention, "{kind:?}");
+            assert!(f.fix_tweak_id.is_none());
+        }
+        let unknown = scan(&env_with_plan(Probe::unknown("no value"), false));
+        assert_eq!(get(&unknown, "power.plan").status, Status::Unknown);
+    }
+
+    #[test]
+    fn the_laptop_remedy_mentions_battery_and_heat() {
+        let laptop = scan(&env_with_plan(plan(PowerPlanKind::Balanced), true));
+        let desktop = scan(&env_with_plan(plan(PowerPlanKind::Balanced), false));
+        let laptop_text = get(&laptop, "power.plan").remedy.clone().unwrap();
+        let desktop_text = get(&desktop, "power.plan").remedy.clone().unwrap();
+        assert!(laptop_text.contains("more battery") && laptop_text.contains("heat"));
+        assert!(!desktop_text.contains("more battery") && !desktop_text.contains("heat"));
     }
 
     /// Findings say what was read and what to do. They never promise a result;

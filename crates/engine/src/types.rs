@@ -339,6 +339,8 @@ pub struct SystemEnv {
     pub hardware: Option<HardwareReport>,
     pub security: Option<SecurityReport>,
     pub restore: Option<RestoreStatus>,
+    /// The active Windows power plan (read-only). `None` until probed.
+    pub power_plan: Option<crate::probe::Probe<crate::power::PowerPlan>>,
 }
 
 impl SystemEnv {

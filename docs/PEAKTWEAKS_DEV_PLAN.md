@@ -438,3 +438,4 @@ Open VERIFY markers left in place: `SPI_SETMOUSE` order (`mouse_accel.rs`), Fort
 5. **Ordering** is "Attention, Unknown, Fine" and then rule order. The plan says "order by expected gain"; gain needs proof runs, so this is a stated judgement (NOTES.md N41), not a measurement.
 6. **Copy is linted**: the scanner's string literals are scanned for the same claim words as the tweak catalogue.
 7. **Gate: not met.** "Scanner findings match hand-verified results on at least three real machines" is manual. The other half of the gate (no networking dependency in the Starter build) is enforced by `scripts/check-no-network-deps.sh` in CI (NOTES.md C11).
+8. **Power plan added (check 5, read-only)**: `SystemEnv.powerPlan` and scanner finding `power.plan`. Guided only: a plan change is not a registry write the journal can undo, so no fix tweak is offered until Kegan decides how to journal it (NOTES.md N43).

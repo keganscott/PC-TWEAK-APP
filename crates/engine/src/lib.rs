@@ -11,6 +11,7 @@ pub mod error;
 pub mod fsutil;
 pub mod hardware;
 pub mod journal;
+pub mod power;
 pub mod probe;
 pub mod profile;
 pub mod proof;

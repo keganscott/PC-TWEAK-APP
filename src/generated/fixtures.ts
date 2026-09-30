@@ -412,6 +412,10 @@ export const systemAudit = {
       "creationFrequencyMinutes": null,
       "newestPointAgeHours": 3,
       "gateOpen": true
+    },
+    "powerPlan": {
+      "state": "unknown",
+      "reason": "Windows has not recorded an active power plan"
     }
   },
   "antiCheat": {
@@ -486,6 +490,15 @@ export const systemAudit = {
         "reading": "Running at 60 Hz; this display offers 144 Hz at 1920x1080.",
         "remedy": "Windows Settings > System > Display > Advanced display lets you choose the refresh rate.",
         "guidedOnly": true,
+        "fixTweakId": null
+      },
+      {
+        "id": "power.plan",
+        "status": "unknown",
+        "title": "Power plan",
+        "reading": "Could not be read: Windows has not recorded an active power plan",
+        "remedy": null,
+        "guidedOnly": false,
         "fixTweakId": null
       },
       {

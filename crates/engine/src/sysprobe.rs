@@ -104,6 +104,9 @@ impl EnvProbe for SystemProbe {
             hardware: Some(hardware),
             security: Some(security),
             restore: Some(restore),
+            // Cheap (one registry read) and it changes when the user changes it,
+            // so it is not cached.
+            power_plan: Some(crate::power::probe_power_plan(self.reg.as_ref())),
         }
     }
 

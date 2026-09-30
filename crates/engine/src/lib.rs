@@ -13,6 +13,7 @@ pub mod hardware;
 pub mod journal;
 pub mod power;
 pub mod probe;
+pub mod proc;
 pub mod profile;
 pub mod proof;
 pub mod reg_export;

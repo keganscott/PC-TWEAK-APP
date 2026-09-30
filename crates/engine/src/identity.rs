@@ -73,8 +73,12 @@ pub fn is_elevated() -> bool {
 /// Resolve the interactive user for this session.
 pub fn detect_user() -> Result<UserContext> {
     let own = current_process_sid()?;
-    Ok(match interactive_shell_sid() {
-        Ok(Some(shell_sid)) if shell_sid != own => UserContext {
+    // A shell we cannot identify is an error, not "probably us": under
+    // Administrator Protection or alternate admin credentials our own SID is a
+    // hidden account, and per-user writes would land in the wrong profile. Only
+    // "no shell in this session at all" falls back to our own token.
+    Ok(match interactive_shell_sid()? {
+        Some(shell_sid) if shell_sid != own => UserContext {
             sid: shell_sid,
             resolution: UserResolution::InteractiveShell,
             is_self: false,
@@ -144,6 +148,8 @@ fn interactive_shell_sid() -> Result<Option<String>> {
             return Ok(None);
         }
 
+        // An explorer.exe exists in our session but its owner could not be read.
+        let mut unreadable_shell = false;
         loop {
             if process_name_is(&entry.szExeFile, "explorer.exe") {
                 let mut session = 0u32;
@@ -159,6 +165,7 @@ fn interactive_shell_sid() -> Result<Option<String>> {
                             return sid_from_token(token_guard.0).map(Some);
                         }
                     }
+                    unreadable_shell = true;
                 }
             }
 
@@ -167,6 +174,13 @@ fn interactive_shell_sid() -> Result<Option<String>> {
             }
         }
 
+        if unreadable_shell {
+            return Err(EngineError::Internal {
+                detail: "the Windows shell (explorer.exe) is running in this session but its owner could not be \
+                         read, so PeakTweaks cannot tell which account's settings to change"
+                    .into(),
+            });
+        }
         Ok(None)
     }
 }

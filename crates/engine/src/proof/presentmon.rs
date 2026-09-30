@@ -13,6 +13,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::error::{EngineError, Result};
+#[cfg(feature = "bundle-presentmon")]
 use crate::fsutil;
 use crate::secure_dir::TrustedDir;
 
@@ -93,9 +94,8 @@ pub fn provision(dir: &TrustedDir) -> Result<PathBuf> {
 
     #[cfg(not(feature = "bundle-presentmon"))]
     {
-        let _ = fsutil::write_durable; // used only by the bundled path
-                                       // Development builds: accept a copy next to the executable, but only if
-                                       // it is byte-for-byte the pinned release.
+        // Development builds: accept a copy next to the executable, but only if
+        // it is byte-for-byte the pinned release.
         if let Some(beside) = std::env::current_exe()
             .ok()
             .and_then(|e| e.parent().map(|p| p.join(&pin.file)))

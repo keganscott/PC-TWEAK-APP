@@ -1,7 +1,7 @@
 //! Calendar helpers without a date-time dependency.
 
 /// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's
-/// `days_from_civil`). The inverse of `civil_from_days` in `transaction.rs`.
+/// `days_from_civil`). The inverse of `civil_from_days` below.
 pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -41,9 +41,38 @@ pub fn cim_datetime_to_unix_ms(s: &str) -> Option<u64> {
     u64::try_from(ms).ok()
 }
 
+/// `YYYY-MM-DD` without pulling in chrono. Days since epoch via civil-from-days.
+pub fn date_stamp() -> String {
+    let secs = crate::journal::now_ms() / 1000;
+    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Howard Hinnant's civil_from_days.
+pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn civil_from_days_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
+        assert_eq!(civil_from_days(20_147), (2025, 2, 28));
+        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+    }
 
     #[test]
     fn days_from_civil_known_dates() {

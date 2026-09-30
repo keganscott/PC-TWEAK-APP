@@ -12,4 +12,7 @@ publish = false
 strip = true
 lto = true
 codegen-units = 1
-panic = "abort"
+# Unwind, not abort: the command layer and the proof sampler turn a panic on a
+# worker thread into an error the user sees. With abort those handlers could
+# never run and the window would just vanish mid-command.
+panic = "unwind"

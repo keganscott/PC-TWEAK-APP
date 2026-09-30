@@ -6,12 +6,12 @@
 //! (never through a shell), and names that could be mistaken for an option or a
 //! path are refused first.
 
-use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use crate::error::{EngineError, Result};
+use crate::proc::run_limited;
 
 pub const MIN_SECONDS: u32 = 10;
 pub const MAX_SECONDS: u32 = 600;
@@ -138,14 +138,6 @@ impl PresentMonTool {
     }
 }
 
-fn drain<R: Read + Send + 'static>(mut r: R) -> std::thread::JoinHandle<String> {
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = r.read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).into_owned()
-    })
-}
-
 impl CaptureTool for PresentMonTool {
     fn version(&self) -> String {
         self.version.clone()
@@ -171,63 +163,25 @@ impl CaptureTool for PresentMonTool {
         };
 
         let mut cmd = Command::new(&self.exe);
-        cmd.args(Self::args(req))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.args(Self::args(req));
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| fail(format!("could not start {}: {e}", self.exe.display()), None))?;
-        let out = drain(child.stdout.take().expect("piped stdout"));
-        let err = drain(child.stderr.take().expect("piped stderr"));
-
         let limit = self
             .limit_override
             .unwrap_or_else(|| Duration::from_secs(u64::from(req.delay_seconds + req.seconds)) + GRACE);
-        let started = Instant::now();
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(s)) => break s,
-                Ok(None) if started.elapsed() >= limit => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    // Do not join the readers: a grandchild that inherited the
-                    // pipes would keep them open and turn "stopped" into
-                    // "waited for it anyway". They end when the pipes close.
-                    drop((out, err));
-                    return Err(fail(
-                        format!("did not finish within {} s and was stopped", limit.as_secs()),
-                        None,
-                    ));
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(e) => return Err(fail(format!("could not wait for PresentMon: {e}"), None)),
-            }
-        };
-        let (stdout, stderr) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
-
-        if !status.success() {
-            let detail = [stderr.trim(), stdout.trim()]
-                .into_iter()
-                .find(|s| !s.is_empty())
-                .unwrap_or("no output")
-                .lines()
-                .take(6)
-                .collect::<Vec<_>>()
-                .join(" ");
-            return Err(fail(detail, status.code()));
+        let out = run_limited(cmd, "PresentMon", limit, Duration::from_millis(100))?;
+        if out.exit_code != Some(0) {
+            return Err(fail(out.failure_detail(), out.exit_code));
         }
         match std::fs::metadata(&req.out_csv) {
             Ok(m) if m.len() > 0 => Ok(()),
             _ => Err(fail(
                 "PresentMon finished but wrote no data. Is the game running, and drawing frames in the foreground?"
                     .into(),
-                status.code(),
+                out.exit_code,
             )),
         }
     }
@@ -485,7 +439,7 @@ mod tests {
             let hang = script(d.path(), "sleep 60");
             let mut tool = PresentMonTool::stand_in(hang);
             tool.limit_override = Some(Duration::from_secs(1));
-            let t = Instant::now();
+            let t = std::time::Instant::now();
             let e = tool.capture(&request(d.path())).unwrap_err();
             assert!(t.elapsed() < Duration::from_secs(10), "took {:?}", t.elapsed());
             assert!(

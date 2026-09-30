@@ -771,3 +771,57 @@ fn a_failed_save_leaves_the_settings_unchanged() {
     assert!(r.is_err());
     assert_eq!(engine.settings(), Settings::default(), "memory must match disk");
 }
+
+/// Reverting a per-user change while a different account is the interactive user
+/// must not write the old values into that other account's hive.
+#[test]
+fn a_per_user_change_is_not_reverted_into_another_accounts_hive() {
+    use crate::context::{ContextResolver, UserContext, UserResolution};
+
+    let mk = || {
+        let mut t = TestTweak::new("u", r"Control Panel\Test", &[("X", 1)]);
+        t.context = ExecutionContext::User;
+        Box::new(t) as Box<dyn Tweak>
+    };
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let engine_for = |sid: &str| {
+        let user = UserContext {
+            sid: sid.into(),
+            resolution: UserResolution::InteractiveShell,
+            is_self: false,
+        };
+        let resolver = ContextResolver::new(user, true, fake.clone());
+        let journal = Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap();
+        crate::engine::Engine::new(
+            resolver,
+            journal,
+            vec![mk()],
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        )
+    };
+
+    let mut alice = engine_for("S-1-5-21-1-1-1-1001");
+    alice.apply("u").unwrap();
+
+    let mut bob = engine_for("S-1-5-21-1-1-1-1002");
+    let err = bob.revert("u").unwrap_err();
+    assert!(
+        matches!(&err, EngineError::ContextViolation { detail, .. } if detail.contains("1001") && detail.contains("1002")),
+        "{err:?}"
+    );
+    assert!(fake
+        .read_value_for_test(Hive::Users, r"S-1-5-21-1-1-1-1001\Control Panel\Test", "X")
+        .is_some());
+    assert!(
+        fake.read_value_for_test(Hive::Users, r"S-1-5-21-1-1-1-1002\Control Panel\Test", "X")
+            .is_none(),
+        "the other account's hive was not touched"
+    );
+
+    // The account that made the change can still undo it.
+    let mut alice_again = engine_for("S-1-5-21-1-1-1-1001");
+    alice_again.revert("u").unwrap();
+    assert!(fake.snapshot().is_empty());
+}

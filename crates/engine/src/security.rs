@@ -94,8 +94,19 @@ fn device_guard(wmi: &dyn WmiSource) -> Result<DeviceGuardFacts> {
         timed_out: false,
     })?;
     let arr = |name: &str| row.get(name).and_then(|v| v.as_u64_array()).unwrap_or_default();
+    // "Memory Integrity is off" is only said when Windows gave a list of running
+    // services to look in. A missing, null or non-numeric list is "could not
+    // tell", never an empty list (which would read as "nothing is running").
+    let running = row
+        .get("SecurityServicesRunning")
+        .and_then(|v| v.as_u64_array())
+        .ok_or_else(|| EngineError::Wmi {
+            namespace: NS_DEVICEGUARD.into(),
+            detail: "Win32_DeviceGuard did not return a readable SecurityServicesRunning list".into(),
+            timed_out: false,
+        })?;
     Ok(DeviceGuardFacts {
-        services_running: arr("SecurityServicesRunning"),
+        services_running: running,
         services_configured: arr("SecurityServicesConfigured"),
         available_properties: arr("AvailableSecurityProperties"),
     })
@@ -417,6 +428,31 @@ mod tests {
 
         let off = probe_security(&dg_rows(&[], &[]), &reg);
         assert!(off.memory_integrity.is_no());
+    }
+
+    #[test]
+    fn an_unreadable_running_list_is_unknown_not_off() {
+        let reg = FakeRegistry::new();
+        for bad in [
+            WmiValue::Null,
+            WmiValue::Str("none".into()),
+            WmiValue::Array(vec![WmiValue::Null]),
+        ] {
+            let wmi = FakeWmi::new().with_rows(
+                NS_DEVICEGUARD,
+                WQL_DEVICE_GUARD,
+                vec![vec![
+                    ("SecurityServicesRunning", bad.clone()),
+                    ("SecurityServicesConfigured", WmiValue::Array(vec![])),
+                    ("AvailableSecurityProperties", WmiValue::Array(vec![])),
+                ]],
+            );
+            let p = probe_security(&wmi, &reg).memory_integrity;
+            assert!(p.is_unknown(), "{bad:?} gave {p:?}");
+        }
+        // A property that is missing from the row altogether is the same.
+        let wmi = FakeWmi::new().with_rows(NS_DEVICEGUARD, WQL_DEVICE_GUARD, vec![vec![]]);
+        assert!(probe_security(&wmi, &reg).memory_integrity.is_unknown());
     }
 
     #[test]

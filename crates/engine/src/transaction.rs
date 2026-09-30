@@ -44,7 +44,7 @@ impl<'a> Transaction<'a> {
         if !resolver.elevated() {
             return Err(EngineError::NotElevated);
         }
-        let session_dir = journal.root().join("backups").join(date_stamp());
+        let session_dir = journal.root().join("backups").join(crate::timeutil::date_stamp());
         let tx_id = journal.take_seq();
         Ok(Self {
             tweak_id: tweak.id().to_owned(),
@@ -150,6 +150,7 @@ impl<'a> Transaction<'a> {
         entries.sort_by_key(|e| std::cmp::Reverse(e.seq));
 
         for e in &entries {
+            self.check_same_account(e)?;
             self.check_allowed(e.root, &e.key_path, &e.value_name)?;
             for k in &e.created_keys {
                 self.check_key_removable(e.root, k)?;
@@ -207,6 +208,38 @@ impl<'a> Transaction<'a> {
     }
 
     // ---- internals --------------------------------------------------------
+
+    /// A per-user change is undone in the hive it was made in. The current
+    /// interactive user may be someone else now (a different sign-in, alternate
+    /// admin credentials), and writing the old values into their hive would
+    /// corrupt it while leaving the original untouched. So it is refused, before
+    /// anything is written, and the message says whose account it was.
+    fn check_same_account(&self, e: &JournalEntry) -> Result<()> {
+        if e.root != RegRoot::InteractiveUser {
+            return Ok(());
+        }
+        let now = self.resolver.display_path(e.root, "");
+        let same = e
+            .display_path
+            .get(..now.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(&now));
+        if same {
+            return Ok(());
+        }
+        let made_for = e
+            .display_path
+            .strip_prefix("HKEY_USERS\\")
+            .and_then(|rest| rest.split('\\').next())
+            .unwrap_or("an unknown account");
+        Err(EngineError::ContextViolation {
+            tweak_id: self.tweak_id.clone(),
+            detail: format!(
+                "this change was made for the Windows account {made_for}, but the current user is {}; \
+                 sign in as that account to undo it",
+                self.resolver.user().sid
+            ),
+        })
+    }
 
     fn undo_entry(&self, e: &JournalEntry) -> Result<()> {
         let (hive, full) = self.resolver.route(e.root, &e.key_path);
@@ -354,27 +387,6 @@ impl<'a> Transaction<'a> {
 // helpers
 // ---------------------------------------------------------------------------
 
-/// `YYYY-MM-DD` without pulling in chrono. Days since epoch via civil-from-days.
-fn date_stamp() -> String {
-    let secs = now_ms() / 1000;
-    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-/// Howard Hinnant's civil_from_days.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
 /// Registry value names allow characters that filenames do not. Also capped so
 /// a long name cannot push the path past MAX_PATH.
 fn sanitise(s: &str) -> String {
@@ -393,14 +405,6 @@ fn sanitise(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn civil_from_days_known_dates() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
-        assert_eq!(civil_from_days(20_147), (2025, 2, 28));
-        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
-    }
 
     #[test]
     fn sanitise_replaces_path_characters_and_caps_length() {

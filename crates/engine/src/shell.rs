@@ -6,13 +6,13 @@
 //! `%SystemRoot%`, not looked up on `PATH`. Every call has a timeout, and the
 //! exit code and stderr come back to the caller.
 
-use std::io::Read;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use super::error::{EngineError, Result};
+use super::proc::run_limited;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -41,62 +41,17 @@ fn powershell_path() -> Result<PathBuf> {
     }
 }
 
-fn drain<R: Read + Send + 'static>(mut r: R) -> std::thread::JoinHandle<String> {
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = r.read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).into_owned()
-    })
-}
-
 /// Run a fixed script. `what` names it in errors. A non-zero exit is returned as
 /// data (`ShellOutput`), not an error; a timeout or failure to start is an error.
 pub fn run_powershell(what: &'static str, script: &'static str, timeout: Duration) -> Result<ShellOutput> {
-    let fail = |detail: String, code: Option<i32>| EngineError::Command {
-        what: what.into(),
-        exit_code: code,
-        detail,
-    };
-
-    let mut child = Command::new(powershell_path()?)
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|e| fail(format!("could not start PowerShell: {e}"), None))?;
-
-    // Read both pipes on their own threads so a chatty child cannot block on a
-    // full pipe while we wait for it.
-    let out = drain(child.stdout.take().expect("piped stdout"));
-    let err = drain(child.stderr.take().expect("piped stderr"));
-
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if started.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                // Do not join the readers: a grandchild that inherited the
-                // pipes would keep them open and turn "stopped" into "waited
-                // for it anyway". They end when the pipes close.
-                drop((out, err));
-                return Err(fail(
-                    format!("did not finish within {} s and was stopped", timeout.as_secs()),
-                    None,
-                ));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => return Err(fail(format!("could not wait for PowerShell: {e}"), None)),
-        }
-    };
-
+    let mut cmd = Command::new(powershell_path()?);
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW);
+    let out = run_limited(cmd, what, timeout, Duration::from_millis(50))?;
     Ok(ShellOutput {
-        exit_code: status.code(),
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        exit_code: out.exit_code,
+        stdout: out.stdout,
+        stderr: out.stderr,
     })
 }
 
@@ -106,14 +61,12 @@ pub fn run_powershell_checked(what: &'static str, script: &'static str, timeout:
     if out.exit_code == Some(0) {
         return Ok(out);
     }
-    let detail = [out.stderr.trim(), out.stdout.trim()]
-        .into_iter()
-        .find(|s| !s.is_empty())
-        .unwrap_or("no output")
-        .lines()
-        .take(6)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let detail = crate::proc::Output {
+        exit_code: out.exit_code,
+        stdout: out.stdout,
+        stderr: out.stderr,
+    }
+    .failure_detail();
     Err(EngineError::Command {
         what: what.into(),
         exit_code: out.exit_code,
@@ -150,7 +103,7 @@ mod tests {
 
     #[test]
     fn a_hung_script_is_stopped_at_the_timeout() {
-        let t = Instant::now();
+        let t = std::time::Instant::now();
         let err = run_powershell("test", "Start-Sleep -Seconds 60", Duration::from_secs(2)).unwrap_err();
         assert!(t.elapsed() < Duration::from_secs(20), "took {:?}", t.elapsed());
         assert!(

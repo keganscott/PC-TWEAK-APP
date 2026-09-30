@@ -13,8 +13,9 @@
 //!
 //! **Live application only ever targets the right profile.**
 //! `SystemParametersInfoW(SPI_SETMOUSE)` acts on the calling process's session
-//! and, with `SPIF_UPDATEINIFILE`, writes the caller's own `HKEY_CURRENT_USER`.
-//! That is right only when the interactive user is us. When we resolved a
+//! (we never pass `SPIF_UPDATEINIFILE`, which would write the caller's own
+//! `HKEY_CURRENT_USER` outside the journal). It is right only when the
+//! interactive user is us. When we resolved a
 //! different SID (alternate admin credentials, Administrator Protection) we skip
 //! the call and the registry write takes effect at next sign-in.
 
@@ -114,14 +115,17 @@ impl Tweak for MouseAcceleration {
 /// sign-out. Best-effort: a failure here is cosmetic, because the registry
 /// write already persisted and applies at next sign-in.
 ///
+/// Deliberately without `SPIF_UPDATEINIFILE`: that flag makes Windows write the
+/// three values into the registry itself, which would be a change outside the
+/// journal (after a revert that removed them, it would put assumed defaults
+/// back). Only the transaction writes the registry.
+///
 /// `SPI_SETMOUSE` takes an array of three integers:
 /// `[threshold1, threshold2, acceleration]`. VERIFY against Microsoft's
 /// SystemParametersInfo documentation before changing the order.
 #[cfg(windows)]
 fn push_live(threshold1: i32, threshold2: i32, acceleration: i32) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SystemParametersInfoW, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SPI_SETMOUSE,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPIF_SENDCHANGE, SPI_SETMOUSE};
 
     let mut params: [i32; 3] = [threshold1, threshold2, acceleration];
     unsafe {
@@ -129,7 +133,7 @@ fn push_live(threshold1: i32, threshold2: i32, acceleration: i32) {
             SPI_SETMOUSE,
             0,
             Some(params.as_mut_ptr() as *mut core::ffi::c_void),
-            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+            SPIF_SENDCHANGE,
         );
     }
 }

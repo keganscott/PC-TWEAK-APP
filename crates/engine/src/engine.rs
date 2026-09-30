@@ -298,7 +298,10 @@ impl Engine {
             });
         }
 
-        // Fresh environment for this decision, not whatever was cached.
+        // Fresh state for this decision: the state probes (security, restore) are
+        // re-read; hardware, which does not change under a running app, may come
+        // from the 10-minute cache.
+        self.probe.invalidate();
         self.rescan();
         if let PredicateOutcome::Block(reason) = self.tweaks[idx].evaluate_predicate(&self.env) {
             return Err(EngineError::Blocked { reason });
@@ -361,8 +364,10 @@ impl Engine {
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Revert)?;
         // A failed revert leaves the transaction uncommitted on purpose: the
         // applies stay outstanding and a retry finishes the job.
-        tweak.revert(&mut tx)?;
-        let result = tx.commit();
+        let reverted = tweak.revert(&mut tx);
+        // Even a failed revert may have changed things (some values restored):
+        // cached probe results must not outlive it.
+        let result = reverted.and_then(|()| tx.commit());
         self.probe.invalidate();
         result
     }

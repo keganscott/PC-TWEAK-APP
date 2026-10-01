@@ -6,6 +6,7 @@ A native Windows gaming optimisation utility: Tauri 2 shell, Rust engine, React/
 
 | Path | What |
 |---|---|
+| `crates/field-check` | `peaktweaks-field-check.exe`: collects real-PC evidence for the open items into one report (`docs/FIELD_CHECK.md`). Development tool, not shipped. |
 | `crates/engine` | The engine: `RegistryBackend`, journal, `Transaction`, tweaks, `Engine`. No Tauri dependency, so it builds and tests on any OS. |
 | `src-tauri` | Thin Tauri shell: async IPC commands, manifest (`requireAdministrator`), capability. |
 | `src/generated` | TypeScript generated from the Rust types (ts-rs) plus `fixtures.ts`. Do not edit; `cargo test -p peaktweaks-engine` regenerates it and CI fails if it is stale. |

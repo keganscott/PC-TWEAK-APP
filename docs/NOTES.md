@@ -4,6 +4,8 @@ Working log for anything **not finished, not verified, or decided by assumption*
 
 Legend: **BLOCKED** = needs something from Kegan or a real machine. **TODO** = doable, not yet done. **ASSUMED** = I picked a default; change it if wrong.
 
+**Fastest way to close most BLOCKED items:** run `peaktweaks-field-check.exe` on a real PC (`docs/FIELD_CHECK.md`) and send back `report.json`. It covers N22, N23, N24, N25, N26, N28, N33, N34, N39 and N43 in one run.
+
 ## Open
 
 | # | Kind | Item | Why it is open | What closes it |

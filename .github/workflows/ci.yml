@@ -174,6 +174,31 @@ jobs:
       - name: Storage ownership and WMI timeout on this runner
         run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
 
+      # The field-check tool (docs/FIELD_CHECK.md) is what Kegan runs on a real PC.
+      # Here it runs read-only on the runner, so a release never ships a tool
+      # that cannot even start.
+      - name: Field check (read-only) on this runner
+        shell: pwsh
+        run: |
+          cargo build --release -p peaktweaks-field-check
+          $out = Join-Path $env:RUNNER_TEMP 'field-check'
+          & target\release\peaktweaks-field-check.exe --out $out --nvml-seconds 2
+          if ($LASTEXITCODE -ne 0) { throw "field check exited with $LASTEXITCODE" }
+          $r = Get-Content (Join-Path $out 'report.json') -Raw | ConvertFrom-Json
+          foreach ($p in $r.PSObject.Properties) {
+            if ($null -ne $p.Value.ok) { Write-Host ("{0,-24} ok={1} {2}" -f $p.Name, $p.Value.ok, $p.Value.error) }
+          }
+          if (-not $r.audit.ok) { throw "the audit section failed in the field check" }
+          Copy-Item (Join-Path $out 'report.json') field-check-report.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peaktweaks-field-check
+          path: |
+            target/release/peaktweaks-field-check.exe
+            field-check-report.json
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: peaktweaks-exe

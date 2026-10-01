@@ -1,0 +1,20 @@
+[package]
+name = "peaktweaks-field-check"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Collects real-PC evidence for the PeakTweaks gates into one JSON report. Not shipped to users."
+
+[[bin]]
+name = "peaktweaks-field-check"
+path = "src/main.rs"
+
+[dependencies]
+peaktweaks-engine = { path = "../engine" }
+serde_json = "1"
+
+[features]
+# Same as the app: embed the pinned PresentMon so the tool is one file.
+default = ["bundle-presentmon"]
+bundle-presentmon = ["peaktweaks-engine/bundle-presentmon"]

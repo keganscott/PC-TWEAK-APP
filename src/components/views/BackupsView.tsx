@@ -80,7 +80,10 @@ export function BackupsView() {
           {!restore ? (
             <p className="mt-2 text-sm text-ink-muted">Not read yet.</p>
           ) : restore.points.state !== "yes" ? (
-            <p className="mt-2 text-sm text-ink-muted">Could not be read: {restore.points.reason}</p>
+            <p className="mt-2 text-sm text-ink-muted">
+              Windows did not list them.
+              {technical && <span className="mt-1 block break-all font-mono text-xs">{restore.points.reason}</span>}
+            </p>
           ) : restore.points.value.length === 0 ? (
             <p className="mt-2 text-sm text-ink-muted">There are none.</p>
           ) : (

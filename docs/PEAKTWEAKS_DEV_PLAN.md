@@ -477,3 +477,7 @@ Ten findings, all checked against the code and all fixed, each with a regression
 8. Capture state was global, so one comparison's error or recording state showed on another. It is per comparison now.
 9. An audit that started before a target-game pick could land after it and undo the pick on screen.
 10. The restore step's progress line could show the previous attempt's last message. It now reads only the current attempt's messages, and without copying the whole log on every event.
+
+### 15.13 The real app, end to end in CI (Claude)
+
+The Windows job now drives the real `peaktweaks.exe` UI with WebDriver after the shipped exe is uploaded: same code and engine, rebuilt with one change, a WebView2 debugging port in the window's browser arguments (`e2e-tauri/tauri.e2e.conf.json`), because the WebView2 runtime ignores the environment variable msedgedriver normally uses (evidence in NOTES.md C18). `e2e-tauri/real-app.mjs` checks that the engine starts, no SAMPLE data appears, the scan arrives, the restore lock matches the machine, Tools lists the real catalogue, Games/Proof/Backups open and the activity log carries the engine's messages, and prints what each screen shows. Found on the way and fixed: when the engine failed to start, the windowed release build used to vanish with no message; it now stays open, shows the reason on its start-up screen and writes it to `%LOCALAPPDATA%\PeakTweaks\startup-error.log`, and the launch smoke test fails if that log is written.

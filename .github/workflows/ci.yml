@@ -225,7 +225,6 @@ jobs:
       # test variant whose only difference is --remote-debugging-port in the
       # window's browser arguments, AFTER the shipped exe was uploaded above.
       - name: Real app UI end to end (WebDriver)
-        continue-on-error: true  # until it has passed once (NOTES.md N46)
         shell: pwsh
         run: |
           npx tauri build --no-bundle --config e2e-tauri/tauri.e2e.conf.json

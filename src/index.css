@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* Design tokens. Status is never shown by colour alone: every status colour
+   below is paired with an icon and a word in StatusBadge. */
+@theme {
+  --color-surface-0: #0b0f14;
+  --color-surface-1: #121821;
+  --color-surface-2: #1a2230;
+  --color-surface-3: #243042;
+  --color-line: #2c3a4f;
+  --color-ink: #e6edf5;
+  --color-ink-muted: #9fb0c3;
+  --color-ink-faint: #6f8297;
+  --color-accent: #3dd6a3;
+  --color-accent-strong: #22b885;
+  --color-ok: #3dd6a3;
+  --color-warn: #f5b84d;
+  --color-bad: #f2706b;
+  --color-info: #6fb2f2;
+  --color-sample: #c792ea;
+  --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-surface-0 text-ink font-sans antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

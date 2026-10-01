@@ -23,13 +23,19 @@ rustup target add x86_64-pc-windows-msvc
 cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 
 # Frontend
-npm ci && npm run typecheck && npm run build
+npm ci
+npm run dev          # UI in a browser on the SAMPLE mock (labelled), http://localhost:1420
+npm run typecheck    # app and Node-side TypeScript
+npm test             # vitest: store, mock, error wording, components
+npm run lint:copy    # no user-facing text may promise a result
+npm run build        # release bundle (contains no SAMPLE data)
+npm run e2e          # Playwright smoke test + axe scan at 1366x768 and 150% scaling
 
 # Full app (Windows). The exe asks for administrator rights on launch.
 npx tauri build --no-bundle
 ```
 
-Windows CI (`.github/workflows/ci.yml`) is the gate: fmt, clippy `-D warnings`, check, test, tsc, vite build, Tauri build, manifest check, and a stale-bindings check.
+CI (`.github/workflows/ci.yml`) is the gate. Windows: fmt, clippy `-D warnings`, check, test, tsc, vite build, Tauri build, manifest check, stale-bindings check, live probes, field check. Linux: engine tests, no-networking-crates check. Frontend: types, vitest, copy lint, release-bundle check, Playwright + axe.
 
 ## Running the engine by hand
 

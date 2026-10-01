@@ -3,6 +3,7 @@
 // (WebDriver) via msedgedriver. Runs on the Windows CI runner after the release build.
 //
 // Usage: node e2e-tauri/real-app.mjs <path to peaktweaks.exe>
+//        DEBUGGER_ADDRESS=localhost:9222 to attach to an already running test build
 // Needs msedgedriver (matching the WebView2 runtime's version) on 127.0.0.1:4444.
 //
 // Prints what each screen shows (evidence for NOTES.md) and fails on the first
@@ -18,12 +19,17 @@ if (!app) {
   process.exit(2);
 }
 
-// msedgedriver drives a WebView2 app directly: `binary` is the app, and
-// `webviewOptions` tells it to attach to the app's WebView2 rather than Edge.
-// (tauri-driver only translates its "tauri:options" into exactly this.)
+// The WebView2 runtime ignores WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS for this
+// app (it uses the arguments the app sets; NOTES.md N46), so msedgedriver cannot
+// launch it with a debugging port. CI instead builds a test variant whose only
+// difference is `--remote-debugging-port` in the window's browser arguments
+// (e2e-tauri/tauri.e2e.conf.json), starts it, and attaches here. With
+// DEBUGGER_ADDRESS unset this falls back to letting msedgedriver launch `app`.
+const debuggerAddress = process.env.DEBUGGER_ADDRESS;
+const edgeOptions = debuggerAddress ? { debuggerAddress } : { binary: app, webviewOptions: {} };
 const driver = await new Builder()
   .usingServer(process.env.WEBDRIVER_URL ?? "http://127.0.0.1:4444/")
-  .withCapabilities({ browserName: "webview2", "ms:edgeOptions": { binary: app, webviewOptions: {} } })
+  .withCapabilities({ browserName: "webview2", "ms:edgeOptions": edgeOptions })
   .build();
 
 const heading = (text) => By.xpath(`//h1[normalize-space()='${text}']`);

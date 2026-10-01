@@ -205,43 +205,6 @@ jobs:
       # The real app, end to end: release exe, its WebView2 window, the real engine,
       # this machine. tauri-driver speaks WebDriver; msedgedriver must match the
       # WebView2 runtime's version.
-      # EXPERIMENTAL, not yet passing (NOTES.md N46): WebView2 inside the
-      # elevated app does not open the debugging port msedgedriver asks for.
-      # Kept running for its diagnostics without turning the job red.
-      - name: Real app UI end to end (WebDriver)
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          $v = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
-          if (-not $v) { $v = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion }
-          Write-Host "WebView2 / Edge version: $v"
-          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
-          $ok = $false
-          foreach ($host_ in 'https://msedgedriver.microsoft.com', 'https://msedgedriver.azureedge.net') {
-            try { Invoke-WebRequest "$host_/$v/edgedriver_win64.zip" -OutFile $zip -UseBasicParsing; $ok = $true; break } catch { Write-Host "no driver at $host_ ($_)" }
-          }
-          if (-not $ok) { throw "could not download msedgedriver $v" }
-          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
-          Expand-Archive $zip -DestinationPath $dir -Force
-          $exe = (Resolve-Path target\release\peaktweaks.exe).Path
-          Write-Host "--- can the exe be started directly, with a debugging port?"
-          node e2e-tauri/diagnose.mjs $exe
-          Get-Process peaktweaks, msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
-          $log = Join-Path $env:RUNNER_TEMP 'msedgedriver.log'
-          $drv = Start-Process (Join-Path $dir 'msedgedriver.exe') -ArgumentList '--port=4444', '--verbose', "--log-path=$log" -PassThru
-          Start-Sleep -Seconds 3
-          try {
-            node e2e-tauri/real-app.mjs $exe
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "--- msedgedriver log (launch and errors)"
-              Get-Content $log -ErrorAction SilentlyContinue | Select-String -Pattern 'Launching|binary|args|user-data|DevTools|WEBVIEW2|ERROR|SEVERE|webview' | Select-Object -First 60 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(400, $_.Line.Length)) } | Write-Host
-              Write-Host "--- startup-error.log"; Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
-              throw "real-app checks failed"
-            }
-          }
-          finally { Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue; Get-Process peaktweaks, msedgedriver -ErrorAction SilentlyContinue | Stop-Process -Force }
-
       - uses: actions/upload-artifact@v4
         with:
           name: peaktweaks-field-check
@@ -255,6 +218,50 @@ jobs:
           name: peaktweaks-exe
           path: target/release/peaktweaks.exe
           if-no-files-found: error
+
+      # The real app, end to end: its WebView2 window, the real engine, this
+      # machine, driven through WebDriver. WebView2 ignores the debugging flags
+      # msedgedriver passes in the environment (NOTES.md N46), so this rebuilds a
+      # test variant whose only difference is --remote-debugging-port in the
+      # window's browser arguments, AFTER the shipped exe was uploaded above.
+      - name: Real app UI end to end (WebDriver)
+        continue-on-error: true  # until it has passed once (NOTES.md N46)
+        shell: pwsh
+        run: |
+          npx tauri build --no-bundle --config e2e-tauri/tauri.e2e.conf.json
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $v = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          if (-not $v) { $v = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion }
+          Write-Host "WebView2 version: $v"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          $ok = $false
+          foreach ($host_ in 'https://msedgedriver.microsoft.com', 'https://msedgedriver.azureedge.net') {
+            try { Invoke-WebRequest "$host_/$v/edgedriver_win64.zip" -OutFile $zip -UseBasicParsing; $ok = $true; break } catch { Write-Host "no driver at $host_ ($_)" }
+          }
+          if (-not $ok) { throw "could not download msedgedriver $v" }
+          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          Expand-Archive $zip -DestinationPath $dir -Force
+          $exe = (Resolve-Path target\release\peaktweaks.exe).Path
+          $app = Start-Process $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          do { Start-Sleep -Seconds 2; try { $null = Invoke-WebRequest http://127.0.0.1:9222/json/version -UseBasicParsing; $up = $true } catch { $up = $false } } until ($up -or (Get-Date) -gt $deadline)
+          if (-not $up) { throw "the test build opened no WebView2 debugging port" }
+          $log = Join-Path $env:RUNNER_TEMP 'msedgedriver.log'
+          $drv = Start-Process (Join-Path $dir 'msedgedriver.exe') -ArgumentList '--port=4444', '--verbose', "--log-path=$log" -PassThru
+          Start-Sleep -Seconds 3
+          try {
+            $env:DEBUGGER_ADDRESS = '127.0.0.1:9222'
+            node e2e-tauri/real-app.mjs $exe
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content $log -ErrorAction SilentlyContinue | Select-String -Pattern 'ERROR|SEVERE' | Select-Object -First 30 | ForEach-Object { $_.Line } | Write-Host
+              Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
+              throw "real-app checks failed"
+            }
+          }
+          finally {
+            Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          }
 
   # Fast cross-OS check: the engine's journal and transaction logic runs against
   # the in-memory registry, so it is tested on Linux too.

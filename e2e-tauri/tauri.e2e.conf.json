@@ -1,0 +1,15 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PeakTweaks",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222"
+      }
+    ]
+  }
+}

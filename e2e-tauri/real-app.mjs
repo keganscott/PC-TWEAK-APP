@@ -46,7 +46,18 @@ async function show(view) {
 
 try {
   await step("the real engine starts and Home renders", async () => {
-    await driver.wait(until.elementLocated(heading("Home")), 60_000);
+    // Either Home, or the start-up failure screen with the engine's reason.
+    const started = await driver.wait(
+      async () =>
+        (await driver.findElements(heading("Home"))).length > 0 ||
+        (await driver.findElements(heading("PeakTweaks could not start"))).length > 0,
+      60_000,
+    );
+    assert.ok(started);
+    if ((await driver.findElements(heading("PeakTweaks could not start"))).length > 0) {
+      await show("Start-up failure");
+      assert.fail("the engine did not start; its reason is printed above");
+    }
   });
 
   await step("no SAMPLE data inside the real app", async () => {

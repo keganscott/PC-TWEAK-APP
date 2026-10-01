@@ -24,6 +24,26 @@ use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
 
+/// What the commands reach the engine through. If the engine could not start,
+/// the window still opens and every command answers with the reason, so the UI
+/// can show it (plan section 7: boot failure screen) instead of the app
+/// vanishing with nothing on screen.
+pub struct EngineHandle(std::result::Result<SharedEngine, EngineError>);
+
+impl EngineHandle {
+    pub fn ready(engine: Engine) -> Self {
+        Self(Ok(Arc::new(Mutex::new(engine))))
+    }
+
+    pub fn failed(error: EngineError) -> Self {
+        Self(Err(error))
+    }
+
+    fn get(&self) -> Result<SharedEngine> {
+        self.0.clone()
+    }
+}
+
 fn progress(app: &AppHandle, stage: &str, tweak_id: Option<&str>, message: impl Into<String>) {
     // Progress is advisory; a failed emit must never fail the operation.
     let _ = app.emit(
@@ -38,7 +58,7 @@ fn progress(app: &AppHandle, stage: &str, tweak_id: Option<&str>, message: impl 
 
 /// Run engine work off the main thread. A poisoned lock means an earlier panic
 /// left engine state untrustworthy, so it is surfaced, never papered over.
-async fn blocking<T, F>(engine: &State<'_, SharedEngine>, f: F) -> Result<T>
+async fn blocking<T, F>(engine: &State<'_, EngineHandle>, f: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&mut Engine) -> Result<T> + Send + 'static,
@@ -49,7 +69,7 @@ where
 /// Like `blocking`, for getting back to how things were. Undoing must always be
 /// possible, so after a panic this re-reads the journal and probes from disk and
 /// Windows, clears the poison, and carries on, instead of asking for a restart.
-async fn blocking_recovering<T, F>(engine: &State<'_, SharedEngine>, f: F) -> Result<T>
+async fn blocking_recovering<T, F>(engine: &State<'_, EngineHandle>, f: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&mut Engine) -> Result<T> + Send + 'static,
@@ -57,12 +77,12 @@ where
     run(engine, true, f).await
 }
 
-async fn run<T, F>(engine: &State<'_, SharedEngine>, recover: bool, f: F) -> Result<T>
+async fn run<T, F>(engine: &State<'_, EngineHandle>, recover: bool, f: F) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(&mut Engine) -> Result<T> + Send + 'static,
 {
-    let engine = Arc::clone(engine.inner());
+    let engine = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = match engine.lock() {
             Ok(guard) => guard,
@@ -87,12 +107,12 @@ where
 }
 
 #[tauri::command]
-pub async fn engine_context(engine: State<'_, SharedEngine>) -> Result<ContextInfo> {
+pub async fn engine_context(engine: State<'_, EngineHandle>) -> Result<ContextInfo> {
     blocking(&engine, |e| Ok(e.context_info())).await
 }
 
 #[tauri::command]
-pub async fn list_tweaks(engine: State<'_, SharedEngine>) -> Result<Vec<TweakView>> {
+pub async fn list_tweaks(engine: State<'_, EngineHandle>) -> Result<Vec<TweakView>> {
     // `rescan` reuses recent probe results, so this is cheap after the first call.
     blocking(&engine, |e| {
         e.rescan();
@@ -104,14 +124,14 @@ pub async fn list_tweaks(engine: State<'_, SharedEngine>) -> Result<Vec<TweakVie
 /// The user's preferences (rig-class override, wording). Preferences only: they
 /// change defaults and copy, never a gate, licence or safety check.
 #[tauri::command]
-pub async fn get_settings(engine: State<'_, SharedEngine>) -> Result<Settings> {
+pub async fn get_settings(engine: State<'_, EngineHandle>) -> Result<Settings> {
     blocking(&engine, |e| Ok(e.settings())).await
 }
 
 /// Replace the preferences. The engine saves them before it uses them and
 /// returns what is now stored.
 #[tauri::command]
-pub async fn set_settings(engine: State<'_, SharedEngine>, settings: Settings) -> Result<Settings> {
+pub async fn set_settings(engine: State<'_, EngineHandle>, settings: Settings) -> Result<Settings> {
     blocking(&engine, move |e| e.set_settings(settings)).await
 }
 
@@ -123,7 +143,7 @@ pub async fn list_games() -> Result<Vec<GameInfo>> {
 /// Pick (or clear) the target game. The id is validated against the engine's
 /// own list; the environment is then rebuilt in Rust.
 #[tauri::command]
-pub async fn select_target_game(engine: State<'_, SharedEngine>, game_id: Option<String>) -> Result<Vec<TweakView>> {
+pub async fn select_target_game(engine: State<'_, EngineHandle>, game_id: Option<String>) -> Result<Vec<TweakView>> {
     blocking(&engine, move |e| {
         e.select_target_game(game_id)?;
         e.list()
@@ -134,7 +154,7 @@ pub async fn select_target_game(engine: State<'_, SharedEngine>, game_id: Option
 /// Re-run every probe inside the engine (nothing cached) and return the
 /// refreshed list.
 #[tauri::command]
-pub async fn rescan(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<Vec<TweakView>> {
+pub async fn rescan(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<Vec<TweakView>> {
     progress(&app, "rescan", None, "Checking this PC");
     let out = blocking(&engine, |e| {
         e.rescan_fresh();
@@ -149,7 +169,7 @@ pub async fn rescan(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<V
 /// state and anti-cheat readiness. Every field is Yes / No / Unknown, and the
 /// whole thing is built inside the engine.
 #[tauri::command]
-pub async fn audit_system(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<SystemAudit> {
+pub async fn audit_system(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<SystemAudit> {
     progress(&app, "audit", None, "Checking this PC");
     let out = blocking(&engine, |e| Ok(e.audit())).await;
     progress(&app, "audit_done", None, "Done");
@@ -159,8 +179,8 @@ pub async fn audit_system(app: AppHandle, engine: State<'_, SharedEngine>) -> Re
 /// Turn on System Protection if needed, create a restore point and prove
 /// Windows recorded it. The slow Windows calls run without the engine lock held.
 #[tauri::command]
-pub async fn create_restore_point(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<RestoreOutcome> {
-    let shared = Arc::clone(engine.inner());
+pub async fn create_restore_point(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<RestoreOutcome> {
+    let shared = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || {
         let svc = shared
             .lock()
@@ -206,12 +226,12 @@ fn proof_service(shared: &SharedEngine) -> Result<Arc<ProofService>> {
 /// Start a before/after comparison for a game. The free plan allows one.
 #[tauri::command]
 pub async fn proof_begin_session(
-    engine: State<'_, SharedEngine>,
+    engine: State<'_, EngineHandle>,
     exe: String,
     game_id: Option<String>,
     game_build: Option<String>,
 ) -> Result<ProofSession> {
-    let shared = Arc::clone(engine.inner());
+    let shared = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (rig, tier) = shared
             .lock()
@@ -240,13 +260,13 @@ pub async fn proof_begin_session(
 #[tauri::command]
 pub async fn proof_capture(
     app: AppHandle,
-    engine: State<'_, SharedEngine>,
+    engine: State<'_, EngineHandle>,
     session_id: String,
     side: Side,
     seconds: u32,
     delay_seconds: u32,
 ) -> Result<ProofRun> {
-    let shared = Arc::clone(engine.inner());
+    let shared = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || {
         let (svc, applied) = {
             let guard = shared.lock().map_err(|_| EngineError::Internal {
@@ -278,8 +298,8 @@ pub async fn proof_capture(
 
 /// Better / no measurable change / worse, from the stored runs only.
 #[tauri::command]
-pub async fn proof_compare(engine: State<'_, SharedEngine>, session_id: String) -> Result<Comparison> {
-    let shared = Arc::clone(engine.inner());
+pub async fn proof_compare(engine: State<'_, EngineHandle>, session_id: String) -> Result<Comparison> {
+    let shared = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.compare(&session_id))
         .await
         .map_err(|e| EngineError::Internal {
@@ -288,8 +308,8 @@ pub async fn proof_compare(engine: State<'_, SharedEngine>, session_id: String) 
 }
 
 #[tauri::command]
-pub async fn proof_list_sessions(engine: State<'_, SharedEngine>) -> Result<Vec<ProofSessionSummary>> {
-    let shared = Arc::clone(engine.inner());
+pub async fn proof_list_sessions(engine: State<'_, EngineHandle>) -> Result<Vec<ProofSessionSummary>> {
+    let shared = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.sessions())
         .await
         .map_err(|e| EngineError::Internal {
@@ -298,8 +318,8 @@ pub async fn proof_list_sessions(engine: State<'_, SharedEngine>) -> Result<Vec<
 }
 
 #[tauri::command]
-pub async fn proof_runs(engine: State<'_, SharedEngine>, session_id: String) -> Result<Vec<ProofRun>> {
-    let shared = Arc::clone(engine.inner());
+pub async fn proof_runs(engine: State<'_, EngineHandle>, session_id: String) -> Result<Vec<ProofRun>> {
+    let shared = engine.get()?;
     tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.runs(&session_id))
         .await
         .map_err(|e| EngineError::Internal {
@@ -308,7 +328,7 @@ pub async fn proof_runs(engine: State<'_, SharedEngine>, session_id: String) -> 
 }
 
 #[tauri::command]
-pub async fn apply_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: String) -> Result<Vec<JournalEntry>> {
+pub async fn apply_tweak(app: AppHandle, engine: State<'_, EngineHandle>, id: String) -> Result<Vec<JournalEntry>> {
     progress(&app, "apply", Some(&id), "Applying");
     let tid = id.clone();
     let out = blocking(&engine, move |e| e.apply(&tid)).await;
@@ -322,7 +342,7 @@ pub async fn apply_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: St
 }
 
 #[tauri::command]
-pub async fn revert_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: String) -> Result<Vec<JournalEntry>> {
+pub async fn revert_tweak(app: AppHandle, engine: State<'_, EngineHandle>, id: String) -> Result<Vec<JournalEntry>> {
     progress(&app, "revert", Some(&id), "Undoing");
     let tid = id.clone();
     let out = blocking_recovering(&engine, move |e| e.revert(&tid)).await;
@@ -336,7 +356,7 @@ pub async fn revert_tweak(app: AppHandle, engine: State<'_, SharedEngine>, id: S
 }
 
 #[tauri::command]
-pub async fn revert_all(app: AppHandle, engine: State<'_, SharedEngine>) -> Result<Vec<RevertResult>> {
+pub async fn revert_all(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<Vec<RevertResult>> {
     progress(&app, "revert_all", None, "Undoing everything");
     let out = blocking_recovering(&engine, |e| Ok(e.revert_all())).await;
     progress(&app, "revert_all_done", None, "Done");
@@ -344,6 +364,6 @@ pub async fn revert_all(app: AppHandle, engine: State<'_, SharedEngine>) -> Resu
 }
 
 #[tauri::command]
-pub async fn list_journal(engine: State<'_, SharedEngine>) -> Result<JournalView> {
+pub async fn list_journal(engine: State<'_, EngineHandle>) -> Result<JournalView> {
     blocking_recovering(&engine, |e| Ok(e.journal_view())).await
 }

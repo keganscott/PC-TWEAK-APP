@@ -4,8 +4,6 @@
 mod command_audit;
 mod commands;
 
-use std::sync::{Arc, Mutex};
-
 use peaktweaks_engine::env::License;
 use peaktweaks_engine::tweaks;
 use peaktweaks_engine::Engine;
@@ -43,12 +41,44 @@ fn prepare_webview2_data_dir() {
     }
 }
 
+/// Writes why the engine did not start to `%LOCALAPPDATA%\PeakTweaks\startup-error.log`
+/// (newest last). Best effort: the UI shows the same reason.
+fn record_startup_failure(error: &peaktweaks_engine::error::EngineError) {
+    use std::io::Write;
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(base).join("PeakTweaks");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("startup-error.log"))
+    {
+        let _ = writeln!(f, "{secs} engine failed to start: {error} ({error:?})");
+    }
+}
+
 fn main() {
     prepare_webview2_data_dir();
     tauri::Builder::default()
         .setup(|app| {
-            let engine = start_engine().map_err(|e| format!("engine failed to start: {e}"))?;
-            tauri::Manager::manage(app, Arc::new(Mutex::new(engine)) as commands::SharedEngine);
+            let handle = match start_engine() {
+                Ok(engine) => commands::EngineHandle::ready(engine),
+                Err(e) => {
+                    // Keep the window: the UI shows this reason on its start-up
+                    // screen. Also leave it on disk, for support and for when the
+                    // window itself cannot render.
+                    record_startup_failure(&e);
+                    commands::EngineHandle::failed(e)
+                }
+            };
+            tauri::Manager::manage(app, handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

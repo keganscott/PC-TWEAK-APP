@@ -112,6 +112,10 @@ jobs:
           $p = Start-Process -FilePath 'target\release\peaktweaks.exe' -PassThru
           Start-Sleep -Seconds 20
           if ($p.HasExited) { throw "peaktweaks.exe exited early with code $($p.ExitCode)" }
+          # The app now stays open when its engine fails (it shows the reason), so
+          # "still running" alone no longer proves the engine started.
+          $startupLog = Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log'
+          if (Test-Path $startupLog) { Get-Content $startupLog | Write-Host; throw "the engine failed to start" }
           Write-Host "still running after 20s (pid $($p.Id))"
           if (-not (Test-Path $dir)) { throw "engine did not create $dir" }
           $acl = (icacls $dir) -join "`n"
@@ -229,6 +233,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               Write-Host "--- processes at failure"; Get-Process peaktweaks, msedgewebview2, msedgedriver -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime | Out-String | Write-Host
               Write-Host "--- tauri-driver output"; Get-Content $log, "$log.out" -ErrorAction SilentlyContinue | Select-Object -Last 60 | Write-Host
+              Write-Host "--- startup-error.log"; Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
               throw "real-app checks failed"
             }
           }

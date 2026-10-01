@@ -65,7 +65,7 @@ export function ToolsView() {
         {groups.map(([category, list]) => (
           <section key={category} aria-labelledby={`cat-${category}`}>
             <h2 id={`cat-${category}`} className="mb-3 text-lg font-semibold">
-              {category}
+              {category.charAt(0).toUpperCase() + category.slice(1)}
             </h2>
             <ul className="flex flex-col gap-3">
               {list.map((t) => (

@@ -204,7 +204,7 @@ jobs:
       - name: Real app UI end to end (tauri-driver)
         shell: pwsh
         run: |
-          cargo install tauri-driver --locked --version "^2"
+          if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) { cargo install tauri-driver --locked --version "^2" }
           $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
           $v = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
           if (-not $v) { $v = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion }
@@ -218,9 +218,20 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
           Expand-Archive $zip -DestinationPath $dir -Force
           $exe = (Resolve-Path target\release\peaktweaks.exe).Path
-          $drv = Start-Process tauri-driver -ArgumentList '--native-driver', (Join-Path $dir 'msedgedriver.exe') -PassThru
+          Write-Host "--- can the exe be started directly, with a debugging port?"
+          node e2e-tauri/diagnose.mjs $exe
+          Get-Process peaktweaks, msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
+          $log = Join-Path $env:RUNNER_TEMP 'tauri-driver.log'
+          $drv = Start-Process tauri-driver -ArgumentList '--native-driver', (Join-Path $dir 'msedgedriver.exe') -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out"
           Start-Sleep -Seconds 3
-          try { node e2e-tauri/real-app.mjs $exe; if ($LASTEXITCODE -ne 0) { throw "real-app checks failed" } }
+          try {
+            node e2e-tauri/real-app.mjs $exe
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "--- processes at failure"; Get-Process peaktweaks, msedgewebview2, msedgedriver -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime | Out-String | Write-Host
+              Write-Host "--- tauri-driver output"; Get-Content $log, "$log.out" -ErrorAction SilentlyContinue | Select-Object -Last 60 | Write-Host
+              throw "real-app checks failed"
+            }
+          }
           finally { Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue; Get-Process peaktweaks, msedgedriver -ErrorAction SilentlyContinue | Stop-Process -Force }
 
       - uses: actions/upload-artifact@v4

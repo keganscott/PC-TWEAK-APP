@@ -57,7 +57,9 @@ export interface ProofState {
   runs: Readonly<Record<string, ProofRun[]>>;
   comparisons: Readonly<Record<string, Op<Comparison>>>;
   beginOp: Op<ProofSession>;
-  captureOp: Op<ProofRun>;
+  /** Per comparison. The engine records one capture at a time; `capturingSession` says which. */
+  captureOps: Readonly<Record<string, Op<ProofRun>>>;
+  capturingSession: string | null;
   /** The last failure to load sessions or runs, until a load succeeds. */
   loadError: EngineError | null;
 }
@@ -76,6 +78,11 @@ export interface State {
   targetOp: Op;
   settingsOp: Op;
   restoreOp: Op<RestoreOutcome>;
+  /** Activity-log id at the start of the current restore attempt, so its
+   * progress text never shows an earlier attempt's messages. */
+  restoreSinceBusId: number;
+  /** A re-read after a change failed: what is on screen may be out of date. */
+  refreshError: EngineError | null;
   tweakOps: Readonly<Record<string, Op<"apply" | "revert">>>;
   revertAllOp: Op<RevertResult[]>;
   lastChange: ChangeResult | null;
@@ -100,10 +107,12 @@ export function initialState(sample: boolean): State {
     targetOp: IDLE,
     settingsOp: IDLE,
     restoreOp: IDLE,
+    restoreSinceBusId: 0,
+    refreshError: null,
     tweakOps: {},
     revertAllOp: IDLE,
     lastChange: null,
-    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOp: IDLE, loadError: null },
+    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     bus: [],
   };
 }
@@ -115,7 +124,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
   const listeners = new Set<() => void>();
   const latest = new Map<string, number>();
   let busId = 0;
-  let unlisten: (() => void) | null = null;
+  let listening: Promise<() => void> | null = null;
 
   const set = (update: (s: State) => State) => {
     const next = update(state);
@@ -135,19 +144,39 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
   // ---- refreshes -----------------------------------------------------------
 
+  const refreshFailed = (e: unknown) => set((s) => ({ ...s, refreshError: toEngineError(e) }));
+  const refreshOk = () => set((s) => (s.refreshError ? { ...s, refreshError: null } : s));
+
+  /** Re-read the tweak list. Failures are recorded in `refreshError`, not thrown. */
   async function refreshTweaks(source: () => Promise<TweakView[]> = backend.listTweaks) {
     const current = tag("tweaks");
-    const tweaks = await source();
-    if (current()) set((s) => ({ ...s, tweaks }));
+    try {
+      const tweaks = await source();
+      if (current()) {
+        set((s) => ({ ...s, tweaks }));
+        refreshOk();
+      }
+    } catch (e) {
+      if (current()) refreshFailed(e);
+    }
   }
 
   async function refreshAudit() {
     const current = tag("audit");
+    // A target-game pick made while this audit runs is newer than what the
+    // audit will report, so the audit must not undo it.
+    const targetPickAtStart = latest.get("target") ?? 0;
     set((s) => ({ ...s, auditOp: RUNNING }));
     try {
       const audit = await backend.auditSystem();
       if (current()) {
-        set((s) => ({ ...s, audit, targetGame: audit.env.targetGame, auditOp: { status: "done", value: null } }));
+        const targetUnchanged = (latest.get("target") ?? 0) === targetPickAtStart;
+        set((s) => ({
+          ...s,
+          audit,
+          targetGame: targetUnchanged ? audit.env.targetGame : s.targetGame,
+          auditOp: { status: "done", value: null },
+        }));
       }
     } catch (e) {
       if (current()) set((s) => ({ ...s, auditOp: failed(e) }));
@@ -156,8 +185,15 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
   async function refreshJournal() {
     const current = tag("journal");
-    const journal = await backend.listJournal();
-    if (current()) set((s) => ({ ...s, journal }));
+    try {
+      const journal = await backend.listJournal();
+      if (current()) {
+        set((s) => ({ ...s, journal }));
+        refreshOk();
+      }
+    } catch (e) {
+      if (current()) refreshFailed(e);
+    }
   }
 
   /** After anything that changed the PC: re-read what the engine now reports. */
@@ -171,13 +207,14 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     async boot() {
       set((s) => ({ ...s, boot: { status: "loading" } }));
       try {
-        if (!unlisten) {
-          unlisten = await backend.onProgress((p) => {
-            busId += 1;
-            const entry: BusEntry = { ...p, id: busId, at: now() };
-            set((s) => ({ ...s, bus: [...s.bus, entry].slice(-BUS_LIMIT) }));
-          });
-        }
+        // One subscription for the store's lifetime, even when boot() overlaps
+        // itself (React StrictMode runs mount effects twice in development).
+        listening ??= backend.onProgress((p) => {
+          busId += 1;
+          const entry: BusEntry = { ...p, id: busId, at: now() };
+          set((s) => ({ ...s, bus: [...s.bus, entry].slice(-BUS_LIMIT) }));
+        });
+        await listening;
         const [context, settings, games, tweaks, journal, sessions] = await Promise.all([
           backend.context(),
           backend.getSettings(),
@@ -209,23 +246,21 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
     async rescan() {
       const current = tag("rescan");
-      set((s) => ({ ...s, auditOp: RUNNING }));
-      try {
-        await refreshTweaks(backend.rescan);
-        if (current()) await refreshAudit();
-      } catch (e) {
-        if (current()) set((s) => ({ ...s, auditOp: failed(e) }));
-      }
+      await refreshTweaks(backend.rescan);
+      if (current()) await refreshAudit();
     },
 
     async selectTargetGame(gameId: string | null) {
       const current = tag("target");
+      // This reply carries a tweak list, so it also takes the "tweaks" channel:
+      // an older list still in flight must not overwrite it.
+      const tweaksCurrent = tag("tweaks");
       const previous = state.targetGame;
       set((s) => ({ ...s, targetGame: gameId, targetOp: RUNNING }));
       try {
         const tweaks = await backend.selectTargetGame(gameId);
         if (!current()) return;
-        set((s) => ({ ...s, tweaks, targetOp: { status: "done", value: null } }));
+        set((s) => ({ ...s, ...(tweaksCurrent() ? { tweaks } : {}), targetOp: { status: "done", value: null } }));
         await refreshAudit();
       } catch (e) {
         if (current()) set((s) => ({ ...s, targetGame: previous, targetOp: failed(e) }));
@@ -250,7 +285,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
     async createRestorePoint() {
       if (state.restoreOp.status === "running") return;
-      set((s) => ({ ...s, restoreOp: RUNNING }));
+      set((s) => ({ ...s, restoreOp: RUNNING, restoreSinceBusId: busId }));
       try {
         const outcome = await backend.createRestorePoint();
         set((s) => ({ ...s, restoreOp: { status: "done", value: outcome } }));
@@ -341,13 +376,24 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     },
 
     async capture(sessionId: string, side: Side, seconds: number, delaySeconds: number) {
-      if (state.proof.captureOp.status === "running") return;
-      setProof({ captureOp: RUNNING });
+      if (state.proof.capturingSession !== null) return;
+      const setCapture = (op: Op<ProofRun>, capturing: string | null) =>
+        set((s) => ({
+          ...s,
+          proof: { ...s.proof, capturingSession: capturing, captureOps: { ...s.proof.captureOps, [sessionId]: op } },
+        }));
+      setCapture(RUNNING, sessionId);
       try {
         const run = await backend.proofCapture(sessionId, side, seconds, delaySeconds);
-        setProof({ captureOp: { status: "done", value: run } });
+        setCapture({ status: "done", value: run }, null);
+        // The stored verdict no longer covers every run; it must be compared again.
+        set((s) => {
+          if (!(sessionId in s.proof.comparisons)) return s;
+          const { [sessionId]: _stale, ...rest } = s.proof.comparisons;
+          return { ...s, proof: { ...s.proof, comparisons: rest } };
+        });
       } catch (e) {
-        setProof({ captureOp: failed(e) });
+        setCapture(failed(e), null);
       }
       await Promise.allSettled([actions.loadRuns(sessionId), actions.loadSessions()]);
     },
@@ -394,8 +440,8 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     },
     actions,
     dispose() {
-      unlisten?.();
-      unlisten = null;
+      void listening?.then((off) => off());
+      listening = null;
       listeners.clear();
     },
   };

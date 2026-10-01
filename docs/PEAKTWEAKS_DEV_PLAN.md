@@ -463,3 +463,17 @@ Built to section 7 because the original files never arrived (NOTES.md N1). React
 - **Accessibility**: status always icon + word; dialogs trap focus, close on Escape and return focus; labelled controls; visible focus rings; reduced motion respected; tested at 1366x768 and at its 150%-scaling size with axe (WCAG 2.2 AA tags).
 - **Copy**: all of it passes `npm run lint:copy`. Column labels for stored run numbers ("Average FPS") use the documented opt-out with a reason.
 - **Dev CSP**: `devCsp` allows inline styles and the Vite websocket for `npm run tauri dev` only; the release CSP is unchanged.
+
+### 15.12 Review of the frontend (Claude, `code-review high`)
+
+Ten findings, all checked against the code and all fixed, each with a regression test (three of them mutation-checked: the test fails with the fix removed):
+1. After a restore point was made, the "Step 1" card came back with its button enabled until the slower audit re-read agreed; a second click could make a duplicate point. Success now shows on the engine's confirmation.
+2. Undo on Backups ignored its own result: no busy state, and a failure was invisible. Each row now shows both.
+3. A target-game pick wrote the tweak list without taking the list's request tag, so an older list still in flight could overwrite it.
+4. Two overlapping boots (React StrictMode in development) subscribed to progress twice, doubling every activity-log entry.
+5. A failed re-read after a change was dropped. It is now recorded and shown as "some of what is shown may be out of date", with Check again.
+6. Tools treated "audit not loaded yet" or "audit failed" as "no restore point" and locked every change. Only a definite "no" locks it now; the engine still checks at apply time.
+7. A new run left the previous verdict on screen beside runs it did not cover. A capture now clears that comparison.
+8. Capture state was global, so one comparison's error or recording state showed on another. It is per comparison now.
+9. An audit that started before a target-game pick could land after it and undo the pick on screen.
+10. The restore step's progress line could show the previous attempt's last message. It now reads only the current attempt's messages, and without copying the whole log on every event.

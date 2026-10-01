@@ -186,7 +186,8 @@ function NewSession({ onCreated, onCancel }: { onCreated: (id: string) => void; 
 function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   const { session } = summary;
   const runs = useStore((s) => s.proof.runs[session.sessionId]);
-  const captureOp = useStore((s) => s.proof.captureOp);
+  const captureOp = useStore((s) => s.proof.captureOps[session.sessionId]);
+  const capturingSession = useStore((s) => s.proof.capturingSession);
   const comparison = useStore((s) => s.proof.comparisons[session.sessionId]);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
@@ -202,7 +203,8 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
 
   const before = (runs ?? []).filter((r) => r.side === "before");
   const after = (runs ?? []).filter((r) => r.side === "after");
-  const capturing = captureOp.status === "running";
+  const capturing = captureOp?.status === "running";
+  const otherRecording = capturingSession !== null && capturingSession !== session.sessionId;
 
   return (
     <div className="flex flex-col gap-5">
@@ -269,17 +271,24 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
             />
           </div>
           <div className="flex items-center gap-3">
-            <Button type="submit" variant="primary" busy={capturing} icon={<Play aria-hidden className="size-4" />}>
+            <Button
+              type="submit"
+              variant="primary"
+              busy={capturing}
+              disabled={otherRecording}
+              icon={<Play aria-hidden className="size-4" />}
+            >
               Record
             </Button>
             {capturing && <Spinner label={`Recording for ${delay + seconds} s. Keep the game in front.`} />}
+            {otherRecording && <span className="text-sm text-ink-muted">Another comparison is recording.</span>}
           </div>
         </form>
         <p className="mt-3 text-xs text-ink-faint">
           Get the game to the same place each time, press Record, then switch back to it before the countdown ends.
           Three runs on each side give a fair picture.
         </p>
-        {captureOp.status === "failed" && (
+        {captureOp?.status === "failed" && (
           <div className="mt-3">
             <ErrorCallout text={explain(captureOp.error)} technical={technical} />
           </div>

@@ -76,3 +76,42 @@ describe("App", () => {
     expect(apply.hasAttribute("disabled")).toBe(false);
   });
 });
+
+describe("review regressions", () => {
+  it("the restore step shows success as soon as the engine confirms, even while the audit re-reads", async () => {
+    let slowAudit = false;
+    const base = createMockBackend();
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        if (slowAudit) await new Promise((r) => setTimeout(r, 2_000));
+        return base.auditSystem();
+      },
+    });
+    const make = await screen.findByRole("button", { name: "Make a restore point" });
+    slowAudit = true;
+    await userEvent.click(make);
+    expect(await screen.findByText(/Restore point #\d+ is ready\./)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Make a restore point" })).toBeNull();
+  });
+
+  it("a failed Undo on Backups shows why", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({ ...base, revertTweak: () => Promise.reject({ kind: "registry", path: "HKLM\\X", value: null, detail: "denied" }) });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    const row = (await screen.findByText("Sample setting B")).closest("li") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: "Undo" }));
+    expect(await within(row).findByText("Windows refused a settings change.")).toBeTruthy();
+  });
+
+  it("Tools does not lock changes while it does not yet know about restore points", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({ ...base, auditSystem: () => new Promise(() => {}) }); // never answers
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    expect(screen.queryByText("Changes are locked until there is a restore point.")).toBeNull();
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(false);
+  });
+});

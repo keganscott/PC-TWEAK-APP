@@ -1,7 +1,9 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { Activity, Gamepad2, Home, LifeBuoy, Wrench } from "lucide-react";
 
-import { cx } from "../ui/primitives";
+import { explain } from "../../lib/errors";
+import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { Button, cx, ErrorCallout } from "../ui/primitives";
 import { ExecutionBus } from "./ExecutionBus";
 import { NavContext, VIEWS, type ViewId } from "./nav";
 import { TopBar } from "./TopBar";
@@ -54,10 +56,31 @@ export function AppShell({
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar onOpenSettings={onOpenSettings} busOpen={busOpen} onToggleBus={toggleBus} />
-          <main className="min-h-0 flex-1 overflow-y-auto px-8 py-7">{children}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
+            <RefreshBanner />
+            {children}
+          </main>
           <ExecutionBus open={busOpen} />
         </div>
       </div>
     </NavContext.Provider>
+  );
+}
+
+/** A re-read after a change failed: say that what is shown may be out of date. */
+function RefreshBanner() {
+  const error = useStore((s) => s.refreshError);
+  const technical = useTechnical();
+  const { rescan } = useActions();
+  if (!error) return null;
+  const text = explain(error);
+  return (
+    <div className="mb-5 max-w-4xl">
+      <ErrorCallout
+        text={{ ...text, title: `Some of what is shown may be out of date. ${text.title}` }}
+        technical={technical}
+        action={<Button onClick={() => void rescan()}>Check again</Button>}
+      />
+    </div>
   );
 }

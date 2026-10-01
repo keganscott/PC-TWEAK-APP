@@ -14,7 +14,7 @@ export function BackupsView() {
   const revertAllOp = useStore((s) => s.revertAllOp);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
-  const { revertAll, revertTweak } = useActions();
+  const { revertAll } = useActions();
   const [confirming, setConfirming] = useState(false);
 
   const applied = useMemo(() => tweaks.filter((t) => t.state.status === "applied"), [tweaks]);
@@ -64,12 +64,7 @@ export function BackupsView() {
           ) : (
             <ul className="mt-3 divide-y divide-line">
               {applied.map((t) => (
-                <li key={t.id} className="flex items-center justify-between gap-3 py-2">
-                  <span className="text-sm">{t.name}</span>
-                  <Button variant="ghost" onClick={() => void revertTweak(t.id)}>
-                    Undo
-                  </Button>
-                </li>
+                <AppliedRow key={t.id} id={t.id} name={t.name} technical={technical} />
               ))}
             </ul>
           )}
@@ -159,6 +154,35 @@ export function BackupsView() {
         </p>
       </Dialog>
     </>
+  );
+}
+
+/** One applied change with its own Undo: busy while it runs, and its error if it fails. */
+function AppliedRow({ id, name, technical }: { id: string; name: string; technical: boolean }) {
+  const op = useStore((s) => s.tweakOps[id]);
+  const { revertTweak, clearTweakOp } = useActions();
+  return (
+    <li className="py-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm">{name}</span>
+        <Button variant="ghost" busy={op?.status === "running"} onClick={() => void revertTweak(id)}>
+          Undo
+        </Button>
+      </div>
+      {op?.status === "failed" && (
+        <div className="mt-2">
+          <ErrorCallout
+            text={explain(op.error)}
+            technical={technical}
+            action={
+              <Button variant="ghost" onClick={() => clearTweakOp(id)}>
+                Dismiss
+              </Button>
+            }
+          />
+        </div>
+      )}
+    </li>
   );
 }
 

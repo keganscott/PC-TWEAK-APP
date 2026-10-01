@@ -1,8 +1,8 @@
-import { useMemo } from "react";
 import { RefreshCw, ShieldPlus } from "lucide-react";
 
 import type { Finding } from "../../generated/Finding";
 import type { SystemAudit } from "../../generated/SystemAudit";
+import type { BusEntry, State } from "../../store/store";
 import { explain } from "../../lib/errors";
 import { probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -56,17 +56,16 @@ function StateSentence({ audit }: { audit: SystemAudit }) {
 function RestoreLock() {
   const audit = useStore((s) => s.audit);
   const restoreOp = useStore((s) => s.restoreOp);
-  const bus = useStore((s) => s.bus);
+  const lastStage = useStore(currentRestoreStage);
   const technical = useTechnical();
   const { createRestorePoint } = useActions();
 
   const restore = audit?.env.restore;
   const gateOpen = audit?.env.restoreGateOpen;
-  const lastStage = useMemo(() => [...bus].reverse().find((e) => e.stage.startsWith("restore_")), [bus]);
 
-  if (!audit || !restore) return null;
-
-  if (restoreOp.status === "done" && gateOpen) {
+  // The engine verified the point before answering, so success shows at once,
+  // not only after the (slower) audit re-read agrees.
+  if (restoreOp.status === "done") {
     return (
       <Callout tone="ok" title={`Restore point #${restoreOp.value.sequenceNumber} is ready.`}>
         Windows recorded it as “{restoreOp.value.description}”. Every change PeakTweaks makes from now on can also be
@@ -74,7 +73,7 @@ function RestoreLock() {
       </Callout>
     );
   }
-  if (gateOpen) return null;
+  if (!audit || !restore || gateOpen) return null;
 
   if (restore.supported.state === "no") {
     return (
@@ -124,6 +123,17 @@ function RestoreLock() {
       </div>
     </Card>
   );
+}
+
+/** The newest restore progress message of the current attempt, or null. Returns
+ * an entry already in state, so the selector is stable. */
+function currentRestoreStage(s: State): BusEntry | null {
+  for (let i = s.bus.length - 1; i >= 0; i -= 1) {
+    const e = s.bus[i]!;
+    if (e.id <= s.restoreSinceBusId) break;
+    if (e.stage.startsWith("restore_")) return e;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

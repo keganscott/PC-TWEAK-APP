@@ -143,3 +143,96 @@ describe("activity log", () => {
     expect(bus[bus.length - 1]!.id).toBeGreaterThan(BUS_LIMIT);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regressions from the frontend code review (plan 15.12)
+// ---------------------------------------------------------------------------
+
+import type { Backend } from "../services/backend";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("review regressions", () => {
+  it("an older tweak list in flight never overwrites the list a target-game pick returned", async () => {
+    const base = createMockBackend();
+    const backend: Backend = {
+      ...base,
+      rescan: async () => {
+        await sleep(60);
+        return (await base.listTweaks()).map((t) => ({ ...t, name: "OLD" }));
+      },
+      selectTargetGame: async (id) => (await base.selectTargetGame(id)).map((t) => ({ ...t, name: "NEW" })),
+    };
+    const store = createAppStore(backend);
+    await store.actions.boot();
+    const rescan = store.actions.rescan();
+    await store.actions.selectTargetGame("fortnite");
+    await rescan;
+    expect(new Set(store.getState().tweaks.map((t) => t.name))).toEqual(new Set(["NEW"]));
+  });
+
+  it("overlapping boots subscribe to progress once", async () => {
+    const base = createMockBackend();
+    let subscriptions = 0;
+    const store = createAppStore({ ...base, onProgress: (h) => ((subscriptions += 1), base.onProgress(h)) });
+    await Promise.all([store.actions.boot(), store.actions.boot()]);
+    expect(subscriptions).toBe(1);
+    await store.actions.createRestorePoint();
+    const stages = store.getState().bus.map((e) => e.stage);
+    expect(stages.filter((s) => s === "restore_check").length).toBe(1);
+  });
+
+  it("a failed re-read after a change is recorded, not dropped", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    let failJournal = false;
+    const store = createAppStore({
+      ...base,
+      listJournal: () => (failJournal ? Promise.reject({ kind: "storage", path: "j", detail: "gone" }) : base.listJournal()),
+    });
+    await store.actions.boot();
+    failJournal = true;
+    await store.actions.applyTweak("fixture.default");
+    expect(store.getState().refreshError).toEqual({ kind: "storage", path: "j", detail: "gone" });
+    failJournal = false;
+    await store.actions.rescan();
+    await store.actions.applyTweak("fixture.foreign");
+    expect(store.getState().refreshError).toBeNull();
+  });
+
+  it("a new run clears the old verdict, and capture state belongs to its own comparison", async () => {
+    const { store } = await booted();
+    const sessionId = store.getState().proof.sessions[0]!.session.sessionId;
+    await store.actions.compare(sessionId);
+    expect(store.getState().proof.comparisons[sessionId]?.status).toBe("done");
+
+    await store.actions.capture(sessionId, "after", 10, 0);
+    const p = store.getState().proof;
+    expect(p.comparisons[sessionId]).toBeUndefined();
+    expect(p.captureOps[sessionId]?.status).toBe("done");
+    expect(p.captureOps["some-other-session"]).toBeUndefined();
+    expect(p.capturingSession).toBeNull();
+  });
+
+  it("an audit that started before a target-game pick does not undo the pick", async () => {
+    const base = createMockBackend({
+      latencyFor: (command) => (command === "auditSystem" ? 20 : command === "selectTargetGame" ? 80 : undefined),
+    });
+    const store = createAppStore(base);
+    await store.actions.boot(); // leaves the first audit in flight
+    const pick = store.actions.selectTargetGame("fortnite");
+    await sleep(40); // the first audit (target: none) has landed by now
+    expect(store.getState().targetGame).toBe("fortnite");
+    await pick;
+    await settle(store);
+    expect(store.getState().targetGame).toBe("fortnite");
+  });
+
+  it("a restore attempt remembers where its own progress messages start", async () => {
+    const { store } = await booted();
+    await store.actions.createRestorePoint();
+    const firstAttemptEnd = store.getState().bus.at(-1)!.id;
+    const second = store.actions.createRestorePoint();
+    expect(store.getState().restoreSinceBusId).toBe(firstAttemptEnd);
+    await second;
+  });
+});

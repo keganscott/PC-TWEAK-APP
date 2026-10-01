@@ -18,7 +18,9 @@ const TIER_LABEL = { free: null, pro: "Pro", ultimate: "Ultimate" } as const;
 
 export function ToolsView() {
   const tweaks = useStore((s) => s.tweaks);
-  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? false);
+  // null until the audit has answered (or if it failed): the engine still
+  // checks at apply time, so only a definite "no restore point" locks the UI.
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
   const [advanced, setAdvanced] = useState(false);
   const advancedId = useId();
   const navigate = useNavigate();
@@ -52,7 +54,7 @@ export function ToolsView() {
         }
       />
       <div className="flex max-w-4xl flex-col gap-6">
-        {!gateOpen && (
+        {gateOpen === false && (
           <Callout
             tone="warn"
             title="Changes are locked until there is a restore point."
@@ -79,7 +81,7 @@ export function ToolsView() {
   );
 }
 
-function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean }) {
+function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | null }) {
   const op = useStore((s) => s.tweakOps[tweak.id]);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
@@ -91,7 +93,7 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean })
   const running = op?.status === "running";
   const applied = tweak.state.status === "applied";
   const canApply =
-    !applied && gateOpen && tweak.state.status !== "blocked" && tweak.state.status !== "unknown" && (!tweak.tradeoff || acknowledged);
+    !applied && gateOpen !== false && tweak.state.status !== "blocked" && tweak.state.status !== "unknown" && (!tweak.tradeoff || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
 
   return (

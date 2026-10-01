@@ -16,6 +16,19 @@ try {
 } catch (e) {
   console.log(`WebView2 debugging endpoint did not answer: ${e.message}`);
 }
+// Did the debugging flags reach WebView2's browser process? Its command line says.
+import { execFileSync } from "node:child_process";
+try {
+  const out = execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"name='msedgewebview2.exe'\" | Where-Object { $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.CommandLine }"],
+    { encoding: "utf8" },
+  );
+  console.log(`WebView2 browser process command line:\n${out.trim().slice(0, 1500) || "(none found)"}`);
+} catch (e) {
+  console.log(`could not read process command lines: ${e.message}`);
+}
+
 // Where did WebView2 put its profile, and did it write the port file?
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";

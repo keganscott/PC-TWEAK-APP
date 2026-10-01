@@ -205,10 +205,9 @@ jobs:
       # The real app, end to end: release exe, its WebView2 window, the real engine,
       # this machine. tauri-driver speaks WebDriver; msedgedriver must match the
       # WebView2 runtime's version.
-      - name: Real app UI end to end (tauri-driver)
+      - name: Real app UI end to end (WebDriver)
         shell: pwsh
         run: |
-          if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) { cargo install tauri-driver --locked --version "^2" }
           $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
           $v = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
           if (-not $v) { $v = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion }
@@ -225,14 +224,14 @@ jobs:
           Write-Host "--- can the exe be started directly, with a debugging port?"
           node e2e-tauri/diagnose.mjs $exe
           Get-Process peaktweaks, msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
-          $log = Join-Path $env:RUNNER_TEMP 'tauri-driver.log'
-          $drv = Start-Process tauri-driver -ArgumentList '--native-driver', (Join-Path $dir 'msedgedriver.exe') -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out"
+          $log = Join-Path $env:RUNNER_TEMP 'msedgedriver.log'
+          $drv = Start-Process (Join-Path $dir 'msedgedriver.exe') -ArgumentList '--port=4444', '--verbose', "--log-path=$log" -PassThru
           Start-Sleep -Seconds 3
           try {
             node e2e-tauri/real-app.mjs $exe
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "--- processes at failure"; Get-Process peaktweaks, msedgewebview2, msedgedriver -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime | Out-String | Write-Host
-              Write-Host "--- tauri-driver output"; Get-Content $log, "$log.out" -ErrorAction SilentlyContinue | Select-Object -Last 60 | Write-Host
+              Write-Host "--- msedgedriver log (launch and errors)"
+              Get-Content $log -ErrorAction SilentlyContinue | Select-String -Pattern 'Launching|binary|args|user-data|DevTools|WEBVIEW2|ERROR|SEVERE|webview' | Select-Object -First 60 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(400, $_.Line.Length)) } | Write-Host
               Write-Host "--- startup-error.log"; Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
               throw "real-app checks failed"
             }

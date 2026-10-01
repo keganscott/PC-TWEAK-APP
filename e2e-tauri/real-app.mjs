@@ -1,9 +1,9 @@
 // End to end on the real thing: the release peaktweaks.exe, its WebView2
-// window, the real engine and this machine, driven through tauri-driver
-// (WebDriver). Runs on the Windows CI runner after the release build.
+// window, the real engine and this machine, driven through WebDriver
+// (WebDriver) via msedgedriver. Runs on the Windows CI runner after the release build.
 //
 // Usage: node e2e-tauri/real-app.mjs <path to peaktweaks.exe>
-// Needs tauri-driver listening on 127.0.0.1:4444 with a matching msedgedriver.
+// Needs msedgedriver (matching the WebView2 runtime's version) on 127.0.0.1:4444.
 //
 // Prints what each screen shows (evidence for NOTES.md) and fails on the first
 // broken expectation.
@@ -18,9 +18,12 @@ if (!app) {
   process.exit(2);
 }
 
+// msedgedriver drives a WebView2 app directly: `binary` is the app, and
+// `webviewOptions` tells it to attach to the app's WebView2 rather than Edge.
+// (tauri-driver only translates its "tauri:options" into exactly this.)
 const driver = await new Builder()
-  .usingServer("http://127.0.0.1:4444/")
-  .withCapabilities({ browserName: "wry", "tauri:options": { application: app } })
+  .usingServer(process.env.WEBDRIVER_URL ?? "http://127.0.0.1:4444/")
+  .withCapabilities({ browserName: "webview2", "ms:edgeOptions": { binary: app, webviewOptions: {} } })
   .build();
 
 const heading = (text) => By.xpath(`//h1[normalize-space()='${text}']`);

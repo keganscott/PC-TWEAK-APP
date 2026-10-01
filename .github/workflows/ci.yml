@@ -75,6 +75,13 @@ jobs:
       - name: tsc --noEmit
         run: npm run typecheck
 
+      # No user-facing text may promise a result (scripts/claim-words.json, shared
+      # with the Rust copy lints). Runs on whatever frontend is in src/.
+      - name: UI copy makes no efficacy claims
+        run: |
+          npm run test:scripts
+          npm run lint:copy
+
       - name: vite build
         run: npm run build
 

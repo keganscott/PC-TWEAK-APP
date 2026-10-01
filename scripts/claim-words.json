@@ -1,0 +1,22 @@
+{
+  "description": "Words and phrases that promise a result. User-facing copy may not contain them unless it is bound to a stored proof run (plan section 0.4, section 5). Shared by the Rust copy lints (crates/engine/src/copy_lint.rs) and the UI copy lint (scripts/check-ui-copy.mjs). An entry that starts with a letter or digit matches at the start of a word, so 'lag' matches 'lag' and 'laggy' but not 'flag'; any other entry matches anywhere.",
+  "words": [
+    "boost",
+    "faster",
+    "fps",
+    "smoother",
+    "smoothness",
+    "lag",
+    "improv",
+    "measured",
+    "benchmark",
+    "speed up",
+    "speeds up",
+    "higher performance",
+    "more performance",
+    "% ",
+    "reduces latency",
+    "lower latency",
+    "guaranteed"
+  ]
+}

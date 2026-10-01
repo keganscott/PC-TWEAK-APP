@@ -678,42 +678,16 @@ mod tests {
     /// catalogue lint in `tests.rs`, applied to this file's non-test code.
     #[test]
     fn scanner_copy_makes_no_efficacy_claims() {
-        let banned = [
-            "boost",
-            "faster",
-            "fps",
-            "smoother",
-            "smoothness",
-            "lag",
-            "improv",
-            "measured",
-            "benchmark",
-            "speed up",
-            "higher performance",
-            "more performance",
-            "% ",
-            "reduces latency",
-            "lower latency",
-        ];
+        let words = crate::copy_lint::claim_words();
         let src = include_str!("scanner.rs");
         let production = src.split("#[cfg(test)]").next().unwrap();
-        let mut scanned = 0;
-        for line in production.lines().filter(|l| !l.trim_start().starts_with("//")) {
-            let mut rest = line;
-            while let Some(start) = rest.find('"') {
-                let after = &rest[start + 1..];
-                let Some(end) = after.find('"') else { break };
-                let literal = after[..end].to_ascii_lowercase();
-                for word in banned {
-                    assert!(
-                        !literal.contains(word),
-                        "copy contains the claim word {word:?}: {literal}"
-                    );
-                }
-                scanned += 1;
-                rest = &after[end + 1..];
+        let literals = crate::copy_lint::string_literals(production);
+        for literal in &literals {
+            if let Some(word) = crate::copy_lint::find_claim(literal, &words) {
+                panic!("copy contains the claim word {word:?}: {literal}");
             }
         }
+        let scanned = literals.len();
         assert!(
             scanned > 30,
             "expected to scan the scanner's copy, saw {scanned} literals"

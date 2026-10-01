@@ -629,27 +629,11 @@ fn the_engine_catalogue_ships_blocked_and_gated_by_default() {
 
 /// Nothing the engine says about a change may promise a result. Only a stored
 /// proof run can, and its wording comes from `proof::verdict`. This scans every
-/// string literal in the tweak catalogue for claim words. (The frontend copy
-/// needs the same check once it exists: NOTES.md N1.)
+/// string literal in the tweak catalogue for the claim words in
+/// `scripts/claim-words.json`, the same list the UI copy lint uses.
 #[test]
 fn catalogue_copy_makes_no_efficacy_claims() {
-    let banned = [
-        "boost",
-        "faster",
-        "fps",
-        "smoother",
-        "smoothness",
-        "lag",
-        "improv",
-        "measured",
-        "benchmark",
-        "speed up",
-        "higher performance",
-        "more performance",
-        "% ",
-        "reduces latency",
-        "lower latency",
-    ];
+    let words = crate::copy_lint::claim_words();
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tweaks");
     let mut scanned = 0;
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -658,21 +642,9 @@ fn catalogue_copy_makes_no_efficacy_claims() {
             continue;
         }
         let src = std::fs::read_to_string(&path).unwrap();
-        // Only string literals on non-comment lines are user-facing copy.
-        for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
-            let mut rest = line;
-            while let Some(start) = rest.find('"') {
-                let after = &rest[start + 1..];
-                let Some(end) = after.find('"') else { break };
-                let literal = after[..end].to_ascii_lowercase();
-                for word in banned {
-                    assert!(
-                        !literal.contains(word),
-                        "{}: copy contains the claim word {word:?}: {literal}",
-                        path.display()
-                    );
-                }
-                rest = &after[end + 1..];
+        for literal in crate::copy_lint::string_literals(&src) {
+            if let Some(word) = crate::copy_lint::find_claim(&literal, &words) {
+                panic!("{}: copy contains the claim word {word:?}: {literal}", path.display());
             }
         }
         scanned += 1;

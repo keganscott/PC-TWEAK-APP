@@ -7,7 +7,9 @@
     "dev": "vite --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "lint:copy": "node scripts/check-ui-copy.mjs",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2"

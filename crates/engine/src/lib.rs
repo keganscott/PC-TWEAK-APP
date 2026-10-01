@@ -42,6 +42,8 @@ pub mod shell;
 #[cfg(test)]
 mod contract;
 #[cfg(test)]
+mod copy_lint;
+#[cfg(test)]
 mod model_tests;
 #[cfg(test)]
 mod tests;

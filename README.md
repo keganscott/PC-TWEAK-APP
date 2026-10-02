@@ -52,3 +52,11 @@ npx tauri dev --features dev-stubs   # from an elevated terminal (not yet run by
 - No IPC command takes environment, license, tier or gate state (`src-tauri/src/command_audit.rs`).
 - Tweaks cannot reach the registry except through `Transaction` (`tweak_sources_do_not_bypass_the_transaction`).
 - Revert replays only what is outstanding, newest first, and only within the tweak's declared registry targets.
+
+## Docs
+
+- `CLAUDE.md`: the short working brief (rules, invariants, code map, commands, status).
+- `docs/NOTES.md`: open items. Closed ones: `docs/archive/NOTES-closed.md`.
+- `docs/DECISIONS.md`: design decisions and gate status (15.x).
+- `docs/PEAKTWEAKS_DEV_PLAN.md`: the plan as written.
+- `docs/FIELD_CHECK.md`, `docs/FRONTEND_INTEGRATION.md`: how-tos.

@@ -145,7 +145,7 @@ describe("activity log", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Regressions from the frontend code review (plan 15.12)
+// Regressions from the frontend code review (DECISIONS.md 15.12)
 // ---------------------------------------------------------------------------
 
 import type { Backend } from "../services/backend";

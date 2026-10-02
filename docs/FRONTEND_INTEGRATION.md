@@ -1,6 +1,6 @@
 # Bringing the existing frontend in
 
-> **Update 2026-10-01:** the files had not arrived, so a UI was built to plan section 7 on the contract below (plan 15.11, NOTES.md N1). If the original files are added, their look and any screens are merged onto the new store and IPC layer; steps 2 to 5 below are already done in it.
+> **Update 2026-10-01:** the files had not arrived, so a UI was built to plan section 7 on the contract below (DECISIONS.md 15.11, NOTES.md N1). If the original files are added, their look and any screens are merged onto the new store and IPC layer; steps 2 to 5 below are already done in it.
 
 Kegan has a React + TypeScript + Tailwind frontend that ran against a mock
 (plan section 2). It is not in the repository yet. This page says where to put

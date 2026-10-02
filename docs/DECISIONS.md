@@ -151,3 +151,7 @@ Every engine test ran on the in-memory fake, and `WinRegistry`, the only code th
 
 `e2e-tauri/real-app.mjs` now calls commands from inside the running page, as injected script could, and requires the ACL to refuse everything outside the capability and the engine to ignore forged licence, tier, gate and environment fields (evidence NOTES-closed C21). To have a registered command to see refused, the WebDriver test build's capability is the shipped one minus `allow-revert-all` (`e2e-tauri/tauri.e2e.conf.json`); so the test build now differs from the shipped exe in two ways, the debugging port and that one permission, and `command_audit.rs` fails if the copy drifts in any other way.
 
+### 15.16 Registry string writes go through our own `RegSetValueExW` call (Claude)
+
+`RegSetValueExW` looks past the end of the data it is given for string types and stores an extra NUL when the next two bytes happen to be zero (NOTES-closed C22). `WinRegistry::write_value` therefore no longer uses `winreg`'s `set_raw_value`; it passes the data from its own buffer with two non-zero guard bytes after it, which makes the stored bytes exactly the requested ones. This is measured Windows behaviour, not documented API, so the contract test keeps rewriting unterminated strings 50 times on every Windows CI run and fails if any write is not exact.
+

@@ -4,7 +4,7 @@ import type { Finding } from "../../generated/Finding";
 import type { SystemAudit } from "../../generated/SystemAudit";
 import type { BusEntry, State } from "../../store/store";
 import { explain } from "../../lib/errors";
-import { probeValue, RIG_LABEL } from "../../lib/format";
+import { formatDateTime, probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { useNavigate } from "../shell/nav";
 import { Button, Callout, Card, ErrorCallout, PageHeader, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
@@ -73,7 +73,8 @@ function RestoreLock() {
       </Callout>
     );
   }
-  if (!audit || !restore || gateOpen) return null;
+  if (!audit || !restore) return null;
+  if (gateOpen) return <RecentPoint points={restore.points} />;
 
   if (restore.supported.state === "no") {
     return (
@@ -122,6 +123,22 @@ function RestoreLock() {
         </div>
       </div>
     </Card>
+  );
+}
+
+/** The gate is open because Windows lists a recent restore point. Say which one,
+ * and when it was made, so the user knows what a roll-back would return to. */
+function RecentPoint({ points }: { points: NonNullable<SystemAudit["env"]["restore"]>["points"] }) {
+  if (points.state !== "yes") return null;
+  const newest = [...points.value]
+    .filter((p) => p.createdUnixMs !== null)
+    .sort((a, b) => (b.createdUnixMs ?? 0) - (a.createdUnixMs ?? 0))[0];
+  if (!newest) return null;
+  return (
+    <Callout tone="ok" title={`Restore point #${newest.sequenceNumber} is ready.`}>
+      Windows made it on {formatDateTime(newest.createdUnixMs!)} (“{newest.description}”). Rolling the PC back with System
+      Restore returns it to how it was then; each PeakTweaks change can also be undone on its own from Backups.
+    </Callout>
   );
 }
 

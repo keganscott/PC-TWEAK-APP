@@ -3,6 +3,7 @@
 
 import type { EngineError } from "../generated/EngineError";
 import { asEngineError, EngineFault } from "../ipc";
+import { blockedHint } from "./blocked";
 
 export interface ErrorText {
   /** One plain sentence: what happened. */
@@ -20,7 +21,7 @@ export function toEngineError(e: unknown): EngineError {
 export function explain(error: EngineError): ErrorText {
   switch (error.kind) {
     case "blocked":
-      return { title: error.reason.message, hint: null, detail: error.reason.trigger };
+      return { title: error.reason.message, hint: blockedHint(error.reason), detail: error.reason.trigger };
     case "not_elevated":
       return {
         title: "PeakTweaks is not running as administrator.",

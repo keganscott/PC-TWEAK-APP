@@ -125,13 +125,13 @@ jobs:
           if ($acl -notmatch 'SYSTEM') { throw "expected SYSTEM in the storage ACL" }
           if ($acl -notmatch 'Administrators') { throw "expected Administrators in the storage ACL" }
 
-      # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
-      # Windows' own connection audit log, a positive control, then 60 s of the
-      # shipped exe and every process it starts. Fails on any network connection
-      # by peaktweaks.exe; reports WebView2's own (NOTES.md N40).
-      - name: The app opens no network connections
+      # The e2e step below rebuilds target\release\peaktweaks.exe as a test
+      # variant; keep the shipped one for the network check at the end.
+      - name: Keep a copy of the shipped exe
         shell: pwsh
-        run: ./scripts/check-no-outbound.ps1 -Exe target\release\peaktweaks.exe -Seconds 60
+        run: |
+          New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'shipped') | Out-Null
+          Copy-Item target\release\peaktweaks.exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe')
 
       # Checks the assumptions the capture code makes against the real program,
       # then captures real frames from a browser window running an animation and
@@ -282,6 +282,16 @@ jobs:
 
   # Fast cross-OS check: the engine's journal and transaction logic runs against
   # the in-memory registry, so it is tested on Linux too.
+
+      # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
+      # Windows' own connection audit log, a positive control, then 60 s of the
+      # shipped exe and every process it starts. Fails on any network connection
+      # by peaktweaks.exe; reports WebView2's own (NOTES.md N40). Last, so its
+      # report is at the end of the log.
+      - name: The app opens no network connections
+        shell: pwsh
+        run: ./scripts/check-no-outbound.ps1 -Exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe') -Seconds 60
+
   engine-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 20

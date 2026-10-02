@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from "react";
 
 import type { TweakView } from "../../generated/TweakView";
+import { blockedHint } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { useNavigate } from "../shell/nav";
@@ -109,7 +110,11 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
           </div>
           <p className="mt-1 text-sm text-ink-muted">{tweak.summary}</p>
           {/* The engine's reason, also when the change was applied before the block began (it keeps its Undo). */}
-          {tweak.blocked && <p className="mt-2 text-sm">{tweak.blocked.message}</p>}
+          {tweak.blocked && (
+            <p className="mt-2 text-sm">
+              {tweak.blocked.message} <span className="text-ink-muted">{blockedHint(tweak.blocked)}</span>
+            </p>
+          )}
           {tweak.state.status === "unknown" && technical && (
             <p className="mt-2 font-mono text-xs text-ink-faint">{tweak.state.detail}</p>
           )}

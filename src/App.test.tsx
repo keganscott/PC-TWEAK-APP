@@ -96,6 +96,15 @@ describe("agent brief", () => {
   });
 });
 
+describe("restore point shown on Home", () => {
+  it("names the recent restore point that unlocked changes, with when Windows made it", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    const callout = await screen.findByText(/Restore point #\d+ is ready\./);
+    expect(callout.closest("[role]") ?? callout.parentElement).toBeTruthy();
+    expect(await screen.findByText(/Windows made it on/)).toBeTruthy();
+  });
+});
+
 describe("review regressions", () => {
   it("the restore step shows success as soon as the engine confirms, even while the audit re-reads", async () => {
     let slowAudit = false;

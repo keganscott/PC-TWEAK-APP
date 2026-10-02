@@ -36,7 +36,7 @@ use super::transaction::Transaction;
 #[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionContext {
-    /// Machine-wide: HKLM, services, bcdedit, powercfg, netsh.
+    /// Machine-wide: registry writes under HKLM.
     Service,
     /// The interactive user's hive: HKEY_USERS\<sid> (or HKCU when they match).
     User,

@@ -109,15 +109,25 @@ jobs:
         run: |
           $dir = Join-Path $env:ProgramData 'PeakTweaks'
           if (Test-Path $dir) { throw "$dir already exists on a fresh runner" }
-          $p = Start-Process -FilePath 'target\release\peaktweaks.exe' -PassThru
-          Start-Sleep -Seconds 20
-          if ($p.HasExited) { throw "peaktweaks.exe exited early with code $($p.ExitCode)" }
-          # The app now stays open when its engine fails (it shows the reason), so
-          # "still running" alone no longer proves the engine started.
           $startupLog = Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log'
+          $p = Start-Process -FilePath 'target\release\peaktweaks.exe' -PassThru
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          # Wait for evidence, not a fixed time: run 37077991777 needed more than
+          # 20 s to reach engine start (first launch of a new exe on a fresh
+          # runner). The engine creating its storage, or recording why it could
+          # not, is the evidence; how long it took is printed.
+          while (-not (Test-Path $dir) -and -not (Test-Path $startupLog) -and -not $p.HasExited -and $sw.Elapsed.TotalSeconds -lt 120) {
+            Start-Sleep -Milliseconds 250
+          }
+          Write-Host "engine start evidence after $([int]$sw.Elapsed.TotalMilliseconds) ms"
+          # The app stays open when its engine fails (it shows the reason), so
+          # "still running" alone does not prove the engine started.
           if (Test-Path $startupLog) { Get-Content $startupLog | Write-Host; throw "the engine failed to start" }
-          Write-Host "still running after 20s (pid $($p.Id))"
-          if (-not (Test-Path $dir)) { throw "engine did not create $dir" }
+          if (-not (Test-Path $dir)) { throw "engine did not create $dir within 120 s" }
+          $rest = 20 - $sw.Elapsed.TotalSeconds
+          if ($rest -gt 0) { Start-Sleep -Seconds ([math]::Ceiling($rest)) }
+          if ($p.HasExited) { throw "peaktweaks.exe exited early with code $($p.ExitCode)" }
+          Write-Host "still running after $([int]$sw.Elapsed.TotalSeconds) s (pid $($p.Id))"
           $acl = (icacls $dir) -join "`n"
           Write-Host $acl
           Stop-Process -Id $p.Id -Force

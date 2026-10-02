@@ -49,6 +49,8 @@ mod model_tests;
 #[cfg(test)]
 mod network_audit;
 #[cfg(test)]
+mod never_do_audit;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod testutil;

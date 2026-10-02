@@ -45,14 +45,14 @@ const UI_DENY: &[&str] = &[
     "importScripts",
 ];
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .unwrap()
 }
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -66,7 +66,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn hits(files: &[PathBuf], deny: &[&str]) -> Vec<String> {
+pub(crate) fn hits(files: &[PathBuf], deny: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     for file in files {
         let text = fs::read_to_string(file).unwrap();

@@ -179,3 +179,5 @@ Kegan shared `PEAKTWEAKS_AGENT_BRIEF.md` on 2026-10-02: a review of `85d3bb2`, h
 
 Not followed: the brief's paths (`src-tauri/src/engine/...`); the engine is its own crate (`crates/engine`) so it builds and tests on Linux.
 
+Follow-up on 15.17 (Kegan said continue): brief Phase 3 items done without needing his decisions. Every `BlockedCode` has its own guidance (`src/lib/blocked.ts`, typed so a new code fails the build). Home names the recent restore point that unlocked changes and when Windows made it. Apply and Undo run end to end in the real app on the real registry (C25). A "comments are claims" audit of the safety modules (transaction, journal, engine, context, identity, restore, secure_dir, WinRegistry, tweaks, sysprobe): every always/never/only/cannot comment checked against the code; the WinPE claim (fixed in be6f425) was the only false one. Not done: tweak impact on cards (N51), `Tier::Free` (N50), orphaned ids (N49).
+

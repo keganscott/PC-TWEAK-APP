@@ -155,3 +155,27 @@ Every engine test ran on the in-memory fake, and `WinRegistry`, the only code th
 
 `RegSetValueExW` looks past the end of the data it is given for string types and stores an extra NUL when the next two bytes happen to be zero (NOTES-closed C22). `WinRegistry::write_value` therefore no longer uses `winreg`'s `set_raw_value`; it passes the data from its own buffer with two non-zero guard bytes after it, which makes the stored bytes exactly the requested ones. This is measured Windows behaviour, not documented API, so the contract test keeps rewriting unterminated strings 50 times on every Windows CI run and fails if any write is not exact.
 
+### 15.17 The agent brief (independent review of commit 85d3bb2), item by item (Claude)
+
+Kegan shared `PEAKTWEAKS_AGENT_BRIEF.md` on 2026-10-02: a review of `85d3bb2`, his original 10-file upload (commit 2 of 59). Most of it had already been fixed by the plan's R1-R19 hardening; each item was re-checked against the current code.
+
+| Brief item | Status | Evidence |
+|---|---|---|
+| Phase 1: layout, catalogue(), build.rs, tauri.conf, icons, capabilities, admin manifest, Cargo.lock, .gitignore, CI | Done earlier | `99d8204` onward; capability lists every command (18, not the brief's 7: the app grew); CSP strict (C19); CI green |
+| Bug 1 torn journal line | Done earlier | `journal.rs` tests `torn_final_line_is_cut_off_saved_and_next_append_is_readable`, `seq_stays_monotonic_across_restarts...` |
+| Bug 2 mouse writes outside the journal | Done earlier | no `SPIF_UPDATEINIFILE`; revert pushes the restored values; skipped when `!is_self` (`mouse_accel.rs`) |
+| Bug 3 revert replays every apply | Done earlier | test `revert_after_an_external_change_lands_on_the_value_before_the_latest_apply` (the brief's exact scenario) |
+| Bug 4 no-op revert leaves "applied" | Was already right; test added | `a_revert_with_nothing_to_write_still_ends_the_apply` (passes on the old code: commit records close the apply) |
+| Bug 5 failed apply not rolled back | Done earlier | `a_failed_apply_rolls_back_its_own_writes_and_returns_the_original_error` |
+| Bug 6 gate trusts the frontend | Done earlier | `set_environment` deleted (audit test), engine-only gate, forged state refused in the real app (C21) |
+| Bug 7 Revert All order / orphans | Order done earlier (journal-driven, newest first). Orphans: **open question** (N49) | an unknown tweak id is reported as a failed revert, not skipped; `.reg` files remain |
+| Bug 8 unknown state / blocked hides applied | Unknown done earlier; blocked+applied **fixed now** | `an_applied_tweak_that_becomes_blocked_still_shows_applied_and_the_reason`; UI test "an applied change that is now blocked keeps its Undo" |
+| Bug 9 false WinPE claim | **Fixed now**: comment rewritten, `session_<tx>_<tweak>.reg` per applied change, `docs/journal-format.md`, offline script logged (N48) | `each_applied_change_gets_one_session_reg_in_restore_order`; Windows: `reg_exe_import_of_the_session_file_alone_restores_the_change` |
+| Mouse missing value / off-not-by-us | Missing value was right; off-not-by-us **fixed now** (`Foreign`) | `mouse_state` tests in `tests.rs` (`off_but_not_by_us_is_foreign` failed before the fix) |
+| Internal error, journal cache, created keys, async commands | Done earlier | `EngineError::Internal`; in-memory journal index; `created_keys`; `pub async fn` commands |
+| Phase 3 restore points, probes, React shell | Built; real restore-point creation unproven on a client PC (N24) | field check covers it |
+| Phase 3 priority_separation | Done earlier: the tweak was deleted | N8 |
+| Phase 3 remove `Tier::Free` | **Not done: conflicts with the plan** (N50) | plan 6.4 Starter "free forever" |
+
+Not followed: the brief's paths (`src-tauri/src/engine/...`); the engine is its own crate (`crates/engine`) so it builds and tests on Linux.
+

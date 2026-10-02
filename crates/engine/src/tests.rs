@@ -86,6 +86,101 @@ fn revert_after_an_external_change_lands_on_the_value_before_the_latest_apply() 
     );
 }
 
+/// Agent brief bug 4: a revert whose writes are all no-ops (the user already put
+/// the value back) must still close the apply, or the tweak stays "applied"
+/// and every Undo all retries it.
+#[test]
+fn a_revert_with_nothing_to_write_still_ends_the_apply() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(5));
+    h.engine.apply("t").unwrap();
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(5));
+    let before = h.fake.mutation_count();
+    h.engine.revert("t").unwrap();
+    assert_eq!(h.fake.mutation_count(), before, "nothing needed writing");
+    assert!(h.engine.applied_tweak_ids().is_empty(), "the apply is closed");
+    assert!(h.engine.revert_all().is_empty(), "Undo all has nothing left to retry");
+}
+
+/// Agent brief bug 8: a tweak applied before something started blocking it
+/// (a new target game, a changed machine) is still applied. The list must say
+/// so, with the block alongside, so the UI keeps offering Undo.
+#[test]
+fn an_applied_tweak_that_becomes_blocked_still_shows_applied_and_the_reason() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    h.engine.apply("t").unwrap();
+    let mut blocked = TestTweak::new("t", KEY, &[("A", 1)]);
+    blocked.block = true;
+    h.restart(one(blocked));
+
+    let view = h
+        .engine
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|v| v.metadata.id == "t")
+        .unwrap();
+    assert_eq!(view.state, TweakState::Applied);
+    assert_eq!(view.blocked.as_ref().map(|r| r.message.as_str()), Some("test block"));
+
+    h.engine.revert("t").unwrap();
+    let view = h
+        .engine
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|v| v.metadata.id == "t")
+        .unwrap();
+    assert!(matches!(view.state, TweakState::Blocked { .. }), "{:?}", view.state);
+    assert!(view.blocked.is_some());
+}
+
+/// Agent brief bug 9: besides one `.reg` per value, each applied change gets
+/// one combined file that restores all of it, newest write first, for recovery
+/// by hand (Safe Mode) when PeakTweaks itself cannot run.
+#[test]
+fn each_applied_change_gets_one_session_reg_in_restore_order() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1), ("B", 2)])));
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(5));
+    let entries = h.engine.apply("t").unwrap();
+    let tx = entries[0].tx_id;
+
+    let dir = std::path::Path::new(&entries[0].backup_file)
+        .parent()
+        .unwrap()
+        .to_owned();
+    let path = h.dir.path().join(&dir).join(format!("session_{tx}_t.reg"));
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert_eq!(&bytes[..2], &[0xFF, 0xFE], "UTF-16LE with a BOM");
+    let units: Vec<u16> = bytes[2..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let text = String::from_utf16(&units).unwrap();
+    assert!(
+        text.starts_with("Windows Registry Editor Version 5.00\r\n\r\n"),
+        "{text}"
+    );
+    let b = text.find("\"B\"=-").expect("B did not exist before: deleted");
+    let a = text.find("\"A\"=dword:00000005").expect("A goes back to 5");
+    assert!(b < a, "newest write first:\n{text}");
+    assert_eq!(
+        text.matches("[HKEY_LOCAL_MACHINE\\SOFTWARE\\PeakTest\\Sched]").count(),
+        2,
+        "{text}"
+    );
+
+    // A revert is not a change to recover from: no session file for it.
+    let before = std::fs::read_dir(h.dir.path().join(&dir)).unwrap().count();
+    h.engine.revert("t").unwrap();
+    let names: Vec<String> = std::fs::read_dir(h.dir.path().join(&dir))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names.iter().filter(|n| n.starts_with("session_")).count(),
+        1,
+        "{names:?} (was {before} files)"
+    );
+}
+
 #[test]
 fn double_apply_still_reverts_to_the_state_before_the_first() {
     let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
@@ -814,4 +909,59 @@ fn recovery_after_a_panic_rebuilds_from_disk_and_revert_still_works() {
     assert!(!h.engine.journal_view().records.is_empty());
     h.engine.revert("a").unwrap();
     assert!(h.fake.snapshot().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Mouse acceleration state (agent brief, lower-priority item)
+// ---------------------------------------------------------------------------
+
+mod mouse_state {
+    use std::sync::Arc;
+
+    use crate::context::ContextResolver;
+    use crate::registry::fake::FakeRegistry;
+    use crate::registry::Hive;
+    use crate::testutil::user;
+    use crate::tweaks::mouse_accel::MouseAcceleration;
+    use crate::types::{RawValue, Tweak, TweakState};
+
+    const KEY: &str = r"Control Panel\Mouse";
+    const OFF: [(&str, &str); 3] = [("MouseSpeed", "0"), ("MouseThreshold1", "0"), ("MouseThreshold2", "0")];
+
+    fn state(values: &[(&str, &str)], ours: bool) -> TweakState {
+        let fake = Arc::new(FakeRegistry::new());
+        for (name, v) in values {
+            fake.set_external(Hive::CurrentUser, KEY, name, RawValue::sz(v));
+        }
+        MouseAcceleration
+            .read_state(&ContextResolver::new(user(true), true, fake), ours)
+            .unwrap()
+    }
+
+    #[test]
+    fn off_because_of_us_is_applied() {
+        assert_eq!(state(&OFF, true), TweakState::Applied);
+    }
+
+    #[test]
+    fn off_but_not_by_us_is_foreign() {
+        assert_eq!(state(&OFF, false), TweakState::Foreign);
+    }
+
+    #[test]
+    fn missing_values_are_windows_defaults_which_mean_acceleration_on() {
+        assert_eq!(state(&[], false), TweakState::Default);
+        assert_eq!(
+            state(&[("MouseSpeed", "0")], false),
+            TweakState::Default,
+            "one of three is not off"
+        );
+        assert_eq!(
+            state(
+                &[("MouseSpeed", "1"), ("MouseThreshold1", "6"), ("MouseThreshold2", "10")],
+                true
+            ),
+            TweakState::Default
+        );
+    }
 }

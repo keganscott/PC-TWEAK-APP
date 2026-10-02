@@ -77,6 +77,25 @@ describe("App", () => {
   });
 });
 
+describe("agent brief", () => {
+  it("an applied change that is now blocked keeps its Undo and says why it cannot be applied again", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    const reason = { code: "anti_cheat_requirement" as const, trigger: "fortnite", message: "SAMPLE: blocked for the chosen game." };
+    renderApp({
+      ...base,
+      listTweaks: async () =>
+        (await base.listTweaks()).map((t) =>
+          t.id === "fixture.default" ? { ...t, safety: "safe" as const, state: { status: "applied" as const }, blocked: reason } : t,
+        ),
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(card).getByText("SAMPLE: blocked for the chosen game.")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Undo" }).hasAttribute("disabled")).toBe(false);
+  });
+});
+
 describe("review regressions", () => {
   it("the restore step shows success as soon as the engine confirms, even while the audit re-reads", async () => {
     let slowAudit = false;

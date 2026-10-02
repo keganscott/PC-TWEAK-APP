@@ -14,9 +14,13 @@
 //!    guessed default.
 //!
 //! 3. **The journal is readable without this binary.** It is line-delimited
-//!    JSON, one self-contained record per line, values as comma-separated hex.
-//!    Someone in WinPE with Notepad and the `.reg` files can recover a machine
-//!    that will not boot.
+//!    JSON, one self-contained record per line, values as comma-separated hex
+//!    (`docs/journal-format.md`). Each change also leaves `.reg` files: one per
+//!    value and one per applied change (`session_<tx>_<tweak>.reg`, newest
+//!    write first). The recovery path when PeakTweaks cannot run is Safe Mode
+//!    on the installed Windows: import the session file there. Not WinPE: its
+//!    `HKLM\SYSTEM` and `HKEY_USERS` are WinPE's own, so importing there
+//!    changes WinPE, not the broken install (NOTES.md N48).
 //!
 //! 4. **A damaged journal degrades, it does not vanish.** A torn final line
 //!    (crash mid-append) is cut off at open and kept in a side file. A bad line

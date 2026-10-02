@@ -24,6 +24,29 @@ pub fn write_reg_backup(
     Ok(path)
 }
 
+/// One file that restores a whole applied change: every value's prior state,
+/// newest write first, so importing it once undoes the change by hand.
+/// `values` are `(display_path, value_name, previous)` in write order.
+pub fn write_session_backup(
+    dir: &Path,
+    file_stem: &str,
+    values: &[(&str, &str, Option<&RawValue>)],
+) -> Result<PathBuf> {
+    fsutil::create_dir_durable(dir)?;
+    let path = dir.join(format!("{file_stem}.reg"));
+    let mut text = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
+    for (display_path, name, previous) in values.iter().rev() {
+        text.push_str(&format!(
+            "[{display_path}]\r\n{}\r\n\r\n",
+            reg_value_line(name, *previous)
+        ));
+    }
+    let mut bytes: Vec<u8> = vec![0xFF, 0xFE];
+    bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+    fsutil::write_durable(&path, &bytes)?;
+    Ok(path)
+}
+
 /// The exact bytes of a backup file: BOM, header, key, one value line.
 pub fn reg_file_bytes(display_path: &str, value_name: &str, previous: Option<&RawValue>) -> Vec<u8> {
     let mut text = String::from("Windows Registry Editor Version 5.00\r\n\r\n");

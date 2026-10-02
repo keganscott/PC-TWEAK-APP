@@ -27,7 +27,8 @@ export const tweakViews = [
     "context": "service",
     "state": {
       "status": "default"
-    }
+    },
+    "blocked": null
   },
   {
     "id": "fixture.applied",
@@ -43,7 +44,8 @@ export const tweakViews = [
     "context": "service",
     "state": {
       "status": "applied"
-    }
+    },
+    "blocked": null
   },
   {
     "id": "fixture.foreign",
@@ -59,7 +61,8 @@ export const tweakViews = [
     "context": "service",
     "state": {
       "status": "foreign"
-    }
+    },
+    "blocked": null
   },
   {
     "id": "fixture.blocked",
@@ -80,6 +83,11 @@ export const tweakViews = [
         "trigger": null,
         "message": "test block"
       }
+    },
+    "blocked": {
+      "code": "hardware_unsupported",
+      "trigger": null,
+      "message": "test block"
     }
   },
   {
@@ -97,7 +105,8 @@ export const tweakViews = [
     "state": {
       "status": "unknown",
       "detail": "registry test: cannot read"
-    }
+    },
+    "blocked": null
   }
 ] satisfies TweakView[];
 

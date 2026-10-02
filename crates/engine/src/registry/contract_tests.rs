@@ -576,4 +576,55 @@ mod real {
             values - normalised.len(),
         );
     }
+    /// The combined per-change file (agent brief bug 9): importing only it
+    /// with reg.exe must undo the whole change. Uses terminated strings so the
+    /// reg.exe NUL behaviour (test above) does not apply.
+    #[test]
+    fn reg_exe_import_of_the_session_file_alone_restores_the_change() {
+        let s = Scratch::new("session");
+        let key = format!(r"{}\Existing", s.path);
+        let mut names = Vec::new();
+        for (name, v) in samples() {
+            let terminated = !matches!(v.vtype, 1 | 2 | 7) || v.bytes.ends_with(&[0, 0]);
+            if terminated {
+                seed(&key, name, v);
+                names.push(name);
+            }
+        }
+        names.push("WasAbsent");
+        let before = dump(&s.path);
+
+        let writes: Vec<(&str, u32)> = names.iter().map(|n| (*n, 1)).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = real_engine(dir.path(), vec![user_tweak("t.session", &key, &writes)]);
+        let entries = engine.apply("t.session").unwrap();
+        drop(engine);
+        assert_ne!(dump(&s.path), before);
+
+        let day = dir.path().join(Path::new(&entries[0].backup_file).parent().unwrap());
+        let session: Vec<_> = std::fs::read_dir(&day)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("session_"))
+            .collect();
+        assert_eq!(session.len(), 1, "{session:?}");
+        let out = Command::new("reg.exe").arg("import").arg(&session[0]).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            dump(&s.path),
+            before,
+            "importing the session file alone restored the exact prior tree"
+        );
+        println!(
+            "reg.exe import of {}: {} values restored exactly under HKCU\\{}",
+            session[0].file_name().unwrap().to_string_lossy(),
+            entries.len(),
+            s.path
+        );
+    }
 }

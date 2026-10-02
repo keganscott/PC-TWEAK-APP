@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use super::context::ContextResolver;
 use super::error::{EngineError, Result};
 use super::journal::{now_ms, CommitAction, CommitRecord, Journal, JournalAction, JournalEntry};
-use super::reg_export::write_reg_backup;
+use super::reg_export::{write_reg_backup, write_session_backup};
 use super::registry::{components, is_ancestor_or_equal, path_eq};
 use super::types::{ExecutionContext, RawValue, RegRoot, RegTarget, Tweak};
 
@@ -169,6 +169,18 @@ impl<'a> Transaction<'a> {
 
     /// Close the transaction successfully.
     pub fn commit(self) -> Result<Vec<JournalEntry>> {
+        // One combined restore file per applied change, for recovery by hand
+        // when PeakTweaks cannot run (Safe Mode; see journal.rs). Written
+        // before the commit so a committed apply always has one.
+        if self.action == JournalAction::Apply && !self.written.is_empty() {
+            let values: Vec<(&str, &str, Option<&RawValue>)> = self
+                .written
+                .iter()
+                .map(|e| (e.display_path.as_str(), e.value_name.as_str(), e.previous.as_ref()))
+                .collect();
+            let stem = format!("session_{}_{}", self.tx_id, sanitise(&self.tweak_id));
+            write_session_backup(&self.session_dir, &stem, &values)?;
+        }
         let action = match self.action {
             JournalAction::Apply => CommitAction::Apply,
             JournalAction::Revert => CommitAction::Revert,

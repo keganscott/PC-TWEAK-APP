@@ -75,9 +75,10 @@ impl Tweak for MouseAcceleration {
 
         Ok(match (off, has_journal_entry) {
             (true, true) => TweakState::Applied,
-            // Already 1:1 without us. Nothing to do and nothing to claim credit
-            // for: reporting Applied here would be a lie the UI acts on.
-            (true, false) => TweakState::Default,
+            // Already 1:1 without us: set outside PeakTweaks. Reporting
+            // Applied would claim credit (and offer an Undo with nothing in
+            // the journal to undo); Default would hide that it is already off.
+            (true, false) => TweakState::Foreign,
             (false, _) => TweakState::Default,
         })
     }

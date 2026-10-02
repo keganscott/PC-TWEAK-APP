@@ -93,7 +93,7 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
   const running = op?.status === "running";
   const applied = tweak.state.status === "applied";
   const canApply =
-    !applied && gateOpen !== false && tweak.state.status !== "blocked" && tweak.state.status !== "unknown" && (!tweak.tradeoff || acknowledged);
+    !applied && !tweak.blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!tweak.tradeoff || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
 
   return (
@@ -108,7 +108,8 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
             {sample && <SampleBadge />}
           </div>
           <p className="mt-1 text-sm text-ink-muted">{tweak.summary}</p>
-          {tweak.state.status === "blocked" && <p className="mt-2 text-sm">{tweak.state.reason.message}</p>}
+          {/* The engine's reason, also when the change was applied before the block began (it keeps its Undo). */}
+          {tweak.blocked && <p className="mt-2 text-sm">{tweak.blocked.message}</p>}
           {tweak.state.status === "unknown" && technical && (
             <p className="mt-2 font-mono text-xs text-ink-faint">{tweak.state.detail}</p>
           )}

@@ -22,6 +22,10 @@ pub struct TweakView {
     pub metadata: TweakMetadata,
     pub context: ExecutionContext,
     pub state: TweakState,
+    /// Why Apply is refused right now, if it is. Separate from `state` so a
+    /// tweak that was applied before the block started still reads as
+    /// `Applied` and keeps its Undo.
+    pub blocked: Option<BlockedReason>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -258,13 +262,18 @@ impl Engine {
         let mut out = Vec::with_capacity(self.tweaks.len());
 
         for tweak in &self.tweaks {
-            // Predicate first: a blocked tweak must not have its state probed,
-            // because "blocked" outranks whatever is currently on disk and the
-            // probe may not even be meaningful.
-            let state = match tweak.evaluate_predicate(&self.env) {
-                PredicateOutcome::Block(reason) => TweakState::Blocked { reason },
-                PredicateOutcome::Allow => {
-                    let applied = self.journal.is_applied(tweak.id());
+            let applied = self.journal.is_applied(tweak.id());
+            // Predicate first: a blocked tweak's state is not probed (the probe
+            // may not be meaningful), except that an apply still open in the
+            // journal is reported as Applied, so it can be undone.
+            let blocked = match tweak.evaluate_predicate(&self.env) {
+                PredicateOutcome::Block(reason) => Some(reason),
+                PredicateOutcome::Allow => None,
+            };
+            let state = match &blocked {
+                Some(_) if applied => TweakState::Applied,
+                Some(reason) => TweakState::Blocked { reason: reason.clone() },
+                None => {
                     // A read failure is its own state. Reporting it as Default
                     // would invite an Apply on top of something we cannot see.
                     match tweak.read_state(&self.resolver, applied) {
@@ -278,6 +287,7 @@ impl Engine {
                 metadata: tweak.metadata(),
                 context: tweak.execution_context(),
                 state,
+                blocked,
             });
         }
         Ok(out)

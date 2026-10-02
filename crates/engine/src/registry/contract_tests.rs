@@ -53,6 +53,7 @@ fn samples() -> Vec<(&'static str, RawValue)> {
             }),
         ),
         ("Qword", raw(11, 0x0123_4567_89AB_CDEFu64.to_le_bytes().to_vec())),
+        ("MultiSzNoTerminator", raw(7, utf16z(&["a"])[..2].to_vec())),
     ]
 }
 
@@ -90,19 +91,8 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
     for (name, v) in samples() {
         reg.write_value(HIVE, &vals, name, &v).unwrap();
         let got = reg.read_value(HIVE, &vals, name).unwrap();
-        // Windows may store a NUL after string data written without one
-        // (unterminated_string_read_back_report); that alone is tolerated.
-        let terminated = got.as_ref().is_some_and(|g| {
-            matches!(v.vtype, 1 | 2 | 7)
-                && !v.bytes.ends_with(&[0, 0])
-                && g.vtype == v.vtype
-                && g.bytes == [v.bytes.as_slice(), &[0, 0]].concat()
-        });
-        if terminated {
-            println!("note: Windows stored {name} with a NUL terminator added");
-        }
         check(
-            got == Some(v.clone()) || terminated,
+            got == Some(v.clone()),
             &format!("{name} round-trips: wrote {v:?}, read {got:?}"),
         );
     }
@@ -110,6 +100,19 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
         reg.key_exists(HIVE, &format!(r"{base}\Values")).unwrap(),
         "write creates missing parents",
     );
+
+    // Writes are exact every time, not by luck of what follows the buffer in
+    // memory (WinRegistry::set_exact): rewrite the unterminated strings often.
+    for (name, v) in samples()
+        .into_iter()
+        .filter(|(_, v)| matches!(v.vtype, 1 | 2 | 7) && !v.bytes.ends_with(&[0, 0]))
+    {
+        let exact = (0..50).all(|_| {
+            reg.write_value(HIVE, &vals, name, &v).unwrap();
+            reg.read_value(HIVE, &vals, name).unwrap() == Some(v.clone())
+        });
+        check(exact, &format!("{name} is stored exactly on every one of 50 writes"));
+    }
 
     // Overwrite with a different type replaces type and bytes.
     reg.write_value(HIVE, &vals, "Dword", &RawValue::sz("now a string"))
@@ -537,11 +540,12 @@ mod real {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
-        // Measured on Windows (CI run 36952824230): reg.exe appends a NUL to a
-        // REG_SZ whose data had none. A .reg file has no way to say "no
-        // terminator", so that one normalisation is accepted, and only for
-        // string values that had no terminator; every other byte must match.
-        // In-app Undo restores from the journal and is exact (test above).
+        // reg.exe sometimes stores a NUL after string data that had none: it
+        // hits the same RegSetValueExW behaviour WinRegistry::set_exact guards
+        // against (CI runs 36952824230, 36963518402, 36965446605), and we cannot
+        // change reg.exe. So that one difference is accepted, only for string
+        // values written without a terminator; every other byte must match.
+        // In-app Undo restores through WinRegistry and is exact (tests above).
         let after = dump(&s.path);
         assert_eq!(
             after.keys().collect::<Vec<_>>(),
@@ -555,7 +559,7 @@ mod real {
                 continue;
             }
             let terminated = match (was, now) {
-                (Some((t, b)), Some((t2, b2))) if t == t2 && (*t == 1 || *t == 2) && !b.ends_with(&[0, 0]) => {
+                (Some((t, b)), Some((t2, b2))) if t == t2 && matches!(*t, 1 | 2 | 7) && !b.ends_with(&[0, 0]) => {
                     *b2 == [b.as_slice(), &[0, 0]].concat()
                 }
                 _ => false,

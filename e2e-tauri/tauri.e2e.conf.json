@@ -10,6 +10,37 @@
         "minHeight": 640,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222"
       }
-    ]
+    ],
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "e2e-default-minus-revert-all",
+          "description": "The shipped capability (capabilities/default.json) with allow-revert-all removed, so the real-app test can show a registered command is refused when its permission is missing. command_audit.rs keeps the two lists in sync.",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "core:default",
+            "allow-engine-context",
+            "allow-list-tweaks",
+            "allow-list-games",
+            "allow-get-settings",
+            "allow-set-settings",
+            "allow-select-target-game",
+            "allow-rescan",
+            "allow-apply-tweak",
+            "allow-revert-tweak",
+            "allow-list-journal",
+            "allow-audit-system",
+            "allow-create-restore-point",
+            "allow-proof-begin-session",
+            "allow-proof-capture",
+            "allow-proof-compare",
+            "allow-proof-list-sessions",
+            "allow-proof-runs"
+          ]
+        }
+      ]
+    }
   }
 }

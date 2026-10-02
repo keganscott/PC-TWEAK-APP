@@ -228,8 +228,10 @@ jobs:
       # The real app, end to end: its WebView2 window, the real engine, this
       # machine, driven through WebDriver. WebView2 ignores the debugging flags
       # msedgedriver passes in the environment (NOTES.md N46), so this rebuilds a
-      # test variant whose only difference is --remote-debugging-port in the
-      # window's browser arguments, AFTER the shipped exe was uploaded above.
+      # test variant, AFTER the shipped exe was uploaded above, that differs in
+      # two ways: --remote-debugging-port in the window's browser arguments, and
+      # a capability without allow-revert-all so the IPC boundary check has a
+      # registered command to see refused (command_audit.rs keeps it in sync).
       - name: Real app UI end to end (WebDriver)
         shell: pwsh
         run: |

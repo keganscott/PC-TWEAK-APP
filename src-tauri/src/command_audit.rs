@@ -148,3 +148,23 @@ fn the_client_never_sends_environment_license_or_gate_state() {
         assert!(!code.contains(banned), "src/ipc.ts mentions {banned}");
     }
 }
+
+/// The real-app test build (`e2e-tauri/tauri.e2e.conf.json`) replaces the
+/// capability with an inline copy that lacks exactly `allow-revert-all`, so
+/// `e2e-tauri/real-app.mjs` can show a registered command being refused. The
+/// copy must otherwise stay identical, or the test build stops being the
+/// shipped app.
+#[test]
+fn the_test_build_capability_is_the_shipped_one_minus_revert_all() {
+    let shipped: serde_json::Value = serde_json::from_str(CAPABILITY).unwrap();
+    let conf: serde_json::Value = serde_json::from_str(include_str!("../../e2e-tauri/tauri.e2e.conf.json")).unwrap();
+    let caps = conf["app"]["security"]["capabilities"].as_array().unwrap();
+    assert_eq!(caps.len(), 1, "the test build has exactly one capability");
+    let e2e = &caps[0];
+    assert_eq!(e2e["windows"], shipped["windows"]);
+    let mut expected: Vec<&serde_json::Value> = shipped["permissions"].as_array().unwrap().iter().collect();
+    expected.retain(|p| p.as_str() != Some("allow-revert-all"));
+    let got: Vec<&serde_json::Value> = e2e["permissions"].as_array().unwrap().iter().collect();
+    assert_eq!(got, expected);
+    assert_eq!(e2e.get("remote"), None, "no remote origins");
+}

@@ -185,6 +185,12 @@ jobs:
       - name: Storage ownership and WMI timeout on this runner
         run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
 
+      # The only code that writes the real registry, on the real registry: the
+      # RegistryBackend contract, engine apply/revert, and reg.exe import of the
+      # .reg backups (scratch keys under HKCU only).
+      - name: Real registry write path on this runner
+        run: cargo test -p peaktweaks-engine registry::contract_tests -- --nocapture --test-threads=1
+
       # The field-check tool (docs/FIELD_CHECK.md) is what Kegan runs on a real PC.
       # Here it runs read-only on the runner, so a release never ships a tool
       # that cannot even start.

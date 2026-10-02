@@ -9,6 +9,8 @@
 use super::error::Result;
 use super::types::RawValue;
 
+#[cfg(test)]
+mod contract_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
 #[cfg(windows)]

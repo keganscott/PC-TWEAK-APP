@@ -1,0 +1,433 @@
+//! One behaviour contract for `RegistryBackend`, run against the in-memory fake
+//! on every OS and against the real registry (`WinRegistry`) on Windows.
+//!
+//! Every engine test runs on the fake, so the fake is only worth trusting if it
+//! behaves like Windows. This suite is the check: the same assertions, both
+//! backends. On Windows it also drives the whole engine (apply, revert) against
+//! a scratch key under HKCU and imports the `.reg` backups with Windows' own
+//! `reg.exe`, which is the only proof that a backup really restores.
+//!
+//! Scratch keys are `HKCU\Software\PeakTweaksTest-<pid>-<name>`, removed when
+//! the test ends, pass or fail. Nothing outside them is touched.
+
+use super::{Hive, RegistryBackend};
+use crate::error::EngineError;
+use crate::types::RawValue;
+
+const HIVE: Hive = Hive::CurrentUser;
+
+fn utf16z(parts: &[&str]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for p in parts {
+        out.extend(p.encode_utf16().flat_map(u16::to_le_bytes));
+        out.extend([0, 0]);
+    }
+    out
+}
+
+/// One value of every type the engine writes, with awkward contents.
+fn samples() -> Vec<(&'static str, RawValue)> {
+    let raw = |vtype, bytes| RawValue { vtype, bytes };
+    vec![
+        ("Sz", RawValue::sz(r#"C:\Path with "quotes" and ünïcode ✓"#)),
+        (
+            "SzNoTerminator",
+            raw(1, "abc".encode_utf16().flat_map(u16::to_le_bytes).collect()),
+        ),
+        ("SzEmpty", RawValue::sz("")),
+        ("ExpandSz", raw(2, utf16z(&[r"%SystemRoot%\System32"]))),
+        ("Binary", raw(3, (0..=255u8).collect())),
+        ("BinaryEmpty", raw(3, vec![])),
+        ("Dword", RawValue::dword(0xDEAD_BEEF)),
+        ("DwordZero", RawValue::dword(0)),
+        (
+            "MultiSz",
+            raw(7, {
+                let mut b = utf16z(&["first", "", "third"]);
+                b.extend([0, 0]);
+                b
+            }),
+        ),
+        ("Qword", raw(11, 0x0123_4567_89AB_CDEFu64.to_le_bytes().to_vec())),
+    ]
+}
+
+/// The contract. `base` is a key this test owns and that does not exist yet.
+/// `seed_foreign` writes a value of an arbitrary type the way another program
+/// would, bypassing the backend's own type check.
+fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &str, RawValue)) -> usize {
+    let mut checks = 0;
+    let mut check = |ok: bool, what: &str| {
+        assert!(ok, "contract: {what}");
+        checks += 1;
+    };
+
+    // Absent things read as absent, not as errors.
+    check(!reg.key_exists(HIVE, base).unwrap(), "fresh key is absent");
+    check(
+        reg.read_value(HIVE, base, "Nope").unwrap().is_none(),
+        "value under absent key reads None",
+    );
+    check(
+        !reg.delete_value(HIVE, base, "Nope").unwrap(),
+        "delete under absent key is false",
+    );
+    check(
+        !reg.delete_key_if_empty(HIVE, base).unwrap(),
+        "delete absent key is false",
+    );
+    check(
+        !reg.delete_key_if_empty(HIVE, "").unwrap(),
+        "a hive root is never deleted",
+    );
+
+    // Byte-exact round trips of every supported type, creating parents.
+    let vals = format!(r"{base}\Values\Deeper");
+    for (name, v) in samples() {
+        reg.write_value(HIVE, &vals, name, &v).unwrap();
+        check(
+            reg.read_value(HIVE, &vals, name).unwrap() == Some(v.clone()),
+            &format!("{name} round-trips"),
+        );
+    }
+    check(
+        reg.key_exists(HIVE, &format!(r"{base}\Values")).unwrap(),
+        "write creates missing parents",
+    );
+
+    // Overwrite with a different type replaces type and bytes.
+    reg.write_value(HIVE, &vals, "Dword", &RawValue::sz("now a string"))
+        .unwrap();
+    check(
+        reg.read_value(HIVE, &vals, "Dword").unwrap() == Some(RawValue::sz("now a string")),
+        "overwrite changes the type",
+    );
+
+    // Keys and value names are case-insensitive.
+    let upper = vals.to_uppercase();
+    check(
+        reg.read_value(HIVE, &upper, "QWORD").unwrap()
+            == samples().into_iter().find(|(n, _)| *n == "Qword").map(|(_, v)| v),
+        "keys and names ignore case",
+    );
+    check(reg.key_exists(HIVE, &upper).unwrap(), "key_exists ignores case");
+
+    // Types we cannot restore are refused before anything is created.
+    for vtype in [0u32, 5, 6, 8, 9, 10, 12] {
+        let path = format!(r"{base}\Refused{vtype}");
+        let err = reg
+            .write_value(
+                HIVE,
+                &path,
+                "X",
+                &RawValue {
+                    vtype,
+                    bytes: vec![1, 2, 3, 4],
+                },
+            )
+            .unwrap_err();
+        check(
+            matches!(err, EngineError::UnsupportedValueType { vtype: t, .. } if t == vtype),
+            &format!("vtype {vtype} is refused: {err:?}"),
+        );
+        check(
+            !reg.key_exists(HIVE, &path).unwrap(),
+            &format!("refused vtype {vtype} created no key"),
+        );
+    }
+
+    // A foreign value of an unsupported type still reads back raw, so the
+    // transaction layer can see it and refuse to touch it.
+    seed_foreign(
+        &vals,
+        "Foreign",
+        RawValue {
+            vtype: 0,
+            bytes: vec![9, 8, 7],
+        },
+    );
+    check(
+        reg.read_value(HIVE, &vals, "Foreign").unwrap()
+            == Some(RawValue {
+                vtype: 0,
+                bytes: vec![9, 8, 7],
+            }),
+        "foreign REG_NONE reads back raw",
+    );
+
+    // delete_value reports whether something was there.
+    check(
+        reg.delete_value(HIVE, &vals, "foreign").unwrap(),
+        "delete existing value is true",
+    );
+    check(
+        !reg.delete_value(HIVE, &vals, "Foreign").unwrap(),
+        "delete again is false",
+    );
+    check(
+        reg.read_value(HIVE, &vals, "Foreign").unwrap().is_none(),
+        "deleted value is gone",
+    );
+
+    // create_key is idempotent and creates parents.
+    let made = format!(r"{base}\Made\A\B");
+    reg.create_key(HIVE, &made).unwrap();
+    reg.create_key(HIVE, &made).unwrap();
+    check(reg.key_exists(HIVE, &made).unwrap(), "create_key creates the key");
+
+    // delete_key_if_empty: never a key with values or subkeys.
+    check(
+        !reg.delete_key_if_empty(HIVE, &format!(r"{base}\Made\A")).unwrap(),
+        "key with a subkey stays",
+    );
+    check(!reg.delete_key_if_empty(HIVE, &vals).unwrap(), "key with values stays");
+    check(reg.key_exists(HIVE, &vals).unwrap(), "key with values still exists");
+    check(reg.delete_key_if_empty(HIVE, &made).unwrap(), "empty leaf is deleted");
+    check(!reg.key_exists(HIVE, &made).unwrap(), "deleted leaf is gone");
+    check(
+        reg.delete_key_if_empty(HIVE, &format!(r"{base}\made\a")).unwrap(),
+        "now-empty parent is deleted, any case",
+    );
+    check(
+        reg.delete_key_if_empty(HIVE, &format!(r"{base}\Made")).unwrap(),
+        "and its parent",
+    );
+
+    // Empty out the values key and remove the whole tree bottom-up.
+    for (name, _) in samples() {
+        check(reg.delete_value(HIVE, &vals, name).unwrap(), &format!("{name} deletes"));
+    }
+    check(reg.delete_key_if_empty(HIVE, &vals).unwrap(), "emptied key is deleted");
+    check(
+        reg.delete_key_if_empty(HIVE, &format!(r"{base}\Values")).unwrap(),
+        "values parent is deleted",
+    );
+    check(reg.delete_key_if_empty(HIVE, base).unwrap(), "base is deleted");
+    check(!reg.key_exists(HIVE, base).unwrap(), "nothing is left");
+    checks
+}
+
+#[test]
+fn the_fake_registry_meets_the_contract() {
+    let fake = super::fake::FakeRegistry::new();
+    fake.create_key(HIVE, "Software").unwrap(); // exists on every real Windows
+    let checks = contract(&fake, r"Software\PeakTweaksTest-fake", &|path, name, v| {
+        fake.set_external(HIVE, path, name, v)
+    });
+    assert_eq!(fake.key_paths(), vec![(HIVE, "software".to_owned())]);
+    println!("fake registry: {checks} contract checks passed");
+}
+
+#[cfg(windows)]
+mod real {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::process::Command;
+    use std::sync::Arc;
+
+    use winreg::enums::{RegType, HKEY_CURRENT_USER, KEY_READ};
+    use winreg::{RegKey, RegValue};
+
+    use super::super::windows::WinRegistry;
+    use super::*;
+    use crate::context::{ContextResolver, UserContext, UserResolution};
+    use crate::engine::Engine;
+    use crate::env::{License, StubProbe};
+    use crate::identity;
+    use crate::journal::{Journal, JournalEntry};
+    use crate::secure_dir::TrustedDir;
+    use crate::testutil::TestTweak;
+    use crate::types::{ExecutionContext, Tier, Tweak};
+
+    /// `HKCU\Software\PeakTweaksTest-<pid>-<name>`, deleted (with everything
+    /// under it) on drop, so a failing assertion still cleans up.
+    struct Scratch {
+        path: String,
+    }
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = format!(r"Software\PeakTweaksTest-{}-{name}", std::process::id());
+            let _ = hkcu().delete_subkey_all(&path);
+            Self { path }
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = hkcu().delete_subkey_all(&self.path);
+        }
+    }
+
+    fn hkcu() -> RegKey {
+        RegKey::predef(HKEY_CURRENT_USER)
+    }
+
+    /// Bypasses `WinRegistry` entirely, as another program would.
+    fn seed(path: &str, name: &str, v: RawValue) {
+        let vtype: RegType = match v.vtype {
+            0 => RegType::REG_NONE,
+            1 => RegType::REG_SZ,
+            2 => RegType::REG_EXPAND_SZ,
+            3 => RegType::REG_BINARY,
+            4 => RegType::REG_DWORD,
+            7 => RegType::REG_MULTI_SZ,
+            11 => RegType::REG_QWORD,
+            other => panic!("seed: add vtype {other}"),
+        };
+        let (key, _) = hkcu().create_subkey(path).unwrap();
+        key.set_raw_value(name, &RegValue { bytes: v.bytes, vtype }).unwrap();
+    }
+
+    /// Every key and value under `path`, read with winreg directly, with
+    /// names lower-cased so the comparison follows registry rules.
+    fn dump(path: &str) -> BTreeMap<String, Option<(u32, Vec<u8>)>> {
+        fn walk(key: &RegKey, rel: &str, out: &mut BTreeMap<String, Option<(u32, Vec<u8>)>>) {
+            out.insert(format!("[{rel}]"), None);
+            for v in key.enum_values() {
+                let (name, val) = v.unwrap();
+                out.insert(
+                    format!("{rel}:{}", name.to_lowercase()),
+                    Some((val.vtype as u32, val.bytes)),
+                );
+            }
+            for k in key.enum_keys() {
+                let k = k.unwrap();
+                let child = key.open_subkey_with_flags(&k, KEY_READ).unwrap();
+                walk(&child, &format!(r"{rel}\{}", k.to_lowercase()), out);
+            }
+        }
+        let mut out = BTreeMap::new();
+        if let Ok(root) = hkcu().open_subkey_with_flags(path, KEY_READ) {
+            walk(&root, "", &mut out);
+        }
+        out
+    }
+
+    fn real_engine(dir: &Path, tweaks: Vec<Box<dyn Tweak>>) -> Engine {
+        let user = UserContext {
+            sid: identity::current_process_sid().unwrap(),
+            resolution: UserResolution::OwnToken,
+            is_self: true,
+        };
+        let resolver = ContextResolver::new(user, identity::is_elevated(), Arc::new(WinRegistry::new()));
+        let journal = Journal::open(&TrustedDir::insecure_for_tests(dir)).unwrap();
+        Engine::new(
+            resolver,
+            journal,
+            tweaks,
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        )
+    }
+
+    fn user_tweak(id: &str, key: &str, writes: &[(&str, u32)]) -> Box<dyn Tweak> {
+        let mut t = TestTweak::new(id, key, writes);
+        t.context = ExecutionContext::User;
+        Box::new(t)
+    }
+
+    #[test]
+    fn the_real_registry_meets_the_contract() {
+        let s = Scratch::new("contract");
+        let checks = contract(&WinRegistry::new(), &s.path, &seed);
+        assert!(dump(&s.path).is_empty(), "scratch key left behind: {:?}", dump(&s.path));
+        println!("real registry (HKCU\\{}): {checks} contract checks passed", s.path);
+    }
+
+    /// Apply two changes through the engine on the real registry, then revert
+    /// them, and require the scratch tree to be byte-for-byte what it was:
+    /// overwritten values back, added values gone, keys we created removed,
+    /// a key that already existed kept with its other values.
+    #[test]
+    fn engine_apply_then_revert_restores_the_real_registry_exactly() {
+        let s = Scratch::new("engine");
+        let existing = format!(r"{}\Existing", s.path);
+        let created = format!(r"{}\Made\Here", s.path);
+        seed(&existing, "Prev", RawValue::dword(7));
+        seed(&existing, "Other", RawValue::sz("keep me"));
+        let before = dump(&s.path);
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = real_engine(
+            dir.path(),
+            vec![
+                user_tweak("t.existing", &existing, &[("Prev", 1), ("New", 2)]),
+                user_tweak("t.created", &created, &[("A", 3)]),
+            ],
+        );
+        let mut entries: Vec<JournalEntry> = engine.apply("t.existing").unwrap();
+        entries.extend(engine.apply("t.created").unwrap());
+
+        let reg = WinRegistry::new();
+        let read = |p: &str, n: &str| reg.read_value(HIVE, p, n).unwrap().and_then(|v| v.as_dword());
+        assert_eq!(read(&existing, "Prev"), Some(1));
+        assert_eq!(read(&existing, "New"), Some(2));
+        assert_eq!(read(&created, "A"), Some(3));
+        let made_here = entries.iter().find(|e| e.value_name == "A").unwrap();
+        assert_eq!(made_here.created_keys.len(), 2, "{:?}", made_here.created_keys);
+        for e in &entries {
+            let bytes = std::fs::read(dir.path().join(&e.backup_file)).unwrap();
+            assert_eq!(&bytes[..2], &[0xFF, 0xFE], "{} is UTF-16LE with a BOM", e.backup_file);
+        }
+
+        let results = engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert_eq!(dump(&s.path), before, "revert restored the exact prior tree");
+        println!(
+            "real engine: {} writes applied and reverted under HKCU\\{}; tree identical ({} entries)",
+            entries.len(),
+            s.path,
+            before.len()
+        );
+    }
+
+    /// The `.reg` backups are the recovery path when PeakTweaks itself cannot
+    /// run. Import them with Windows' own `reg.exe` and require the prior
+    /// values back exactly, for every type the encoder handles, including a
+    /// value that did not exist (the backup must delete it).
+    #[test]
+    fn reg_exe_import_of_the_backups_restores_the_prior_values() {
+        let s = Scratch::new("import");
+        let key = format!(r"{}\Existing", s.path);
+        let mut names = Vec::new();
+        for (name, v) in samples() {
+            seed(&key, name, v);
+            names.push(name);
+        }
+        seed(&key, "SzControlChars", RawValue::sz("line one\nline two\ttab"));
+        names.push("SzControlChars");
+        seed(&key, "Untouched", RawValue::sz("not in the tweak"));
+        names.push("WasAbsent");
+        let before = dump(&s.path);
+
+        let writes: Vec<(&str, u32)> = names.iter().map(|n| (*n, 1)).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = real_engine(dir.path(), vec![user_tweak("t.import", &key, &writes)]);
+        let mut entries = engine.apply("t.import").unwrap();
+        assert_eq!(entries.len(), names.len());
+        assert_ne!(dump(&s.path), before, "apply changed the tree");
+        drop(engine);
+
+        // Newest first, as a person restoring by hand would.
+        entries.sort_by_key(|e| std::cmp::Reverse(e.seq));
+        for e in &entries {
+            let file = dir.path().join(&e.backup_file);
+            let out = Command::new("reg.exe").arg("import").arg(&file).output().unwrap();
+            assert!(
+                out.status.success(),
+                "reg import {} failed: {}{}",
+                file.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        assert_eq!(dump(&s.path), before, "reg.exe import restored the exact prior values");
+        println!(
+            "reg.exe import: {} backups (HKEY_USERS\\<own sid> form) restored {} values exactly under HKCU\\{}",
+            entries.len(),
+            before.values().filter(|v| v.is_some()).count(),
+            s.path
+        );
+    }
+}

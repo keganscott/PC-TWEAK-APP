@@ -132,6 +132,14 @@ impl RegistryBackend for FakeRegistry {
     }
 
     fn write_value(&self, hive: Hive, path: &str, name: &str, value: &RawValue) -> Result<()> {
+        // Same refusal as WinRegistry, before anything changes (contract_tests).
+        if !value.is_supported_type() {
+            return Err(EngineError::UnsupportedValueType {
+                path: format!("{}\\{}", hive.name(), path),
+                value: name.to_owned(),
+                vtype: value.vtype,
+            });
+        }
         let mut g = self.inner.lock().unwrap();
         g.tick(hive, path, Some(name))?;
         for a in ancestors(path) {

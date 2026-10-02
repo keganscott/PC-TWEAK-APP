@@ -89,9 +89,10 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
     let vals = format!(r"{base}\Values\Deeper");
     for (name, v) in samples() {
         reg.write_value(HIVE, &vals, name, &v).unwrap();
+        let got = reg.read_value(HIVE, &vals, name).unwrap();
         check(
-            reg.read_value(HIVE, &vals, name).unwrap() == Some(v.clone()),
-            &format!("{name} round-trips"),
+            got == Some(v.clone()),
+            &format!("{name} round-trips: wrote {v:?}, read {got:?}"),
         );
     }
     check(
@@ -329,6 +330,79 @@ mod real {
         let mut t = TestTweak::new(id, key, writes);
         t.context = ExecutionContext::User;
         Box::new(t)
+    }
+
+    /// Evidence, not a pass/fail check: how Windows reads back string values
+    /// stored without a NUL terminator. CI run 36959654373 read an unterminated
+    /// REG_EXPAND_SZ back differently from what was written, on some runs only.
+    /// This reads each such value many times through `WinRegistry` and through
+    /// `RegQueryValueExW` directly with the spare buffer pre-filled with 0x00
+    /// and with 0xAB, and prints every distinct result with its count.
+    #[test]
+    fn unterminated_string_read_back_report() {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::Registry::{RegQueryValueExW, HKEY, REG_VALUE_TYPE};
+
+        let s = Scratch::new("readback");
+        let utf16 = |t: &str| -> Vec<u8> { t.encode_utf16().flat_map(u16::to_le_bytes).collect() };
+        let cases = [
+            ("Sz", 1u32, utf16("abc")),
+            ("ExpandSz", 2, utf16("%TEMP%")),
+            ("ExpandSzLonger", 2, utf16("%SystemRoot%\\x")),
+            ("MultiSz", 7, utf16("a\0b")),
+        ];
+        let reg = WinRegistry::new();
+        for (name, vtype, bytes) in &cases {
+            seed(
+                &s.path,
+                name,
+                RawValue {
+                    vtype: *vtype,
+                    bytes: bytes.clone(),
+                },
+            );
+        }
+        let key = hkcu().open_subkey_with_flags(&s.path, KEY_READ).unwrap();
+        for (name, vtype, bytes) in &cases {
+            let mut via_backend: BTreeMap<String, usize> = BTreeMap::new();
+            for _ in 0..300 {
+                let v = reg.read_value(HIVE, &s.path, name).unwrap().unwrap();
+                *via_backend.entry(format!("{}:{:02x?}", v.vtype, v.bytes)).or_default() += 1;
+            }
+            let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+            let mut direct: BTreeMap<String, usize> = BTreeMap::new();
+            for fill in [0x00u8, 0xAB] {
+                for _ in 0..100 {
+                    let mut buf = vec![fill; 256];
+                    let mut len = buf.len() as u32;
+                    let mut ty = REG_VALUE_TYPE(0);
+                    let rc = unsafe {
+                        RegQueryValueExW(
+                            HKEY(key.raw_handle() as *mut _),
+                            PCWSTR(wide.as_ptr()),
+                            None,
+                            Some(&mut ty),
+                            Some(buf.as_mut_ptr()),
+                            Some(&mut len),
+                        )
+                    };
+                    let shown = &buf[..(len as usize + 4).min(buf.len())];
+                    *direct
+                        .entry(format!(
+                            "fill {fill:02x}: rc={} len={len} type={} bytes+4={shown:02x?}",
+                            rc.0, ty.0
+                        ))
+                        .or_default() += 1;
+                }
+            }
+            println!("{name} (vtype {vtype}) wrote {} bytes {bytes:02x?}", bytes.len());
+            for (k, n) in &via_backend {
+                println!("  WinRegistry x{n}: {k}");
+            }
+            for (k, n) in &direct {
+                println!("  RegQueryValueExW x{n}: {k}");
+            }
+        }
     }
 
     #[test]

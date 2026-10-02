@@ -188,7 +188,9 @@ jobs:
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the
       # .reg backups (scratch keys under HKCU only).
+      # Runs even when cargo test failed: its output is what explains a failure.
       - name: Real registry write path on this runner
+        if: ${{ !cancelled() }}
         run: cargo test -p peaktweaks-engine registry::contract_tests -- --nocapture --test-threads=1
 
       # The field-check tool (docs/FIELD_CHECK.md) is what Kegan runs on a real PC.

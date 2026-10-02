@@ -125,6 +125,14 @@ jobs:
           if ($acl -notmatch 'SYSTEM') { throw "expected SYSTEM in the storage ACL" }
           if ($acl -notmatch 'Administrators') { throw "expected Administrators in the storage ACL" }
 
+      # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
+      # Windows' own connection audit log, a positive control, then 60 s of the
+      # shipped exe and every process it starts. Fails on any network connection
+      # by peaktweaks.exe; reports WebView2's own (NOTES.md N40).
+      - name: The app opens no network connections
+        shell: pwsh
+        run: ./scripts/check-no-outbound.ps1 -Exe target\release\peaktweaks.exe -Seconds 60
+
       # Checks the assumptions the capture code makes against the real program,
       # then captures real frames from a browser window running an animation and
       # pushes them through our tool, parser and statistics.

@@ -47,6 +47,8 @@ mod copy_lint;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]
+mod network_audit;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod testutil;

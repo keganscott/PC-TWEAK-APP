@@ -90,8 +90,19 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
     for (name, v) in samples() {
         reg.write_value(HIVE, &vals, name, &v).unwrap();
         let got = reg.read_value(HIVE, &vals, name).unwrap();
+        // Windows may store a NUL after string data written without one
+        // (unterminated_string_read_back_report); that alone is tolerated.
+        let terminated = got.as_ref().is_some_and(|g| {
+            matches!(v.vtype, 1 | 2 | 7)
+                && !v.bytes.ends_with(&[0, 0])
+                && g.vtype == v.vtype
+                && g.bytes == [v.bytes.as_slice(), &[0, 0]].concat()
+        });
+        if terminated {
+            println!("note: Windows stored {name} with a NUL terminator added");
+        }
         check(
-            got == Some(v.clone()),
+            got == Some(v.clone()) || terminated,
             &format!("{name} round-trips: wrote {v:?}, read {got:?}"),
         );
     }
@@ -341,7 +352,7 @@ mod real {
     #[test]
     fn unterminated_string_read_back_report() {
         use windows::core::PCWSTR;
-        use windows::Win32::System::Registry::{RegQueryValueExW, HKEY, REG_VALUE_TYPE};
+        use windows::Win32::System::Registry::{RegQueryValueExW, RegSetValueExW, HKEY, REG_VALUE_TYPE};
 
         let s = Scratch::new("readback");
         let utf16 = |t: &str| -> Vec<u8> { t.encode_utf16().flat_map(u16::to_le_bytes).collect() };
@@ -395,7 +406,33 @@ mod real {
                         .or_default() += 1;
                 }
             }
+            // Write with RegSetValueExW directly, the memory right after the
+            // data holding 00 00 or ab ab, and see how many bytes were stored.
+            let rw = hkcu().create_subkey(&s.path).unwrap().0;
+            let mut writes: BTreeMap<String, usize> = BTreeMap::new();
+            for follow in [0x00u8, 0xAB] {
+                for _ in 0..50 {
+                    let mut buf = bytes.clone();
+                    buf.extend([follow; 4]);
+                    let rc = unsafe {
+                        RegSetValueExW(
+                            HKEY(rw.raw_handle() as *mut _),
+                            PCWSTR(wide.as_ptr()),
+                            0,
+                            REG_VALUE_TYPE(*vtype),
+                            Some(&buf[..bytes.len()]),
+                        )
+                    };
+                    let stored = rw.get_raw_value(name).map(|v| v.bytes.len());
+                    *writes
+                        .entry(format!("next bytes {follow:02x}: rc={} stored {stored:?} bytes", rc.0))
+                        .or_default() += 1;
+                }
+            }
             println!("{name} (vtype {vtype}) wrote {} bytes {bytes:02x?}", bytes.len());
+            for (k, n) in &writes {
+                println!("  RegSetValueExW x{n}: {k}");
+            }
             for (k, n) in &via_backend {
                 println!("  WinRegistry x{n}: {k}");
             }

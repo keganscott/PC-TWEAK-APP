@@ -129,7 +129,10 @@ try {
   await step("the IPC permission boundary holds and forged state is ignored", async () => {
     await driver.manage().setTimeouts({ script: 60_000 });
     const lines = [];
-    const brief = (v) => (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ").slice(0, 240);
+    const brief = (v) =>
+      String(typeof v === "string" ? v : (JSON.stringify(v) ?? v))
+        .replace(/\s+/g, " ")
+        .slice(0, 240);
 
     const ctx = await ipc("engine_context");
     assert.ok(ctx.ok, `engine_context failed: ${brief(ctx.error)}`);

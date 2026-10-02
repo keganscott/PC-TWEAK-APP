@@ -184,6 +184,24 @@ fn audit() -> SystemAudit {
             )
             .with_rows(
                 NS_CIMV2,
+                crate::gpu_driver::WQL_VIDEO,
+                vec![
+                    vec![
+                        ("Name", s("Microsoft Basic Display Adapter")),
+                        ("PNPDeviceID", s("ROOT\\BASICDISPLAY\\0000")),
+                        ("DriverVersion", s("10.0.26100.1")),
+                    ],
+                    vec![
+                        ("Name", s("Example GPU")),
+                        ("AdapterCompatibility", s("NVIDIA")),
+                        ("PNPDeviceID", s("PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000")),
+                        ("DriverVersion", s("32.0.15.8180")),
+                        ("DriverDate", s("20250820000000.000000-000")),
+                    ],
+                ],
+            )
+            .with_rows(
+                NS_CIMV2,
                 crate::hardware::WQL_COMPUTER,
                 vec![vec![("PCSystemType", u(1))]],
             )

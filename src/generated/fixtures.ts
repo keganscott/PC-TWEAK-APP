@@ -346,6 +346,18 @@ export const systemAudit = {
           }
         ]
       },
+      "gpuDrivers": {
+        "state": "yes",
+        "value": [
+          {
+            "name": "Example GPU",
+            "vendorId": 4318,
+            "driverVersion": "32.0.15.8180",
+            "nvidiaVersion": "581.80",
+            "driverDate": "2025-08-20"
+          }
+        ]
+      },
       "bootDisk": {
         "state": "yes",
         "value": {
@@ -490,6 +502,15 @@ export const systemAudit = {
         "reading": "Running at 60 Hz; this display offers 144 Hz at 1920x1080.",
         "remedy": "Windows Settings > System > Display > Advanced display lets you choose the refresh rate.",
         "guidedOnly": true,
+        "fixTweakId": null
+      },
+      {
+        "id": "gpu.driver_branch",
+        "status": "unknown",
+        "title": "Graphics driver",
+        "reading": "Could not be read: the card name \"Example GPU\" is not one PeakTweaks knows, so it cannot tell whether NVIDIA still releases new game drivers for it",
+        "remedy": null,
+        "guidedOnly": false,
         "fixTweakId": null
       },
       {

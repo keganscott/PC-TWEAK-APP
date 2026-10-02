@@ -154,6 +154,8 @@ pub struct HardwareReport {
     pub memory: Probe<MemoryInfo>,
     /// Real adapters only (software renderers filtered out), largest VRAM first.
     pub gpus: Probe<Vec<GpuAdapter>>,
+    /// The driver on each physical graphics card (`Win32_VideoController`).
+    pub gpu_drivers: Probe<Vec<super::gpu_driver::GpuDriver>>,
     pub boot_disk: Probe<BootDisk>,
     pub display: Probe<DisplayInfo>,
     pub is_laptop: Probe<bool>,
@@ -512,6 +514,7 @@ pub fn probe_hardware(wmi: &dyn WmiSource, os_facts: &dyn OsFacts) -> HardwareRe
     let cpu = cpu_from(&wmi.query(NS_CIMV2, WQL_CPU));
     let memory = memory_from(&wmi.query(NS_CIMV2, WQL_MEMORY));
     let gpus = gpus_from(&os_facts.gpu_adapters());
+    let gpu_drivers = super::gpu_driver::drivers_from(&wmi.query(NS_CIMV2, super::gpu_driver::WQL_VIDEO));
     let boot_disk = probe_boot_disk(wmi, &os_facts.system_drive());
     let display = os_facts.display().into();
     let is_laptop = laptop_from(&wmi.query(NS_CIMV2, WQL_COMPUTER));
@@ -521,6 +524,7 @@ pub fn probe_hardware(wmi: &dyn WmiSource, os_facts: &dyn OsFacts) -> HardwareRe
         cpu,
         memory,
         gpus,
+        gpu_drivers,
         boot_disk,
         display,
         is_laptop,

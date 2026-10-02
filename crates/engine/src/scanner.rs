@@ -18,6 +18,7 @@
 use serde::Serialize;
 use ts_rs::TS;
 
+use super::gpu_driver::{nvidia_branch, NvidiaBranch, VENDOR_NVIDIA};
 use super::hardware::{ChannelLayout, DiskMedia, HardwareReport};
 use super::power::{PowerPlan, PowerPlanKind};
 use super::probe::Probe;
@@ -84,6 +85,7 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
         findings.extend(refresh_rate(hw));
         findings.extend(boot_disk(hw));
         findings.extend(windows_support(hw));
+        findings.extend(gpu_driver(hw));
     }
     if let Some(plan) = &env.power_plan {
         let laptop = env
@@ -319,6 +321,63 @@ fn windows_support(hw: &HardwareReport) -> Option<Finding> {
     })
 }
 
+/// Plan 6.2 item 8: NVIDIA's older generations no longer get new game drivers.
+/// Only NVIDIA cards are judged; the plan names no rule for other makers, so
+/// they get no finding rather than an invented one. The generation table is
+/// from memory (VERIFY, NOTES.md N47); an unknown name is reported as unknown.
+fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
+    const ID: &str = "gpu.driver_branch";
+    const TITLE: &str = "Graphics driver";
+    let drivers = match &hw.gpu_drivers {
+        Probe::Unknown { reason } => return Some(unknown(ID, TITLE, reason)),
+        Probe::No { .. } => return None,
+        Probe::Yes { value } => value,
+    };
+    let card = drivers.iter().find(|d| d.vendor_id == Some(VENDOR_NVIDIA))?;
+    let version = card
+        .nvidia_version
+        .as_deref()
+        .or(card.driver_version.as_deref())
+        .unwrap_or("version not reported");
+    let installed = match &card.driver_date {
+        Some(date) => format!("Installed driver: {version}, dated {date}."),
+        None => format!("Installed driver: {version}."),
+    };
+    Some(match nvidia_branch(&card.name) {
+        NvidiaBranch::Legacy { generation } => Finding {
+            remedy: Some(format!(
+                "NVIDIA no longer releases new Game Ready drivers for {generation} cards. Keep installing the \
+                 security updates NVIDIA still publishes for them. Getting new game drivers needs a newer card."
+            )),
+            ..finding(
+                ID,
+                Status::Attention,
+                "NVIDIA has stopped new game drivers for this card",
+                format!("{} is a {generation} card. {installed}", card.name),
+                None,
+                true,
+            )
+        },
+        NvidiaBranch::Current => finding(
+            ID,
+            Status::Fine,
+            "This NVIDIA card still gets new game drivers",
+            format!("{}. {installed}", card.name),
+            None,
+            false,
+        ),
+        NvidiaBranch::Unrecognised => unknown(
+            ID,
+            TITLE,
+            &format!(
+                "the card name \"{}\" is not one PeakTweaks knows, so it cannot tell whether NVIDIA still \
+                 releases new game drivers for it",
+                card.name
+            ),
+        ),
+    })
+}
+
 /// Reads the power *plan*. Windows 11 also has a separate "power mode" setting
 /// that is not read here, so the copy names the plan and points at both places
 /// (NOTES.md N43). No one-click fix exists yet, so this is guided only.
@@ -433,6 +492,7 @@ mod tests {
                 channels: Probe::yes(ChannelLayout::Multi),
             }),
             gpus: Probe::unknown("not needed here"),
+            gpu_drivers: Probe::no("no PCI graphics card"),
             boot_disk: Probe::yes(BootDisk {
                 media: DiskMedia::Ssd,
                 name: "Samsung SSD".into(),
@@ -676,6 +736,72 @@ mod tests {
     /// Findings say what was read and what to do. They never promise a result;
     /// only a stored proof run may say a change helped. Same banned words as the
     /// catalogue lint in `tests.rs`, applied to this file's non-test code.
+    fn nvidia(name: &str, version: Option<&str>, date: Option<&str>) -> crate::gpu_driver::GpuDriver {
+        crate::gpu_driver::GpuDriver {
+            name: name.into(),
+            vendor_id: Some(VENDOR_NVIDIA),
+            driver_version: Some("32.0.15.8180".into()),
+            nvidia_version: version.map(Into::into),
+            driver_date: date.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn an_old_nvidia_card_is_told_it_gets_security_updates_only() {
+        let mut hw = hardware();
+        hw.gpu_drivers = Probe::yes(vec![nvidia(
+            "NVIDIA GeForce GTX 1060 6GB",
+            Some("581.80"),
+            Some("2025-08-20"),
+        )]);
+        let f = get(&scan(&env_with(hw)), "gpu.driver_branch").clone();
+        assert_eq!(f.status, Status::Attention);
+        assert!(f.guided_only && f.fix_tweak_id.is_none());
+        assert!(
+            f.reading.contains("GTX 1060") && f.reading.contains("Pascal"),
+            "{}",
+            f.reading
+        );
+        assert!(f.reading.contains("581.80, dated 2025-08-20"), "{}", f.reading);
+        assert!(f.remedy.unwrap().contains("security updates"));
+    }
+
+    #[test]
+    fn a_current_nvidia_card_is_fine_and_an_unknown_name_is_unknown() {
+        let mut hw = hardware();
+        hw.gpu_drivers = Probe::yes(vec![nvidia("NVIDIA GeForce RTX 4060", Some("581.80"), None)]);
+        let f = get(&scan(&env_with(hw.clone())), "gpu.driver_branch").clone();
+        assert_eq!(f.status, Status::Fine);
+        assert!(f.remedy.is_none());
+        assert!(f.reading.ends_with("Installed driver: 581.80."), "{}", f.reading);
+
+        hw.gpu_drivers = Probe::yes(vec![nvidia("NVIDIA Mystery 9000", None, None)]);
+        let f = get(&scan(&env_with(hw)), "gpu.driver_branch").clone();
+        assert_eq!(f.status, Status::Unknown);
+        assert!(f.reading.contains("Mystery 9000"), "{}", f.reading);
+    }
+
+    #[test]
+    fn other_makers_get_no_driver_finding_and_a_failed_read_is_unknown() {
+        let mut hw = hardware();
+        hw.gpu_drivers = Probe::yes(vec![crate::gpu_driver::GpuDriver {
+            name: "AMD Radeon RX 580".into(),
+            vendor_id: Some(0x1002),
+            driver_version: Some("31.0.21001.45002".into()),
+            nvidia_version: None,
+            driver_date: Some("2024-01-01".into()),
+        }]);
+        assert!(scan(&env_with(hw.clone()))
+            .findings
+            .iter()
+            .all(|f| f.id != "gpu.driver_branch"));
+
+        hw.gpu_drivers = Probe::unknown("WMI timed out");
+        let f = get(&scan(&env_with(hw)), "gpu.driver_branch").clone();
+        assert_eq!(f.status, Status::Unknown);
+        assert!(f.reading.contains("WMI timed out"));
+    }
+
     #[test]
     fn scanner_copy_makes_no_efficacy_claims() {
         let words = crate::copy_lint::claim_words();

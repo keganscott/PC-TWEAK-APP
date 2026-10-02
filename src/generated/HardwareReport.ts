@@ -3,6 +3,7 @@ import type { BootDisk } from "./BootDisk";
 import type { CpuInfo } from "./CpuInfo";
 import type { DisplayInfo } from "./DisplayInfo";
 import type { GpuAdapter } from "./GpuAdapter";
+import type { GpuDriver } from "./GpuDriver";
 import type { MemoryInfo } from "./MemoryInfo";
 import type { OsInfo } from "./OsInfo";
 import type { Probe } from "./Probe";
@@ -12,4 +13,8 @@ export type HardwareReport = { os: Probe<OsInfo>, cpu: Probe<CpuInfo>, memory: P
 /**
  * Real adapters only (software renderers filtered out), largest VRAM first.
  */
-gpus: Probe<Array<GpuAdapter>>, bootDisk: Probe<BootDisk>, display: Probe<DisplayInfo>, isLaptop: Probe<boolean>, rigClass: Probe<RigClass>, };
+gpus: Probe<Array<GpuAdapter>>, 
+/**
+ * The driver on each physical graphics card (`Win32_VideoController`).
+ */
+gpuDrivers: Probe<Array<GpuDriver>>, bootDisk: Probe<BootDisk>, display: Probe<DisplayInfo>, isLaptop: Probe<boolean>, rigClass: Probe<RigClass>, };

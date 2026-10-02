@@ -41,7 +41,10 @@ fn escape(s: &str) -> String {
 
 /// A string is safe to write as a quoted `.reg` string only if it round-trips
 /// exactly (single trailing NUL, valid UTF-16) and has no control characters,
-/// which would break the line. Anything else uses typed hex, which is exact.
+/// which would break the line. Anything else uses typed hex, which carries the
+/// exact bytes. One thing it cannot carry: `reg.exe import` appends a NUL to a
+/// string value stored without one (measured, registry::contract_tests).
+/// In-app Undo restores from the journal and is exact either way.
 fn is_plain_string(v: &RawValue) -> bool {
     v.vtype == 1
         && v.as_sz()

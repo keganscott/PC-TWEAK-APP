@@ -36,6 +36,10 @@ fn samples() -> Vec<(&'static str, RawValue)> {
         ),
         ("SzEmpty", RawValue::sz("")),
         ("ExpandSz", raw(2, utf16z(&[r"%SystemRoot%\System32"]))),
+        (
+            "ExpandSzNoTerminator",
+            raw(2, "%TEMP%".encode_utf16().flat_map(u16::to_le_bytes).collect()),
+        ),
         ("Binary", raw(3, (0..=255u8).collect())),
         ("BinaryEmpty", raw(3, vec![])),
         ("Dword", RawValue::dword(0xDEAD_BEEF)),
@@ -422,12 +426,39 @@ mod real {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
-        assert_eq!(dump(&s.path), before, "reg.exe import restored the exact prior values");
+        // Measured on Windows (CI run 36952824230): reg.exe appends a NUL to a
+        // REG_SZ whose data had none. A .reg file has no way to say "no
+        // terminator", so that one normalisation is accepted, and only for
+        // string values that had no terminator; every other byte must match.
+        // In-app Undo restores from the journal and is exact (test above).
+        let after = dump(&s.path);
+        assert_eq!(
+            after.keys().collect::<Vec<_>>(),
+            before.keys().collect::<Vec<_>>(),
+            "same keys and values"
+        );
+        let mut normalised = Vec::new();
+        for (name, was) in &before {
+            let now = &after[name];
+            if now == was {
+                continue;
+            }
+            let terminated = match (was, now) {
+                (Some((t, b)), Some((t2, b2))) if t == t2 && (*t == 1 || *t == 2) && !b.ends_with(&[0, 0]) => {
+                    *b2 == [b.as_slice(), &[0, 0]].concat()
+                }
+                _ => false,
+            };
+            assert!(terminated, "{name} not restored exactly: was {was:?}, now {now:?}");
+            normalised.push(name.clone());
+        }
+        let values = before.values().filter(|v| v.is_some()).count();
         println!(
-            "reg.exe import: {} backups (HKEY_USERS\\<own sid> form) restored {} values exactly under HKCU\\{}",
+            "reg.exe import: {} backups (HKEY_USERS\\<own sid> form) restored {values} values under HKCU\\{}; \
+             {} byte-exact, NUL terminator added by reg.exe to: {normalised:?}",
             entries.len(),
-            before.values().filter(|v| v.is_some()).count(),
-            s.path
+            s.path,
+            values - normalised.len(),
         );
     }
 }

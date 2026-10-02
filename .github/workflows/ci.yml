@@ -280,8 +280,37 @@ jobs:
             Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
           }
 
-  # Fast cross-OS check: the engine's journal and transaction logic runs against
-  # the in-memory registry, so it is tested on Linux too.
+      # Agent brief Phase 3 "done when": Apply and Undo through the real UI on
+      # the real registry, then registry and journal must agree. A third build,
+      # with dev-stubs (open restore gate, Pro licence: a runner has no System
+      # Restore and the only change it can make is the Pro mouse tweak). Never
+      # uploaded; the shipped exe was uploaded and copied aside above.
+      - name: Apply and Undo end to end on the real registry
+        shell: pwsh
+        run: |
+          npx tauri build --no-bundle --features dev-stubs --config e2e-tauri/tauri.e2e.conf.json
+          # The previous step's WebView2 may still hold debugging port 9222.
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $exe = (Resolve-Path target\release\peaktweaks.exe).Path
+          $app = Start-Process $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          do { Start-Sleep -Seconds 2; try { $null = Invoke-WebRequest http://127.0.0.1:9222/json/version -UseBasicParsing; $up = $true } catch { $up = $false } } until ($up -or (Get-Date) -gt $deadline)
+          if (-not $up) { throw "the dev-stubs test build opened no WebView2 debugging port" }
+          $drv = Start-Process (Join-Path $env:RUNNER_TEMP 'edgedriver\msedgedriver.exe') -ArgumentList '--port=4444' -PassThru
+          Start-Sleep -Seconds 3
+          try {
+            $env:DEBUGGER_ADDRESS = '127.0.0.1:9222'
+            node e2e-tauri/apply-undo.mjs
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
+              throw "apply/undo checks failed"
+            }
+          }
+          finally {
+            Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          }
 
       # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
       # Windows' own connection audit log, a positive control, then 60 s of the
@@ -292,6 +321,8 @@ jobs:
         shell: pwsh
         run: ./scripts/check-no-outbound.ps1 -Exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe') -Seconds 60
 
+  # Fast cross-OS check: the engine's journal and transaction logic runs against
+  # the in-memory registry, so it is tested on Linux too.
   engine-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 20

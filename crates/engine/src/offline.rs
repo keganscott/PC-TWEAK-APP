@@ -90,8 +90,9 @@ pub fn profile_on_windows_drive(image_path: &str, system_drive: &str) -> std::re
         return Err(format!("the profile folder {p} cannot be found offline"));
     }
     // `cmd` reads users.txt in the console's code page, which is unknown
-    // offline, so only plain ASCII survives the trip to reg.exe.
-    if !rest.is_ascii() {
+    // offline, so only plain ASCII survives the trip to reg.exe; and the
+    // script's delayed expansion eats `!` and `^` in a `for` variable.
+    if !rest.is_ascii() || rest.contains('!') || rest.contains('^') {
         return Err(format!(
             "the profile folder {p} has characters the recovery script cannot pass on"
         ));
@@ -425,6 +426,15 @@ mod tests {
         assert!(profile_on_windows_drive("é:\\Users", "C:").is_err());
         assert!(profile_on_windows_drive("%SystemDriveé", "C:").is_err());
         assert!(!looks_like_sid("Sé-1-5"));
+        // recover.cmd runs with delayed expansion on, which eats `!` (and the
+        // `^` before it) in a `for` variable: the hive path would be wrong.
+        assert!(profile_on_windows_drive(r"C:\Users\Bob!", "C:").is_err());
+        assert!(profile_on_windows_drive(r"C:\Users\a^b", "C:").is_err());
+        assert_eq!(
+            profile_on_windows_drive(r"C:\Users\Tom & Jerry (2)", "C:").unwrap(),
+            r"\Users\Tom & Jerry (2)",
+            "quoted in the script, so & and brackets are fine"
+        );
     }
 
     #[test]

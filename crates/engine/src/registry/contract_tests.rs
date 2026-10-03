@@ -663,7 +663,7 @@ mod real {
         let root = tempfile::tempdir().unwrap();
         let w = root.path();
         let config = w.join(r"Windows\System32\config");
-        let profile = w.join(r"Users\pt");
+        let profile = w.join(r"Users\pt & co (2)");
         std::fs::create_dir_all(&config).unwrap();
         std::fs::create_dir_all(&profile).unwrap();
 
@@ -728,7 +728,7 @@ mod real {
         let facts = offline::Facts {
             control_set: Some(1),
             system_drive: "C:".into(),
-            profiles: [(SID.to_owned(), Some(r"C:\Users\pt".to_owned()))].into(),
+            profiles: [(SID.to_owned(), Some(r"C:\Users\pt & co (2)".to_owned()))].into(),
         };
         let plan = offline::plan(&outstanding, &facts);
         assert!(plan.not_covered.is_empty(), "{:?}", plan.not_covered);

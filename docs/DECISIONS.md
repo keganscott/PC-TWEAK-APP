@@ -181,3 +181,16 @@ Not followed: the brief's paths (`src-tauri/src/engine/...`); the engine is its 
 
 Follow-up on 15.17 (Kegan said continue): brief Phase 3 items done without needing his decisions. Every `BlockedCode` has its own guidance (`src/lib/blocked.ts`, typed so a new code fails the build). Home names the recent restore point that unlocked changes and when Windows made it. Apply and Undo run end to end in the real app on the real registry (C25). A "comments are claims" audit of the safety modules (transaction, journal, engine, context, identity, restore, secure_dir, WinRegistry, tweaks, sysprobe): every always/never/only/cannot comment checked against the code; the WinPE claim (fixed in be6f425) was the only false one. Not done: tweak impact on cards (N51), `Tier::Free` (N50), orphaned ids (N49).
 
+
+### 15.18 Offline undo for an install that will not start (Claude)
+
+Agent brief bug 9 left recovery from outside Windows as future work (N48). Choices, and why:
+
+- **Files kept ready, not a script that rewrites at recovery time.** The Windows Recovery Environment has `cmd` and `reg.exe` but no PowerShell, and `cmd` cannot safely rewrite registry paths inside UTF-16 files. So the engine writes `offline\` with paths already remapped to the hive files the script loads (`offline.rs`).
+- **The set is what Undo all would restore, rewritten inside every apply and revert, before the commit record**, like the session file. A committed change therefore always has its offline file, and a reverted one never does (re-importing an undone change's old values could overwrite settings changed since). The cost: a failure to write the set fails that apply or revert, which stays outstanding and can be retried, the same as a journal append failure. A rollback does not refresh it: rollbacks run only before their apply's commit.
+- **All of a change or none of it.** A change with any value in a hive the script does not load (or a profile on another drive, or with non-ASCII characters, which `cmd` cannot pass on) gets no file and is listed in `README.txt`, rather than half an undo.
+- **Keys PeakTweaks created are left in place.** A `.reg` file can only delete a key with everything under it.
+- **The set lives in the protected data folder**, so a standard user cannot plant a file there that the script would later import with full rights.
+- **Order:** files are named `NNN_<tweak>.reg` in Undo-all order and imported by name; inside a file the newest write comes first, so stacked writes end on the oldest prior value, as in-app Undo does.
+
+Tested on Windows CI against hive files made by `reg save` (`recover_cmd_restores_prior_values_in_offline_hive_files`). Never run in the recovery environment itself (N48).

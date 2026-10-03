@@ -13,6 +13,7 @@ pub mod fsutil;
 pub mod game_installs;
 pub mod gpu_driver;
 pub mod hardware;
+pub mod ini;
 pub mod journal;
 pub mod power;
 pub mod probe;

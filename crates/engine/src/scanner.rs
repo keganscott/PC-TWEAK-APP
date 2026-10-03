@@ -20,6 +20,7 @@ use ts_rs::TS;
 
 use super::background::BackgroundLoad;
 use super::game_installs::{on_hard_drive, GameInstall};
+use super::gpu_choice::{GameGpuChoice, GpuPreference};
 use super::gpu_driver::{nvidia_branch, NvidiaBranch, VENDOR_NVIDIA};
 use super::hardware::{ChannelLayout, DiskMedia, HardwareReport};
 use super::power::{PowerPlan, PowerPlanKind};
@@ -121,6 +122,9 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
     if let Some(installs) = &env.game_installs {
         findings.extend(game_drives(installs));
     }
+    if let (Some(hw), Some(choices)) = (&env.hardware, &env.gpu_choices) {
+        findings.extend(gpu_choice(hw, choices));
+    }
     // An SSD to move a game onto: the Windows drive is one.
     let ssd_available = env
         .hardware
@@ -162,7 +166,8 @@ fn fix_by(f: &Finding, sticks: usize, ssd_available: bool) -> FixBy {
         | "os.support"
         | "power.plan"
         | "security.memory_integrity"
-        | "background.load" => FixBy::You,
+        | "background.load"
+        | "gpu.choice" => FixBy::You,
         // `every_rule_says_who_can_fix_it` keeps this unreachable; a release
         // build must not lose the whole scan over a missing entry.
         other => {
@@ -501,6 +506,101 @@ fn game_drives(installs: &[GameInstall]) -> Option<Finding> {
         Status::Fine,
         "Your games are on solid-state drives",
         installs.iter().map(describe).collect::<Vec<_>>().join(" "),
+        None,
+        false,
+    ))
+}
+
+/// Plan 6.2 item 4, read-only half: on a laptop with two graphics chips, which
+/// one Windows is told to run each found game on (`gpu_choice.rs`, VERIFY,
+/// NOTES.md N56). Desktops and single-chip laptops get no finding. "Not set" is
+/// flagged although the graphics driver may already pick the high-performance
+/// chip for a known game: PeakTweaks cannot see the driver's choice.
+fn gpu_choice(hw: &HardwareReport, choices: &[GameGpuChoice]) -> Option<Finding> {
+    const ID: &str = "gpu.choice";
+    const TITLE: &str = "Graphics chip for your games";
+    if choices.is_empty() {
+        return None;
+    }
+    let chips = match &hw.gpus {
+        Probe::Yes { value } if value.len() < 2 => return None,
+        Probe::No { .. } => return None,
+        Probe::Unknown { reason } => {
+            return match hw.is_laptop {
+                Probe::No { .. } | Probe::Yes { value: false } => None,
+                _ => Some(unknown(ID, TITLE, reason)),
+            }
+        }
+        Probe::Yes { value } => value.iter().map(|g| g.name.as_str()).collect::<Vec<_>>().join(", "),
+    };
+    match &hw.is_laptop {
+        Probe::Yes { value: true } => {}
+        Probe::Unknown { reason } => {
+            return Some(unknown(
+                ID,
+                TITLE,
+                &format!("this PC has more than one graphics chip, but whether it is a laptop is unknown: {reason}"),
+            ))
+        }
+        _ => return None,
+    }
+    let unknowns: Vec<String> = choices
+        .iter()
+        .filter_map(|c| match &c.preference {
+            Probe::Unknown { reason } => Some(format!("{}: {reason}", c.name)),
+            _ => None,
+        })
+        .collect();
+    let say = |c: &GameGpuChoice| -> Option<String> {
+        let what = match c.preference.value()? {
+            GpuPreference::NotSet => "no choice saved, so Windows or the graphics driver picks the chip",
+            GpuPreference::LetWindowsDecide => "set to let Windows decide",
+            GpuPreference::PowerSaving => "set to Power saving",
+            GpuPreference::HighPerformance => "set to High performance",
+        };
+        Some(format!("{}: {what}.", c.name))
+    };
+    let lead = format!("This laptop has more than one graphics chip ({chips}).");
+    let not_high: Vec<&GameGpuChoice> = choices
+        .iter()
+        .filter(|c| matches!(c.preference.value(), Some(p) if *p != GpuPreference::HighPerformance))
+        .collect();
+    if !not_high.is_empty() {
+        let mut lines: Vec<String> = not_high.iter().filter_map(|c| say(c)).collect();
+        if !unknowns.is_empty() {
+            lines.push(format!("Could not be read: {}.", unknowns.join("; ")));
+        }
+        let mut f = finding(
+            ID,
+            Status::Attention,
+            "A game is not set to the high-performance graphics chip",
+            format!("{lead} {}", lines.join(" ")),
+            Some(
+                "In Windows Settings > System > Display > Graphics, find the game (add it with Browse if it is \
+                 not listed), open its options and choose High performance. PeakTweaks does not change this \
+                 setting yet.",
+            ),
+            true,
+        );
+        // VERIFY (N56): each Roblox update installs to a new folder.
+        if let (Some(remedy), true) = (f.remedy.as_mut(), not_high.iter().any(|c| c.game_id == "roblox")) {
+            remedy.push_str(
+                " Roblox installs each update in a new folder, so its choice may need setting again after an update.",
+            );
+        }
+        return Some(f);
+    }
+    if !unknowns.is_empty() {
+        return Some(unknown(ID, TITLE, &unknowns.join("; ")));
+    }
+    Some(finding(
+        ID,
+        Status::Fine,
+        "Your games are set to the high-performance graphics chip",
+        format!(
+            "{lead} {}",
+            choices.iter().filter_map(say).collect::<Vec<_>>().join(" ")
+        ),
         None,
         false,
     ))
@@ -1171,6 +1271,141 @@ mod tests {
 
         env.game_installs = Some(vec![]);
         assert!(scan(&env).findings.iter().all(|f| f.id != "games.drive"));
+    }
+
+    fn adapter(name: &str, vram_gib: u64) -> crate::hardware::GpuAdapter {
+        crate::hardware::GpuAdapter {
+            name: name.into(),
+            vendor_id: 0,
+            dedicated_vram_bytes: vram_gib << 30,
+            shared_memory_bytes: 8 << 30,
+            is_software: false,
+        }
+    }
+
+    fn hybrid_laptop() -> HardwareReport {
+        let mut hw = hardware();
+        hw.is_laptop = Probe::yes(true);
+        hw.gpus = Probe::yes(vec![
+            adapter("NVIDIA GeForce RTX 4060 Laptop GPU", 8),
+            adapter("Intel UHD", 0),
+        ]);
+        hw
+    }
+
+    fn choice(name: &str, p: Probe<GpuPreference>) -> GameGpuChoice {
+        GameGpuChoice {
+            game_id: name.to_lowercase(),
+            name: name.into(),
+            exe: Some(format!(r"C:\Games\{name}.exe")),
+            preference: p,
+        }
+    }
+
+    fn gpu_finding(hw: HardwareReport, choices: Vec<GameGpuChoice>) -> Option<Finding> {
+        let mut env = env_with(hw);
+        env.gpu_choices = Some(choices);
+        scan(&env).findings.into_iter().find(|f| f.id == "gpu.choice")
+    }
+
+    #[test]
+    fn a_hybrid_laptop_game_without_the_high_performance_choice_is_flagged_for_the_user() {
+        let f = gpu_finding(
+            hybrid_laptop(),
+            vec![
+                choice("Fortnite", Probe::yes(GpuPreference::NotSet)),
+                choice("Roblox", Probe::yes(GpuPreference::HighPerformance)),
+            ],
+        )
+        .unwrap();
+        assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::You)));
+        assert_eq!(
+            f.reading,
+            "This laptop has more than one graphics chip (NVIDIA GeForce RTX 4060 Laptop GPU, Intel UHD). \
+             Fortnite: no choice saved, so Windows or the graphics driver picks the chip."
+        );
+        assert!(f.remedy.unwrap().contains("High performance"));
+
+        let f = gpu_finding(
+            hybrid_laptop(),
+            vec![
+                choice("Fortnite", Probe::yes(GpuPreference::PowerSaving)),
+                choice("Roblox", Probe::unknown("program file was not found")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(f.status, Status::Attention);
+        assert!(f.reading.contains("Fortnite: set to Power saving."), "{}", f.reading);
+        assert!(
+            f.reading
+                .contains("Could not be read: Roblox: program file was not found."),
+            "{}",
+            f.reading
+        );
+        assert!(
+            !f.remedy.unwrap().contains("Roblox"),
+            "Roblox was not read, so no Roblox advice"
+        );
+
+        let f = gpu_finding(
+            hybrid_laptop(),
+            vec![choice("Roblox", Probe::yes(GpuPreference::NotSet))],
+        )
+        .unwrap();
+        assert!(f
+            .remedy
+            .unwrap()
+            .contains("Roblox installs each update in a new folder"));
+    }
+
+    #[test]
+    fn games_on_the_high_performance_chip_are_fine_and_unread_ones_are_unknown() {
+        let f = gpu_finding(
+            hybrid_laptop(),
+            vec![choice("Fortnite", Probe::yes(GpuPreference::HighPerformance))],
+        )
+        .unwrap();
+        assert_eq!(f.status, Status::Fine);
+        assert!(
+            f.reading.ends_with("Fortnite: set to High performance."),
+            "{}",
+            f.reading
+        );
+
+        let f = gpu_finding(
+            hybrid_laptop(),
+            vec![
+                choice("Fortnite", Probe::yes(GpuPreference::HighPerformance)),
+                choice("Roblox", Probe::unknown("the setting could not be read: denied")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(f.status, Status::Unknown, "one unread game is never rounded to fine");
+        assert!(f.reading.contains("Roblox: the setting could not be read: denied"));
+    }
+
+    #[test]
+    fn desktops_single_chip_laptops_and_no_games_get_no_graphics_choice_finding() {
+        let not_set = || vec![choice("Fortnite", Probe::yes(GpuPreference::NotSet))];
+        let mut desktop = hybrid_laptop();
+        desktop.is_laptop = Probe::no("desktop");
+        assert_eq!(gpu_finding(desktop, not_set()), None);
+
+        let mut one_chip = hybrid_laptop();
+        one_chip.gpus = Probe::yes(vec![adapter("Intel Iris Xe", 0)]);
+        assert_eq!(gpu_finding(one_chip, not_set()), None);
+
+        assert_eq!(gpu_finding(hybrid_laptop(), vec![]), None);
+
+        let mut unsure = hybrid_laptop();
+        unsure.is_laptop = Probe::unknown("chassis not reported");
+        let f = gpu_finding(unsure, not_set()).unwrap();
+        assert_eq!(f.status, Status::Unknown, "a laptop we cannot confirm is not assumed");
+        assert!(f.reading.contains("chassis not reported"));
+
+        let mut no_list = hybrid_laptop();
+        no_list.gpus = Probe::unknown("DXGI failed");
+        assert_eq!(gpu_finding(no_list, not_set()).unwrap().status, Status::Unknown);
     }
 
     #[test]

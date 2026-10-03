@@ -264,6 +264,12 @@ fn audit() -> SystemAudit {
             name: "Example HDD".into(),
         }),
     }]);
+    env.gpu_choices = Some(vec![crate::gpu_choice::GameGpuChoice {
+        game_id: "fortnite".into(),
+        name: "Fortnite".into(),
+        exe: Some(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe".into()),
+        preference: crate::probe::Probe::yes(crate::gpu_choice::GpuPreference::NotSet),
+    }]);
     // The fake answers both process samples with the same rows (no time
     // passes), which reads as unknown; the sample shows a measured case.
     env.background = Some(crate::probe::Probe::yes(crate::background::BackgroundLoad {

@@ -346,6 +346,9 @@ pub struct SystemEnv {
     /// Known games found on this PC and the drive each is on. `None` until
     /// probed; empty when none was found.
     pub game_installs: Option<Vec<crate::game_installs::GameInstall>>,
+    /// The graphics chip Windows is told to run each found game on. `None`
+    /// until probed; games that are not checked are left out.
+    pub gpu_choices: Option<Vec<crate::gpu_choice::GameGpuChoice>>,
 }
 
 impl SystemEnv {

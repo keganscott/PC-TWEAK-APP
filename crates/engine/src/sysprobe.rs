@@ -17,7 +17,7 @@ use super::hardware::RigClass;
 use super::hardware::{probe_hardware, HardwareReport, OsFacts};
 use super::journal::now_ms;
 use super::probe::Probe;
-use super::registry::RegistryBackend;
+use super::registry::{Hive, RegistryBackend};
 use super::restore::RestoreService;
 use super::scanner::{scan, ScanReport};
 use super::security::{anti_cheat_readiness, probe_security, AntiCheatReadiness, SecurityReport};
@@ -78,6 +78,10 @@ pub struct SystemProbe {
     /// known games record their installs (`game_installs.rs`).
     program_data: std::path::PathBuf,
     profile: Option<std::path::PathBuf>,
+    /// The interactive user's hive and the path prefix inside it: `HKCU` and
+    /// nothing when that user is us, else `HKU` and their SID. `None` when the
+    /// user could not be worked out.
+    user_root: Option<(Hive, String)>,
 }
 
 impl SystemProbe {
@@ -98,7 +102,15 @@ impl SystemProbe {
                 .map(Into::into)
                 .unwrap_or_else(|| r"C:\ProgramData".into()),
             profile: interactive_profile(),
+            user_root: interactive_user_root(),
         }
+    }
+
+    /// Tests and fixtures: read per-user settings from this hive and prefix.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_user_root(mut self, root: Option<(Hive, String)>) -> Self {
+        self.user_root = root;
+        self
     }
 
     /// Tests and fixtures: look for game installs under these folders.
@@ -128,6 +140,38 @@ fn interactive_profile() -> Option<std::path::PathBuf> {
 #[cfg(not(windows))]
 fn interactive_profile() -> Option<std::path::PathBuf> {
     None
+}
+
+/// Where the interactive user's own settings are, routed as `ContextResolver`
+/// routes `RegRoot::InteractiveUser`.
+#[cfg(windows)]
+fn interactive_user_root() -> Option<(Hive, String)> {
+    let user = crate::identity::detect_user().ok()?;
+    Some(if user.is_self {
+        (Hive::CurrentUser, String::new())
+    } else {
+        (Hive::Users, user.sid)
+    })
+}
+
+#[cfg(not(windows))]
+fn interactive_user_root() -> Option<(Hive, String)> {
+    None
+}
+
+impl SystemProbe {
+    fn gpu_choices(&self, installs: &[crate::game_installs::GameInstall]) -> Vec<crate::gpu_choice::GameGpuChoice> {
+        let Some((hive, prefix)) = &self.user_root else {
+            return crate::gpu_choice::probe_gpu_choices(installs, None);
+        };
+        let key = if prefix.is_empty() {
+            crate::gpu_choice::KEY.to_owned()
+        } else {
+            format!("{prefix}\\{}", crate::gpu_choice::KEY)
+        };
+        let read = |exe: &str| self.reg.read_value(*hive, &key, exe);
+        crate::gpu_choice::probe_gpu_choices(installs, Some(&read))
+    }
 }
 
 impl EnvProbe for SystemProbe {
@@ -184,6 +228,9 @@ impl EnvProbe for SystemProbe {
             // so it is not cached.
             power_plan: Some(crate::power::probe_power_plan(self.reg.as_ref())),
             background: Some(background),
+            // A few registry reads, and the user may change the setting at any
+            // time, so it is not cached.
+            gpu_choices: Some(self.gpu_choices(&game_installs)),
             game_installs: Some(game_installs),
         }
     }
@@ -304,6 +351,61 @@ mod tests {
             hw_queries_final > hw_queries_after,
             "hardware re-read after invalidate_all"
         );
+    }
+
+    #[test]
+    fn graphics_choices_are_read_from_the_interactive_users_hive() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        // Joined the way `game_installs.rs` joins it, so it also works on Linux.
+        let version = profile.join(r"AppData\Local\Roblox\Versions").join("version-1");
+        std::fs::create_dir_all(&version).unwrap();
+        std::fs::write(version.join("RobloxPlayerBeta.exe"), b"").unwrap();
+        let exe = version
+            .join("RobloxPlayerBeta.exe")
+            .to_string_lossy()
+            .replace('/', "\\");
+
+        let wmi = Arc::new(FakeWmi::new());
+        let reg = Arc::new(FakeRegistry::new());
+        let sid = "S-1-5-21-1-2-3-1001";
+        reg.set_external(
+            Hive::Users,
+            &format!(r"{sid}\{}", crate::gpu_choice::KEY),
+            &exe,
+            crate::types::RawValue::sz("GpuPreference=1;"),
+        );
+        // The same value in our own HKCU must not be what is read.
+        reg.set_external(
+            Hive::CurrentUser,
+            crate::gpu_choice::KEY,
+            &exe,
+            crate::types::RawValue::sz("GpuPreference=2;"),
+        );
+        let restore =
+            Arc::new(RestoreService::new(Arc::new(FakeRestoreOps::new()), reg.clone(), wmi.clone()).without_waiting());
+        let p = SystemProbe::new(wmi, reg, Arc::new(Facts), restore)
+            .with_background_wait(std::time::Duration::ZERO)
+            .with_game_folders(dir.path().join("pd"), Some(profile));
+
+        let read = |p: &SystemProbe| p.probe(true).gpu_choices.unwrap();
+        let p = p.with_user_root(Some((Hive::Users, sid.into())));
+        let choices = read(&p);
+        assert_eq!(choices.len(), 1, "{choices:?}");
+        assert_eq!(choices[0].exe.as_deref(), Some(exe.as_str()));
+        assert_eq!(
+            choices[0].preference,
+            Probe::yes(crate::gpu_choice::GpuPreference::PowerSaving)
+        );
+
+        let p = p.with_user_root(Some((Hive::CurrentUser, String::new())));
+        assert_eq!(
+            read(&p)[0].preference,
+            Probe::yes(crate::gpu_choice::GpuPreference::HighPerformance)
+        );
+
+        let p = p.with_user_root(None);
+        assert!(read(&p)[0].preference.is_unknown(), "no user, no guess");
     }
 
     #[test]

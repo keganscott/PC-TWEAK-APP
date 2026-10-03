@@ -64,7 +64,7 @@ turn System Protection back off (see N23).
 
 | Report section | Notes item | What to look for |
 |---|---|---|
-| `audit` | N22, N41, N42, N43, C14 | The full probe result and the scanner's findings for this PC. Compare memory type, speed, channels, disk type, refresh rate and rig class with what you know the PC has. The Phase 5 gate needs this on three PCs. |
+| `audit` | N22, N41, N42, N43, N53, N54, N56, C14 | The full probe result and the scanner's findings for this PC. Compare memory type, speed, channels, disk type, refresh rate and rig class with what you know the PC has; where Fortnite, Roblox or Minecraft is installed, check `env.gameInstalls` names the right folder and drive, and on a laptop with two graphics chips check `env.gpuChoices` against Settings > System > Display > Graphics. The Phase 5 gate needs this on three PCs. |
 | `powercfgList`, `powercfgActive` | N43 | Windows' own names for each power-plan GUID. They must match the four GUIDs in `crates/engine/src/power.rs`. |
 | `wmiPhysicalMemory` | N22 | The raw `SMBIOSMemoryType`, `Speed`, `ConfiguredClockSpeed`, `BankLabel` and `DeviceLocator` behind the memory reading. |
 | `wmiPhysicalDisks` | N22 | The raw `MediaType` behind the SSD/HDD reading. |

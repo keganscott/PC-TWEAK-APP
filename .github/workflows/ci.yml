@@ -192,7 +192,7 @@ jobs:
       # operations do on a Windows runner. (Runners are Windows Server, where
       # System Restore does not exist, so the restore calls should fail cleanly.)
       - name: Live probes on this runner
-        run: cargo test --workspace live_probe_report -- --nocapture --test-threads=1
+        run: cargo test --workspace -- --nocapture --test-threads=1 live_probe_report spi_getmouse_order
 
       - name: Real restore operations on this runner
         run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1
@@ -226,6 +226,13 @@ jobs:
             if ($null -ne $p.Value.ok) { Write-Host ("{0,-24} ok={1} {2}" -f $p.Name, $p.Value.ok, $p.Value.error) }
           }
           if (-not $r.audit.ok) { throw "the audit section failed in the field check" }
+          # Windows' own names next to the codes we hard-code (N43, N22).
+          Write-Host "--- powercfg /list (N43: GUIDs in power.rs)"
+          Write-Host $r.powercfgList.result.stdout
+          Write-Host "--- MSFT_PhysicalDisk raw rows (N22: MediaType codes in hardware.rs)"
+          Write-Host ($r.wmiPhysicalDisks.result | ConvertTo-Json -Depth 5 -Compress)
+          Write-Host "--- Get-PhysicalDisk, the same disks with Windows' names for MediaType"
+          Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, MediaType, BusType | Format-Table -AutoSize | Out-String | Write-Host
           Copy-Item (Join-Path $out 'report.json') field-check-report.json
 
       # The real app, end to end: release exe, its WebView2 window, the real engine,

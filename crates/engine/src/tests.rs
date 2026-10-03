@@ -1011,3 +1011,57 @@ mod mouse_state {
         );
     }
 }
+
+/// NOTES.md N6: which slot of `SPI_SETMOUSE`'s array is which. Read-only:
+/// Windows loads the session's values from `HKCU\Control Panel\Mouse` at
+/// sign-in, so `SPI_GETMOUSE` lined up against the three named registry
+/// values shows the order whenever the three differ. Prints NOT VERIFIED when
+/// they do not, or when the session no longer matches the registry.
+#[cfg(windows)]
+#[test]
+fn spi_getmouse_order_matches_the_named_registry_values() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETMOUSE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let key = winreg::RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Control Panel\Mouse")
+        .expect("HKCU\\Control Panel\\Mouse exists on every Windows");
+    let read = |name: &str| -> i32 {
+        let s: String = key.get_value(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+        s.trim().parse().unwrap_or_else(|e| panic!("{name}={s:?}: {e}"))
+    };
+    let named = [read("MouseThreshold1"), read("MouseThreshold2"), read("MouseSpeed")];
+
+    let mut live = [0i32; 3];
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETMOUSE,
+            0,
+            Some(live.as_mut_ptr() as *mut core::ffi::c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .expect("SPI_GETMOUSE");
+    }
+    let distinct = named[0] != named[1] && named[1] != named[2] && named[0] != named[2];
+    let mut sorted_live = live;
+    let mut sorted_named = named;
+    sorted_live.sort();
+    sorted_named.sort();
+    if !distinct || sorted_live != sorted_named {
+        println!(
+            "SPI_GETMOUSE order NOT VERIFIED: registry [MouseThreshold1, MouseThreshold2, MouseSpeed] = {named:?}, \
+             SPI_GETMOUSE = {live:?} (values not distinct, or the session differs from the registry)"
+        );
+        return;
+    }
+    assert_eq!(
+        live, named,
+        "SPI_GETMOUSE is not [MouseThreshold1, MouseThreshold2, MouseSpeed]: push_live's order is wrong"
+    );
+    println!(
+        "SPI_GETMOUSE = {live:?} = registry [MouseThreshold1, MouseThreshold2, MouseSpeed]: \
+         the array is [threshold1, threshold2, acceleration] (VERIFIED on this Windows)"
+    );
+}

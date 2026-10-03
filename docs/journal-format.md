@@ -78,6 +78,15 @@ Revert refuses a user-hive write recorded for a different account than the one P
 
 ## Recovering by hand
 
-If PeakTweaks cannot run, start the installed Windows in Safe Mode and import the change's `session_<tx>_<tweak>.reg` (double-click it, or `reg import <file>`), newest change first. Do not do this from WinPE: there `HKLM\SYSTEM` and `HKEY_USERS` are WinPE's own, so the import changes WinPE rather than the broken install. Recovering an install that will not boot at all needs a script that loads its offline hives and remaps the paths; that is not built (NOTES.md N48).
+If PeakTweaks cannot run but Windows starts in Safe Mode, import the change's `session_<tx>_<tweak>.reg` (double-click it, or `reg import <file>`), newest change first. Do not import those from the Windows Recovery Environment or WinPE: there `HKLM\SYSTEM` and `HKEY_USERS` are the recovery system's own, so the import changes it rather than the broken install.
+
+For an installation that will not start at all, use `offline\` (`offline.rs`):
+
+- `offline\NNN_<tweak>.reg`: one file per change that is still applied, numbered in the order Undo all uses (most recent first). Paths point at the installation's hive files loaded under temporary names: `HKEY_LOCAL_MACHINE\PT_OFFLINE_SYSTEM\ControlSet00<n>` for `SYSTEM\CurrentControlSet` (`<n>` read from `SYSTEM\Select\Current` when the change was made), `PT_OFFLINE_SYSTEM` / `PT_OFFLINE_SOFTWARE` for the rest of those hives, `PT_OFFLINE_<sid>` for a user's `NTUSER.DAT`.
+- `offline\users.txt`: `<sid>|<profile folder without the drive>` for each user hive the files need.
+- `offline\recover.cmd`: loads `Windows\System32\config\SYSTEM` and `SOFTWARE` and each user's `NTUSER.DAT` from its own drive (or the folder given as its argument), imports the files in name order, and unloads every hive it loaded, also after a failure. It refuses a running Windows (the hives are in use) and a drive with no Windows on it.
+- `offline\README.txt`: the steps, and any change the script does not cover, with why.
+
+The set is rewritten inside every apply and revert, before its commit record, so it always matches what Undo all would restore once that commit is written. Not covered: keys PeakTweaks created are left in place, empty (a `.reg` file can only delete a key with everything under it); changes in other hives (only `SYSTEM`, `SOFTWARE` and users' own settings are loaded); a profile folder on another drive than Windows, or with non-ASCII characters in its path (`cmd` reads `users.txt` in an unknown code page). After an apply interrupted by a crash, the set catches up at the next apply or revert. After a recovery, PeakTweaks still lists the changes as applied; Undo there finishes the record.
 
 One known difference: `reg.exe` adds a NUL terminator to a string value that was stored without one (NOTES-closed C22). In-app undo restores the exact bytes.

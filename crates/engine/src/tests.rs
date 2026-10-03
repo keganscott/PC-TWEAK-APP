@@ -182,6 +182,52 @@ fn each_applied_change_gets_one_session_reg_in_restore_order() {
 }
 
 #[test]
+fn the_offline_undo_set_follows_every_apply_and_revert() {
+    const KEY2: &str = r"SOFTWARE\PeakTest\Other";
+    let mut h = Harness::new(vec![
+        Box::new(TestTweak::new("first", KEY, &[("A", 1)])),
+        Box::new(TestTweak::new("second", KEY2, &[("B", 2)])),
+    ]);
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(5));
+    let offline = h.dir.path().join(crate::offline::DIR);
+    let reg_files = || -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = std::fs::read_dir(&offline)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "reg"))
+            .map(|p| {
+                let bytes = std::fs::read(&p).unwrap();
+                let units: Vec<u16> = bytes[2..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                (
+                    p.file_name().unwrap().to_string_lossy().into_owned(),
+                    String::from_utf16(&units).unwrap(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+
+    h.engine.apply("first").unwrap();
+    h.engine.apply("second").unwrap();
+    let files = reg_files();
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["001_second.reg", "002_first.reg"], "Undo all order");
+    assert!(files[1]
+        .1
+        .contains("[HKEY_LOCAL_MACHINE\\PT_OFFLINE_SOFTWARE\\PeakTest\\Sched]\r\n\"A\"=dword:00000005"));
+    assert!(files[0].1.contains("\"B\"=-"), "B did not exist: deleted");
+    assert!(offline.join("recover.cmd").is_file());
+
+    h.engine.revert("second").unwrap();
+    let names: Vec<String> = reg_files().into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["001_first.reg"], "a reverted change leaves the set");
+
+    h.engine.revert("first").unwrap();
+    assert!(reg_files().is_empty());
+}
+
+#[test]
 fn double_apply_still_reverts_to_the_state_before_the_first() {
     let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
     h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(5));

@@ -20,7 +20,9 @@
 //!    write first). The recovery path when PeakTweaks cannot run is Safe Mode
 //!    on the installed Windows: import the session file there. Not WinPE: its
 //!    `HKLM\SYSTEM` and `HKEY_USERS` are WinPE's own, so importing there
-//!    changes WinPE, not the broken install (NOTES.md N48).
+//!    changes WinPE, not the broken install. For an install that will not
+//!    start, `offline\recover.cmd` loads its hive files and imports remapped
+//!    copies (`offline.rs`; never yet run in WinRE, NOTES.md N48).
 //!
 //! 4. **A damaged journal degrades, it does not vanish.** A torn final line
 //!    (crash mid-append) is cut off at open and kept in a side file. A bad line
@@ -510,7 +512,7 @@ pub fn now_ms() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::types::ExecutionContext;
 

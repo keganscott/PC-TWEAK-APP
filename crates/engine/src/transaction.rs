@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use super::context::ContextResolver;
 use super::error::{EngineError, Result};
 use super::journal::{now_ms, CommitAction, CommitRecord, Journal, JournalAction, JournalEntry};
+use super::offline;
 use super::reg_export::{write_reg_backup, write_session_backup};
 use super::registry::{components, is_ancestor_or_equal, path_eq};
 use super::types::{ExecutionContext, RawValue, RegRoot, RegTarget, Tweak};
@@ -181,6 +182,9 @@ impl<'a> Transaction<'a> {
             let stem = format!("session_{}_{}", self.tx_id, sanitise(&self.tweak_id));
             write_session_backup(&self.session_dir, &stem, &values)?;
         }
+        // The offline undo set (offline.rs), as it must be once this commit is
+        // written. Also before the commit, so a committed change always has it.
+        self.refresh_offline()?;
         let action = match self.action {
             JournalAction::Apply => CommitAction::Apply,
             JournalAction::Revert => CommitAction::Revert,
@@ -220,6 +224,50 @@ impl<'a> Transaction<'a> {
     }
 
     // ---- internals --------------------------------------------------------
+
+    /// Rewrite `offline\` to what "Undo all" would restore after this commit:
+    /// every tweak's outstanding applies, except this tweak's when this is a
+    /// revert (its commit closes them all). A rollback needs no refresh: it
+    /// only runs before its apply's commit, which is what would have added it.
+    fn refresh_offline(&self) -> Result<()> {
+        let outstanding: Vec<(String, Vec<JournalEntry>)> = self
+            .journal
+            .applied_tweaks_newest_first()
+            .into_iter()
+            .filter(|id| !(self.action == JournalAction::Revert && *id == self.tweak_id))
+            .map(|id| {
+                let writes = self.journal.outstanding(&id).to_vec();
+                (id, writes)
+            })
+            .collect();
+        let mut facts = offline::Facts {
+            control_set: self
+                .resolver
+                .read_dword(RegRoot::LocalMachine, r"SYSTEM\Select", "Current")
+                .ok()
+                .flatten(),
+            system_drive: std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()),
+            profiles: Default::default(),
+        };
+        for e in outstanding.iter().flat_map(|(_, w)| w) {
+            if let Some(sid) = e
+                .display_path
+                .strip_prefix("HKEY_USERS\\")
+                .and_then(|r| r.split('\\').next())
+            {
+                if !facts.profiles.contains_key(sid) {
+                    let key = format!(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}");
+                    let image = self
+                        .resolver
+                        .read_string(RegRoot::LocalMachine, &key, "ProfileImagePath")
+                        .ok()
+                        .flatten();
+                    facts.profiles.insert(sid.to_owned(), image);
+                }
+            }
+        }
+        offline::refresh(self.journal.root(), &offline::plan(&outstanding, &facts))
+    }
 
     /// A per-user change is undone in the hive it was made in. The current
     /// interactive user may be someone else now (a different sign-in, alternate

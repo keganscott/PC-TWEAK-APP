@@ -627,4 +627,175 @@ mod real {
             s.path
         );
     }
+
+    /// The offline undo set (offline.rs) on hive *files*, as the recovery
+    /// environment would meet them: build a SYSTEM, SOFTWARE and NTUSER.DAT
+    /// with `reg save`, write the set for changes in all three, run
+    /// `recover.cmd` against that folder, then load the files again and
+    /// require the prior values. Also: the script refuses this running
+    /// Windows, and a folder with no Windows in it.
+    #[test]
+    fn recover_cmd_restores_prior_values_in_offline_hive_files() {
+        use crate::journal::JournalAction;
+        use crate::offline;
+
+        fn reg(args: &[&str]) -> std::process::Output {
+            Command::new("reg.exe").args(args).output().unwrap()
+        }
+        fn ok(out: &std::process::Output) -> String {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(out.status.success(), "{text}");
+            text
+        }
+        /// Unloads on drop, so a failed assertion does not leave a hive loaded.
+        struct Loaded(String);
+        impl Drop for Loaded {
+            fn drop(&mut self) {
+                let _ = Command::new("reg.exe").args(["unload", &self.0]).output();
+            }
+        }
+
+        let s = Scratch::new("offline");
+        let root = tempfile::tempdir().unwrap();
+        let w = root.path();
+        let config = w.join(r"Windows\System32\config");
+        let profile = w.join(r"Users\pt");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(&profile).unwrap();
+
+        // The "applied" state, saved as three hive files.
+        let sys = format!(r"{}\sys", s.path);
+        let soft = format!(r"{}\soft", s.path);
+        let user = format!(r"{}\user", s.path);
+        seed(&format!(r"{sys}\Select"), "Current", RawValue::dword(1));
+        seed(&format!(r"{sys}\ControlSet001\Control\PTTest"), "V", RawValue::dword(9));
+        seed(&format!(r"{soft}\PTTest"), "S", RawValue::sz("applied"));
+        seed(&format!(r"{soft}\PTTest"), "Added", RawValue::dword(1));
+        seed(&format!(r"{user}\Control Panel\PTTest"), "U", RawValue::sz("applied"));
+        for (key, file) in [
+            (&sys, config.join("SYSTEM")),
+            (&soft, config.join("SOFTWARE")),
+            (&user, profile.join("NTUSER.DAT")),
+        ] {
+            ok(&reg(&["save", &format!(r"HKCU\{key}"), file.to_str().unwrap(), "/y"]));
+        }
+
+        // What the journal would hold for changes that made that state.
+        const SID: &str = "S-1-5-21-1000-2000-3000-4242";
+        let write = |seq: u64, tweak: &str, path: &str, name: &str, previous: Option<RawValue>| {
+            let mut e = crate::journal::tests::entry(seq, seq, tweak, JournalAction::Apply);
+            e.display_path = path.into();
+            e.value_name = name.into();
+            e.previous = previous;
+            e
+        };
+        let outstanding = vec![
+            (
+                "t.user".to_owned(),
+                vec![write(
+                    5,
+                    "t.user",
+                    &format!(r"HKEY_USERS\{SID}\Control Panel\PTTest"),
+                    "U",
+                    Some(RawValue::sz("before")),
+                )],
+            ),
+            (
+                "t.machine".to_owned(),
+                vec![
+                    write(
+                        1,
+                        "t.machine",
+                        r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\PTTest",
+                        "V",
+                        Some(RawValue::dword(3)),
+                    ),
+                    write(
+                        2,
+                        "t.machine",
+                        r"HKEY_LOCAL_MACHINE\SOFTWARE\PTTest",
+                        "S",
+                        Some(RawValue::sz("before")),
+                    ),
+                    write(3, "t.machine", r"HKEY_LOCAL_MACHINE\SOFTWARE\PTTest", "Added", None),
+                ],
+            ),
+        ];
+        let facts = offline::Facts {
+            control_set: Some(1),
+            system_drive: "C:".into(),
+            profiles: [(SID.to_owned(), Some(r"C:\Users\pt".to_owned()))].into(),
+        };
+        let plan = offline::plan(&outstanding, &facts);
+        assert!(plan.not_covered.is_empty(), "{:?}", plan.not_covered);
+        let data = w.join(r"ProgramData\PeakTweaks");
+        offline::refresh(&data, &plan).unwrap();
+        let script = data.join(offline::DIR).join("recover.cmd");
+
+        let run = |arg: &Path| Command::new(&script).arg(arg).output().unwrap();
+        let out = run(w);
+        let text = ok(&out);
+
+        let mounts = [
+            ("HKLM\\PTCHECK_SYSTEM", config.join("SYSTEM")),
+            ("HKLM\\PTCHECK_SOFTWARE", config.join("SOFTWARE")),
+            ("HKLM\\PTCHECK_USER", profile.join("NTUSER.DAT")),
+        ];
+        let mut loaded = Vec::new();
+        for (name, file) in &mounts {
+            ok(&reg(&["load", name, file.to_str().unwrap()]));
+            loaded.push(Loaded((*name).to_owned()));
+        }
+        let r = WinRegistry::new();
+        let get = |path: &str, name: &str| r.read_value(super::Hive::LocalMachine, path, name).unwrap();
+        assert_eq!(
+            get(r"PTCHECK_SYSTEM\ControlSet001\Control\PTTest", "V"),
+            Some(RawValue::dword(3))
+        );
+        assert_eq!(
+            get(r"PTCHECK_SYSTEM\Select", "Current"),
+            Some(RawValue::dword(1)),
+            "the rest is untouched"
+        );
+        assert_eq!(
+            get(r"PTCHECK_SOFTWARE\PTTest", "S").and_then(|v| v.as_sz()).as_deref(),
+            Some("before")
+        );
+        assert_eq!(
+            get(r"PTCHECK_SOFTWARE\PTTest", "Added"),
+            None,
+            "a value the change added is deleted"
+        );
+        assert_eq!(
+            get(r"PTCHECK_USER\Control Panel\PTTest", "U")
+                .and_then(|v| v.as_sz())
+                .as_deref(),
+            Some("before")
+        );
+        drop(loaded);
+
+        // Every hive the script loaded was unloaded again.
+        for mount in ["PT_OFFLINE_SYSTEM", "PT_OFFLINE_SOFTWARE", &format!("PT_OFFLINE_{SID}")] {
+            assert!(
+                !r.key_exists(super::Hive::LocalMachine, mount).unwrap(),
+                "{mount} left loaded"
+            );
+        }
+
+        // This Windows is running: its SYSTEM hive is in use and is refused.
+        let live = run(Path::new("C:"));
+        assert_eq!(live.status.code(), Some(3), "{}", String::from_utf8_lossy(&live.stdout));
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(run(empty.path()).status.code(), Some(2));
+
+        println!(
+            "recover.cmd on hive files saved by reg.exe: {} files imported, 4 values restored, all hives \
+             unloaded; refused the running Windows (exit 3) and a folder without Windows (exit 2). Output:\n{text}",
+            plan.files.len()
+        );
+    }
 }

@@ -16,8 +16,11 @@ export default defineConfig({
     trace: "retain-on-failure",
     launchOptions: executablePath ? { executablePath } : {},
   },
+  // Plan section 7: 1366x768 at 100%, 125% and 150% Windows scaling. The
+  // viewport is the screen divided by the scale, rounded.
   projects: [
     { name: "1366x768", use: { ...devices["Desktop Chrome"], viewport: { width: 1366, height: 768 } } },
+    { name: "1366x768 at 125%", use: { ...devices["Desktop Chrome"], viewport: { width: 1093, height: 614 }, deviceScaleFactor: 1.25 } },
     { name: "1366x768 at 150%", use: { ...devices["Desktop Chrome"], viewport: { width: 911, height: 512 }, deviceScaleFactor: 1.5 } },
   ],
   webServer: {

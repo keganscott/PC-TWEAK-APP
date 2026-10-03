@@ -36,6 +36,34 @@ test("every screen loads and passes an accessibility scan", async ({ page }) => 
   }
 });
 
+// Plan section 7 asks for 1366x768 at 125% and 150% scaling. Loading is not
+// enough: a screen that only fits by scrolling sideways hides its controls.
+// The page itself never scrolls (`main` does), and `overflow-y: auto` makes
+// `overflow-x` auto too, so every scroll container is measured, not just the
+// document. Nothing in the UI is meant to scroll sideways.
+test("no screen scrolls sideways and the main navigation stays in view", async ({ page }) => {
+  const sideways = () =>
+    page.evaluate(() => {
+      const page = document.scrollingElement ?? document.documentElement;
+      const scrollers = Array.from(document.querySelectorAll<HTMLElement>("body *")).filter((el) =>
+        ["auto", "scroll"].includes(getComputedStyle(el).overflowX),
+      );
+      return [page, ...scrollers]
+        .filter((el) => el.scrollWidth > el.clientWidth)
+        .map((el) => `<${el.tagName.toLowerCase()}> ${el.scrollWidth - el.clientWidth}px too wide`);
+    });
+  const screens = ["Home", "Games", "Tools", "Proof", "Backups"];
+
+  await open(page);
+  for (const name of screens) {
+    if (name !== "Home") await nav(page, name);
+    expect(await sideways(), `${name} scrolls sideways`).toEqual([]);
+    for (const item of screens) {
+      await expect(page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: item })).toBeInViewport();
+    }
+  }
+});
+
 test("changes stay locked until a restore point exists, then apply and undo", async ({ page }) => {
   await open(page);
   await nav(page, "Tools");

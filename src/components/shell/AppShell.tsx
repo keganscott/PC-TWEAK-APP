@@ -25,7 +25,7 @@ export function AppShell({
   const toggleBus = useCallback(() => setBusOpen((o) => !o), []);
   return (
     <NavContext.Provider value={onNavigate}>
-      <div className="flex h-full">
+      <div className="flex h-full print:block print:h-auto">
         <nav aria-label="Main" className="flex w-52 shrink-0 flex-col border-r border-line bg-surface-1">
           <div className="flex h-14 items-center gap-2 border-b border-line px-5">
             <span aria-hidden className="size-2.5 rounded-full bg-accent" />
@@ -56,7 +56,7 @@ export function AppShell({
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar onOpenSettings={onOpenSettings} busOpen={busOpen} onToggleBus={toggleBus} />
-          <main className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
+          <main className="min-h-0 flex-1 overflow-y-auto px-8 py-7 print:overflow-visible print:p-0">
             <RefreshBanner />
             {children}
           </main>

@@ -96,3 +96,16 @@ test("settings switch to technical wording and show registry targets", async ({ 
   await nav(page, "Tools");
   await expect(page.getByText(/HKEY_LOCAL_MACHINE\\SOFTWARE\\PeakTweaks\\Sample/).first()).toBeVisible();
 });
+
+test("a printed scan has no app chrome, keeps every finding and says it is SAMPLE data", async ({ page }) => {
+  await open(page);
+  await expect(page.getByRole("heading", { name: /^You can fix/ })).toBeVisible();
+  await page.emulateMedia({ media: "print" });
+  await expect(page.getByRole("navigation", { name: "Main" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Print this scan" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: /^You can fix/ })).toBeVisible();
+  await expect(page.getByText("SAMPLE: demo data, not this PC.")).toBeVisible();
+  // Light on paper: the page background is white, not the dark theme.
+  const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  expect(bg).toBe("rgb(255, 255, 255)");
+});

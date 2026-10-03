@@ -46,3 +46,34 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Printing a scan (plan 6.4: a plain-language scan parents can print). Light
+   colours on paper, no app chrome or controls, and the page flows instead of
+   scrolling inside the window. */
+@media print {
+  :root {
+    --color-surface-0: #ffffff;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #f2f4f7;
+    --color-surface-3: #e6e9ee;
+    --color-line: #b9c2cf;
+    --color-ink: #000000;
+    --color-ink-muted: #2b3440;
+    --color-ink-faint: #4a5563;
+    --color-ok: #146c4b;
+    --color-warn: #8a5300;
+    --color-bad: #a3241f;
+    --color-info: #1d5a99;
+    --color-sample: #6b2fa0;
+  }
+  html,
+  body,
+  #root {
+    height: auto;
+  }
+  nav[aria-label="Main"],
+  #execution-bus,
+  button {
+    display: none !important;
+  }
+}

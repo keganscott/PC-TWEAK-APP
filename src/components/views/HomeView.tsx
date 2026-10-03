@@ -1,6 +1,9 @@
-import { RefreshCw, ShieldPlus } from "lucide-react";
+import { Printer, RefreshCw, ShieldPlus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 
 import type { Finding } from "../../generated/Finding";
+import type { FixBy } from "../../generated/FixBy";
 import type { SystemAudit } from "../../generated/SystemAudit";
 import type { BusEntry, State } from "../../store/store";
 import { explain } from "../../lib/errors";
@@ -204,27 +207,82 @@ const STATUS: Record<Finding["status"], { tone: Tone; label: string }> = {
   fine: { tone: "ok", label: "Fine" },
 };
 
+/** Who can act on a finding (plan 6.4: "fixed by us / fixable by you / needs
+ * hardware"). The engine decides it; the UI only groups. */
+const FIX_GROUPS: { by: FixBy; title: string; blurb: string }[] = [
+  { by: "us", title: "PeakTweaks can fix", blurb: "One click each, recorded and undoable from Backups." },
+  { by: "you", title: "You can fix", blurb: "Settings you change yourself. Each one says where." },
+  {
+    by: "hardware",
+    title: "Needs different hardware",
+    blurb: "Only a hardware change alters these. PeakTweaks does not push purchases.",
+  },
+];
+
 function Findings({ findings }: { findings: Finding[] }) {
-  const open = findings.filter((f) => f.status !== "fine");
+  const unknown = findings.filter((f) => f.status === "unknown");
   const fine = findings.filter((f) => f.status === "fine");
+  const attention = findings.filter((f) => f.status === "attention");
+  // The top bar, which labels demo data, does not print; the printout says it.
+  const sample = useStore((s) => s.sample);
+  // "What is already right" is folded on screen, but a printed scan must show
+  // all of it: open it for printing, whether from the button or Ctrl+P.
+  const [fineOpen, setFineOpen] = useState(false);
+  useEffect(() => {
+    const open = () => flushSync(() => setFineOpen(true));
+    window.addEventListener("beforeprint", open);
+    return () => window.removeEventListener("beforeprint", open);
+  }, []);
+  const print = () => {
+    flushSync(() => setFineOpen(true));
+    window.print();
+  };
+
   return (
     <>
       <section aria-labelledby="findings-title">
-        <h2 id="findings-title" className="mb-3 text-lg font-semibold">
-          What the scan found
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 id="findings-title" className="text-lg font-semibold">
+            What the scan found
+          </h2>
+          {findings.length > 0 && (
+            <Button variant="ghost" className="print:hidden" icon={<Printer aria-hidden className="size-4" />} onClick={print}>
+              Print this scan
+            </Button>
+          )}
+        </div>
+        <p className="mb-3 hidden text-sm print:block">
+          PeakTweaks scan, printed {formatDateTime(Date.now())}.
+          {sample && <strong> SAMPLE: demo data, not this PC.</strong>}
+        </p>
         {findings.length === 0 && <p className="text-sm text-ink-muted">This PC has not been checked yet.</p>}
-        {findings.length > 0 && open.length === 0 && <p className="text-sm text-ink-muted">Nothing needs a look.</p>}
-        <ul className="flex flex-col gap-3">
-          {open.map((f) => (
-            <li key={f.id}>
-              <FindingCard finding={f} />
-            </li>
-          ))}
-        </ul>
+        {findings.length > 0 && attention.length === 0 && unknown.length === 0 && (
+          <p className="text-sm text-ink-muted">Nothing needs a look.</p>
+        )}
+        <div className="flex flex-col gap-5">
+          {FIX_GROUPS.map(({ by, title, blurb }) => {
+            const list = attention.filter((f) => f.fixBy === by);
+            if (list.length === 0) return null;
+            return (
+              <FindingGroup key={by} id={`fix-${by}`} title={`${title} (${list.length})`} blurb={blurb} findings={list} />
+            );
+          })}
+          {unknown.length > 0 && (
+            <FindingGroup
+              id="fix-unknown"
+              title={`Could not tell (${unknown.length})`}
+              blurb="PeakTweaks could not read these. Each says why."
+              findings={unknown}
+            />
+          )}
+        </div>
       </section>
       {fine.length > 0 && (
-        <details className="group rounded-lg border border-line bg-surface-1 p-5">
+        <details
+          open={fineOpen}
+          onToggle={(e) => setFineOpen(e.currentTarget.open)}
+          className="group rounded-lg border border-line bg-surface-1 p-5"
+        >
           <summary className="cursor-pointer font-semibold">What is already right ({fine.length})</summary>
           <ul className="mt-3 flex flex-col gap-3">
             {fine.map((f) => (
@@ -239,14 +297,32 @@ function Findings({ findings }: { findings: Finding[] }) {
   );
 }
 
-function FindingCard({ finding }: { finding: Finding }) {
-  const { tone, label } = STATUS[finding.status];
+function FindingGroup({ id, title, blurb, findings }: { id: string; title: string; blurb: string; findings: Finding[] }) {
   return (
-    <Card className="p-4">
+    <section aria-labelledby={id}>
+      <h3 id={id} className="font-semibold">
+        {title}
+      </h3>
+      <p className="mb-2 text-sm text-ink-muted">{blurb}</p>
+      <ul className="flex flex-col gap-3">
+        {findings.map((f) => (
+          <li key={f.id}>
+            <FindingCard finding={f} nested />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function FindingCard({ finding, nested = false }: { finding: Finding; nested?: boolean }) {
+  const { tone, label } = STATUS[finding.status];
+  const Title = nested ? "h4" : "h3";
+  return (
+    <Card className="p-4 print:break-inside-avoid">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{finding.title}</h3>
+        <Title className="font-medium">{finding.title}</Title>
         <StatusBadge tone={tone}>{label}</StatusBadge>
-        {finding.guidedOnly && finding.status === "attention" && <StatusBadge tone="info">You do this one</StatusBadge>}
       </div>
       <p className="mt-2 text-sm text-ink-muted">{finding.reading}</p>
       {finding.remedy && <p className="mt-2 text-sm">{finding.remedy}</p>}

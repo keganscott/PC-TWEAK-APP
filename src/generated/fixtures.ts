@@ -502,7 +502,8 @@ export const systemAudit = {
         "reading": "2 of 2 module(s) run below their rated speed (for example 2400 of 3200 MT/s).",
         "remedy": "Many motherboards ship with the memory profile (XMP or EXPO) switched off. It is a BIOS setting you change yourself; PeakTweaks does not write to the BIOS. If the PC does not start after changing it, your motherboard manual explains how to reset the BIOS. Some modules report the same number for both, in which case this check cannot see the difference.",
         "guidedOnly": true,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": "you"
       },
       {
         "id": "display.refresh_rate",
@@ -511,7 +512,8 @@ export const systemAudit = {
         "reading": "Running at 60 Hz; this display offers 144 Hz at 1920x1080.",
         "remedy": "Windows Settings > System > Display > Advanced display lets you choose the refresh rate.",
         "guidedOnly": true,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": "you"
       },
       {
         "id": "gpu.driver_branch",
@@ -520,7 +522,8 @@ export const systemAudit = {
         "reading": "Could not be read: the card name \"Example GPU\" is not one PeakTweaks knows, so it cannot tell whether NVIDIA still releases new game drivers for it",
         "remedy": null,
         "guidedOnly": false,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": null
       },
       {
         "id": "power.plan",
@@ -529,7 +532,8 @@ export const systemAudit = {
         "reading": "Could not be read: Windows has not recorded an active power plan",
         "remedy": null,
         "guidedOnly": false,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": null
       },
       {
         "id": "memory.channels",
@@ -538,7 +542,8 @@ export const systemAudit = {
         "reading": "2 memory modules found across more than one channel.",
         "remedy": null,
         "guidedOnly": false,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": null
       },
       {
         "id": "storage.boot_disk",
@@ -547,7 +552,8 @@ export const systemAudit = {
         "reading": "The drive Windows runs from (Example NVMe) is not a hard disk drive.",
         "remedy": null,
         "guidedOnly": false,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": null
       },
       {
         "id": "os.support",
@@ -556,7 +562,8 @@ export const systemAudit = {
         "reading": "Microsoft Windows 11 Pro (build 26100).",
         "remedy": null,
         "guidedOnly": false,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": null
       },
       {
         "id": "security.memory_integrity",
@@ -565,7 +572,8 @@ export const systemAudit = {
         "reading": "Windows reports Memory Integrity (core isolation) is enabled.",
         "remedy": null,
         "guidedOnly": false,
-        "fixTweakId": null
+        "fixTweakId": null,
+        "fixBy": null
       }
     ]
   },

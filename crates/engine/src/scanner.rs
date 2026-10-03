@@ -40,6 +40,20 @@ pub enum Status {
     Unknown,
 }
 
+/// Who can act on a finding, for the plain-language Starter scan (plan 6.4:
+/// "fixed by us / fixable by you / needs hardware").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum FixBy {
+    /// PeakTweaks has a one-click fix (`fix_tweak_id`).
+    Us,
+    /// A setting the user changes: Windows, the display, the BIOS.
+    You,
+    /// Only different or extra hardware changes it.
+    Hardware,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +71,8 @@ pub struct Finding {
     pub guided_only: bool,
     /// The tweak that fixes it in one click, when one exists.
     pub fix_tweak_id: Option<String>,
+    /// Set on every `Attention` finding, `None` otherwise.
+    pub fix_by: Option<FixBy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -97,6 +113,14 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
     if let Some(sec) = &env.security {
         findings.push(memory_integrity(&sec.memory_integrity));
     }
+    let sticks = env
+        .hardware
+        .as_ref()
+        .and_then(|hw| hw.memory.value())
+        .map_or(0, |m| m.sticks.len());
+    for f in findings.iter_mut().filter(|f| f.status == Status::Attention) {
+        f.fix_by = Some(fix_by(f, sticks));
+    }
     // Stable sort: rule order survives inside each status group.
     findings.sort_by_key(|f| match f.status {
         Status::Attention => 0,
@@ -104,6 +128,30 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
         Status::Fine => 2,
     });
     ScanReport { findings }
+}
+
+/// Who can act on an `Attention` finding. Kept in one place so the Starter
+/// grouping cannot drift from the remedies the rules give.
+fn fix_by(f: &Finding, sticks: usize) -> FixBy {
+    if f.fix_tweak_id.is_some() {
+        return FixBy::Us;
+    }
+    match f.id.as_str() {
+        // Two or more modules on one channel can be moved; one module cannot.
+        "memory.channels" if sticks >= 2 => FixBy::You,
+        "memory.channels" | "storage.boot_disk" | "gpu.driver_branch" => FixBy::Hardware,
+        // XMP/EXPO, refresh rate, Windows version, power plan, Memory Integrity:
+        // settings the user changes.
+        "memory.speed" | "display.refresh_rate" | "os.support" | "power.plan" | "security.memory_integrity" => {
+            FixBy::You
+        }
+        // `every_rule_says_who_can_fix_it` keeps this unreachable; a release
+        // build must not lose the whole scan over a missing entry.
+        other => {
+            debug_assert!(false, "scanner rule {other} has no fix_by entry; add one");
+            FixBy::You
+        }
+    }
 }
 
 fn finding(id: &str, status: Status, title: &str, reading: String, remedy: Option<&str>, guided_only: bool) -> Finding {
@@ -115,6 +163,7 @@ fn finding(id: &str, status: Status, title: &str, reading: String, remedy: Optio
         remedy: remedy.map(str::to_owned),
         guided_only,
         fix_tweak_id: None,
+        fix_by: None,
     }
 }
 
@@ -800,6 +849,69 @@ mod tests {
         let f = get(&scan(&env_with(hw)), "gpu.driver_branch").clone();
         assert_eq!(f.status, Status::Unknown);
         assert!(f.reading.contains("WMI timed out"));
+    }
+
+    #[test]
+    fn every_rule_says_who_can_fix_it() {
+        let src = include_str!("scanner.rs");
+        let production = src.split("#[cfg(test)]").next().unwrap();
+        let ids: Vec<&str> = production
+            .split("const ID: &str = \"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect();
+        assert!(ids.len() >= 8, "found only {ids:?}");
+        for id in ids {
+            let f = finding(id, Status::Attention, "t", String::new(), None, true);
+            // Panics through debug_assert for an id fix_by does not name.
+            let _ = fix_by(&f, 1);
+            let _ = fix_by(&f, 2);
+        }
+    }
+
+    #[test]
+    fn the_starter_grouping_follows_the_remedy() {
+        let mut hw = hardware();
+        hw.memory = Probe::yes(MemoryInfo {
+            installed_bytes: 8 << 30,
+            sticks: vec![stick(Some(3200), Some(2133))],
+            channels: Probe::yes(ChannelLayout::Single),
+        });
+        hw.boot_disk = Probe::yes(BootDisk {
+            media: DiskMedia::Hdd,
+            name: "WDC".into(),
+        });
+        hw.display = Probe::yes(DisplayInfo {
+            width: 1920,
+            height: 1080,
+            current_hz: 60,
+            max_hz_at_current_resolution: 144,
+        });
+        let r = scan(&env_with(hw.clone()));
+        assert_eq!(
+            get(&r, "memory.channels").fix_by,
+            Some(FixBy::Hardware),
+            "one module: buy another"
+        );
+        assert_eq!(get(&r, "storage.boot_disk").fix_by, Some(FixBy::Hardware));
+        assert_eq!(get(&r, "memory.speed").fix_by, Some(FixBy::You));
+        assert_eq!(get(&r, "display.refresh_rate").fix_by, Some(FixBy::You));
+        for f in &r.findings {
+            assert_eq!(f.fix_by.is_some(), f.status == Status::Attention, "{}", f.id);
+            assert_ne!(f.fix_by, Some(FixBy::Us), "{}: nothing has a one-click fix yet", f.id);
+        }
+
+        hw.memory = Probe::yes(MemoryInfo {
+            installed_bytes: 16 << 30,
+            sticks: vec![stick(Some(3200), Some(3200)), stick(Some(3200), Some(3200))],
+            channels: Probe::yes(ChannelLayout::Single),
+        });
+        let r = scan(&env_with(hw));
+        assert_eq!(
+            get(&r, "memory.channels").fix_by,
+            Some(FixBy::You),
+            "two modules: move them"
+        );
     }
 
     #[test]

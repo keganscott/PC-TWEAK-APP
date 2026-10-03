@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import type { Backend } from "./services/backend";
@@ -102,6 +102,47 @@ describe("restore point shown on Home", () => {
     const callout = await screen.findByText(/Restore point #\d+ is ready\./);
     expect(callout.closest("[role]") ?? callout.parentElement).toBeTruthy();
     expect(await screen.findByText(/Windows made it on/)).toBeTruthy();
+  });
+});
+
+describe("Starter scan (plan 6.4)", () => {
+  it("groups what needs a look by who can fix it", async () => {
+    const base = createMockBackend();
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const a = await base.auditSystem();
+        const hdd = {
+          id: "storage.boot_disk",
+          status: "attention" as const,
+          title: "Windows is on a hard drive",
+          reading: "SAMPLE reading.",
+          remedy: "SAMPLE remedy.",
+          guidedOnly: true,
+          fixTweakId: null,
+          fixBy: "hardware" as const,
+        };
+        return { ...a, scan: { findings: [hdd, ...a.scan.findings.filter((f) => f.id !== hdd.id)] } };
+      },
+    });
+    const you = await screen.findByRole("heading", { name: /^You can fix \(\d+\)$/ });
+    const hardware = screen.getByRole("heading", { name: "Needs different hardware (1)" });
+    expect(within(hardware.closest("section")!).getByText("Windows is on a hard drive")).toBeTruthy();
+    expect(within(you.closest("section")!).queryByText("Windows is on a hard drive")).toBeNull();
+    expect(screen.queryByRole("heading", { name: /^PeakTweaks can fix/ })).toBeNull();
+  });
+
+  it("Print opens the folded list first, and a printed demo scan says it is SAMPLE data", async () => {
+    const print = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderApp();
+    const button = await screen.findByRole("button", { name: "Print this scan" });
+    const folded = screen.getByText(/What is already right/).closest("details")!;
+    expect(folded.open).toBe(false);
+    await userEvent.click(button);
+    expect(print).toHaveBeenCalledOnce();
+    expect(folded.open).toBe(true);
+    expect(screen.getByText(/SAMPLE: demo data, not this PC\./)).toBeTruthy();
+    print.mockRestore();
   });
 });
 

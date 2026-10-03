@@ -10,7 +10,7 @@ export function TopBar({ onOpenSettings, busOpen, onToggleBus }: { onOpenSetting
   const gateOpen = audit?.env.restoreGateOpen ?? null;
 
   return (
-    <header className="flex h-14 items-center justify-between gap-4 border-b border-line bg-surface-1 px-5">
+    <header className="flex h-14 items-center justify-between gap-4 border-b border-line bg-surface-1 px-5 print:hidden">
       <div className="flex items-center gap-3">
         {sample && (
           <span className="flex items-center gap-2 text-xs text-sample">

@@ -1,6 +1,6 @@
 # PeakTweaks — working brief
 
-Windows gaming optimizer: one elevated `peaktweaks.exe` (Tauri 2), Rust engine, React/TS/Tailwind UI. Owner: Kegan. Branch: `claude/peaktweaks-windows-setup-sw5aub` (PR keganscott/PC-TWEAK-APP#1).
+Windows gaming optimizer: one elevated `peaktweaks.exe` (Tauri 2), Rust engine, React/TS/Tailwind UI. Owner: Kegan. Branch: `claude/peaktweaks-windows-setup-sw5aub` (PR keganscott/PC-TWEAK-APP#1); work since 2026-10-03 08:00 UTC continues on `claude/vibrant-keller-d77uxs`, which is that PR's head plus newer commits (no PR of its own).
 
 **Read on demand, not up front:** `docs/NOTES.md` (open items, N-numbers) when choosing work · `docs/DECISIONS.md` (why things are the way they are; 15.x numbering) when changing a design · `docs/PEAKTWEAKS_DEV_PLAN.md` (Kegan's plan: §1 locked decisions, §6 Phase 5, §7 UI, §11 decisions he owes, §12 never-do) when a task touches it · closed items: `docs/archive/NOTES-closed.md`.
 

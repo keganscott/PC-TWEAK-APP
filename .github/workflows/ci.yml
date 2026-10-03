@@ -341,7 +341,9 @@ jobs:
   # Fast cross-OS check: the engine's journal and transaction logic runs against
   # the in-memory registry, so it is tested on Linux too.
   engine-linux:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moves to Ubuntu 26 from 2026-10-19 (GitHub's notice
+    # on run 37108092145). Every green run so far used 24.04; move deliberately.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
@@ -367,7 +369,9 @@ jobs:
   # The UI: types, unit and component tests, copy lint, and a browser smoke test
   # with an accessibility scan against the SAMPLE build (plan section 7).
   frontend:
-    runs-on: ubuntu-latest
+    # Pinned with engine-linux; Playwright's --with-deps is the step most
+    # likely to break on a new Ubuntu.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

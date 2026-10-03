@@ -104,6 +104,21 @@ export function BackupsView() {
           </p>
         </Card>
 
+        <Card aria-labelledby="no-start-title">
+          <h2 id="no-start-title" className="font-semibold">
+            If Windows will not start
+          </h2>
+          <p className="mt-2 text-sm text-ink-muted">
+            PeakTweaks keeps its undo files in its folder in ProgramData, usually C:\ProgramData\PeakTweaks. If Windows
+            starts only in Safe Mode, open the backups folder there and import the newest session file of each change.
+            If it does not start at all, the offline folder there has README.txt with the steps and recover.cmd, which
+            puts back the values PeakTweaks changed from the Windows Recovery Environment.
+          </p>
+          <p className="mt-2 text-xs text-ink-faint">
+            Note this down now: if Windows does not start, this page cannot be opened.
+          </p>
+        </Card>
+
         <Card aria-labelledby="journal-title">
           <div className="flex items-center gap-2">
             <h2 id="journal-title" className="font-semibold">

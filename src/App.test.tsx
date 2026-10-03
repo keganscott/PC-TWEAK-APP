@@ -174,6 +174,15 @@ describe("review regressions", () => {
     expect(await within(row).findByText("Windows refused a settings change.")).toBeTruthy();
   });
 
+  it("Backups says where the undo files are for a PC that will not start", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    const card = (await screen.findByRole("heading", { name: "If Windows will not start" })).closest("section, div") as HTMLElement;
+    expect(within(card).getByText(/recover\.cmd/)).toBeTruthy();
+    expect(within(card).getByText(/Safe Mode/)).toBeTruthy();
+  });
+
   it("Tools does not lock changes while it does not yet know about restore points", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({ ...base, auditSystem: () => new Promise(() => {}) }); // never answers

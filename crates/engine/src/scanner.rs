@@ -19,6 +19,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::background::BackgroundLoad;
+use super::game_installs::{on_hard_drive, GameInstall};
 use super::gpu_driver::{nvidia_branch, NvidiaBranch, VENDOR_NVIDIA};
 use super::hardware::{ChannelLayout, DiskMedia, HardwareReport};
 use super::power::{PowerPlan, PowerPlanKind};
@@ -117,13 +118,21 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
     if let Some(load) = &env.background {
         findings.extend(background_load(load));
     }
+    if let Some(installs) = &env.game_installs {
+        findings.extend(game_drives(installs));
+    }
+    // An SSD to move a game onto: the Windows drive is one.
+    let ssd_available = env
+        .hardware
+        .as_ref()
+        .is_some_and(|hw| matches!(&hw.boot_disk, Probe::Yes { value } if value.media != DiskMedia::Hdd));
     let sticks = env
         .hardware
         .as_ref()
         .and_then(|hw| hw.memory.value())
         .map_or(0, |m| m.sticks.len());
     for f in findings.iter_mut().filter(|f| f.status == Status::Attention) {
-        f.fix_by = Some(fix_by(f, sticks));
+        f.fix_by = Some(fix_by(f, sticks, ssd_available));
     }
     // Stable sort: rule order survives inside each status group.
     findings.sort_by_key(|f| match f.status {
@@ -136,14 +145,16 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
 
 /// Who can act on an `Attention` finding. Kept in one place so the Starter
 /// grouping cannot drift from the remedies the rules give.
-fn fix_by(f: &Finding, sticks: usize) -> FixBy {
+fn fix_by(f: &Finding, sticks: usize, ssd_available: bool) -> FixBy {
     if f.fix_tweak_id.is_some() {
         return FixBy::Us;
     }
     match f.id.as_str() {
         // Two or more modules on one channel can be moved; one module cannot.
         "memory.channels" if sticks >= 2 => FixBy::You,
-        "memory.channels" | "storage.boot_disk" | "gpu.driver_branch" => FixBy::Hardware,
+        // A game on a hard drive can be moved to the SSD Windows is on.
+        "games.drive" if ssd_available => FixBy::You,
+        "memory.channels" | "storage.boot_disk" | "gpu.driver_branch" | "games.drive" => FixBy::Hardware,
         // XMP/EXPO, refresh rate, Windows version, power plan, Memory Integrity:
         // settings the user changes.
         "memory.speed"
@@ -432,6 +443,67 @@ fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
             ),
         ),
     })
+}
+
+/// Plan 6.2 item 7. Which games are looked for, and where, is in
+/// `game_installs.rs` (VERIFY, NOTES.md N54). No game found: no finding.
+fn game_drives(installs: &[GameInstall]) -> Option<Finding> {
+    const ID: &str = "games.drive";
+    const TITLE: &str = "Where your games are installed";
+    if installs.is_empty() {
+        return None;
+    }
+    let describe = |g: &GameInstall| match &g.disk {
+        Probe::Yes { value } => {
+            let kind = match value.media {
+                DiskMedia::Hdd => "a hard drive",
+                DiskMedia::Ssd | DiskMedia::Scm => "a solid-state drive",
+            };
+            format!("{} is on {} ({}), {kind}.", g.name, g.drive, value.name)
+        }
+        _ => format!(
+            "{} is on {}.",
+            g.name,
+            if g.drive.is_empty() {
+                "a drive PeakTweaks cannot name"
+            } else {
+                &g.drive
+            }
+        ),
+    };
+    let on_hdd: Vec<&GameInstall> = installs.iter().filter(|g| on_hard_drive(g)).collect();
+    if !on_hdd.is_empty() {
+        return Some(finding(
+            ID,
+            Status::Attention,
+            "A game is installed on a hard drive",
+            on_hdd.iter().map(|g| describe(g)).collect::<Vec<_>>().join(" "),
+            Some(
+                "Games are usually installed on an SSD when the PC has one. If this PC has an SSD with room, \
+                 the game's launcher can move or reinstall the game there; otherwise a hard drive can be \
+                 replaced with an SSD. PeakTweaks does not move games and does not push purchases.",
+            ),
+            true,
+        ));
+    }
+    let unknown_disks: Vec<String> = installs
+        .iter()
+        .filter_map(|g| match &g.disk {
+            Probe::Unknown { reason } => Some(format!("{}: {reason}", g.name)),
+            _ => None,
+        })
+        .collect();
+    if !unknown_disks.is_empty() {
+        return Some(unknown(ID, TITLE, &unknown_disks.join("; ")));
+    }
+    Some(finding(
+        ID,
+        Status::Fine,
+        "Your games are on solid-state drives",
+        installs.iter().map(describe).collect::<Vec<_>>().join(" "),
+        None,
+        false,
+    ))
 }
 
 /// Plan 6.2 item 9, read-only half. VERIFY/ASSUMED (NOTES.md N53): the
@@ -937,8 +1009,8 @@ mod tests {
         for id in ids {
             let f = finding(id, Status::Attention, "t", String::new(), None, true);
             // Panics through debug_assert for an id fix_by does not name.
-            let _ = fix_by(&f, 1);
-            let _ = fix_by(&f, 2);
+            let _ = fix_by(&f, 1, false);
+            let _ = fix_by(&f, 2, true);
         }
     }
 
@@ -1036,6 +1108,69 @@ mod tests {
 
         env.background = Some(Probe::unknown("WMI timed out"));
         assert_eq!(get(&scan(&env), "background.load").status, Status::Unknown);
+    }
+
+    fn install(name: &str, drive: &str, disk: Probe<BootDisk>) -> GameInstall {
+        GameInstall {
+            game_id: name.to_lowercase(),
+            name: name.into(),
+            path: format!(r"{drive}\Games\{name}"),
+            drive: drive.into(),
+            disk,
+        }
+    }
+
+    fn media(m: DiskMedia, name: &str) -> Probe<BootDisk> {
+        Probe::yes(BootDisk {
+            media: m,
+            name: name.into(),
+        })
+    }
+
+    #[test]
+    fn a_game_on_a_hard_drive_says_who_can_move_it() {
+        let mut env = env_with(hardware()); // Windows on an SSD
+        env.game_installs = Some(vec![
+            install("Fortnite", "D:", media(DiskMedia::Hdd, "WDC 2TB")),
+            install("Roblox", "C:", media(DiskMedia::Ssd, "Samsung")),
+        ]);
+        let f = get(&scan(&env), "games.drive").clone();
+        assert_eq!(f.status, Status::Attention);
+        assert_eq!(f.reading, "Fortnite is on D: (WDC 2TB), a hard drive.");
+        assert_eq!(f.fix_by, Some(FixBy::You), "Windows' own drive is an SSD to move it to");
+
+        let mut hdd_only = hardware();
+        hdd_only.boot_disk = media(DiskMedia::Hdd, "WDC");
+        let mut env2 = env_with(hdd_only);
+        env2.game_installs = env.game_installs.clone();
+        assert_eq!(
+            get(&scan(&env2), "games.drive").fix_by,
+            Some(FixBy::Hardware),
+            "no SSD to move it to"
+        );
+    }
+
+    #[test]
+    fn games_on_ssds_are_fine_unknown_disks_say_why_and_no_games_say_nothing() {
+        let mut env = env_with(hardware());
+        env.game_installs = Some(vec![install("Roblox", "C:", media(DiskMedia::Ssd, "Samsung"))]);
+        let f = get(&scan(&env), "games.drive").clone();
+        assert_eq!(
+            (f.status, f.reading.as_str()),
+            (Status::Fine, "Roblox is on C: (Samsung), a solid-state drive.")
+        );
+
+        env.game_installs = Some(vec![install(
+            "Fortnite",
+            "E:",
+            Probe::unknown("no physical disk record"),
+        )]);
+        let f = get(&scan(&env), "games.drive").clone();
+        assert_eq!(f.status, Status::Unknown);
+        assert!(f.reading.contains("Fortnite: no physical disk record"), "{}", f.reading);
+
+        env.game_installs = Some(vec![]);
+        assert!(scan(&env).findings.iter().all(|f| f.id != "games.drive"));
     }
 
     #[test]

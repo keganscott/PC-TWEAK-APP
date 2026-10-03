@@ -343,6 +343,9 @@ pub struct SystemEnv {
     pub power_plan: Option<crate::probe::Probe<crate::power::PowerPlan>>,
     /// What else used the processor during a short sample. `None` until probed.
     pub background: Option<crate::probe::Probe<crate::background::BackgroundLoad>>,
+    /// Known games found on this PC and the drive each is on. `None` until
+    /// probed; empty when none was found.
+    pub game_installs: Option<Vec<crate::game_installs::GameInstall>>,
 }
 
 impl SystemEnv {

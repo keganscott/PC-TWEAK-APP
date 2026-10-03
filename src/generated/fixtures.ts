@@ -459,7 +459,22 @@ export const systemAudit = {
         ],
         "unreadable": 0
       }
-    }
+    },
+    "gameInstalls": [
+      {
+        "gameId": "fortnite",
+        "name": "Fortnite",
+        "path": "D:\\Epic Games\\Fortnite",
+        "drive": "D:",
+        "disk": {
+          "state": "yes",
+          "value": {
+            "media": "hdd",
+            "name": "Example HDD"
+          }
+        }
+      }
+    ]
   },
   "antiCheat": {
     "secureBoot": {
@@ -543,6 +558,16 @@ export const systemAudit = {
         "title": "Other programs are using the processor",
         "reading": "Over 2 seconds while PeakTweaks was checking this PC, other programs used 23.4 percent of the processor. Busiest: ExampleUpdater (14.2%), ExampleBrowser (6.9%, 12 processes).",
         "remedy": "If you do not need them while you play, close them before starting a game, or stop them starting with Windows in Task Manager > Startup apps. PeakTweaks does not close or change them.",
+        "guidedOnly": true,
+        "fixTweakId": null,
+        "fixBy": "you"
+      },
+      {
+        "id": "games.drive",
+        "status": "attention",
+        "title": "A game is installed on a hard drive",
+        "reading": "Fortnite is on D: (Example HDD), a hard drive.",
+        "remedy": "Games are usually installed on an SSD when the PC has one. If this PC has an SSD with room, the game's launcher can move or reinstall the game there; otherwise a hard drive can be replaced with an SSD. PeakTweaks does not move games and does not push purchases.",
         "guidedOnly": true,
         "fixTweakId": null,
         "fixBy": "you"

@@ -62,7 +62,7 @@ impl SystemAudit {
 
 #[derive(Default)]
 struct Cache {
-    hardware: Option<(u64, HardwareReport)>,
+    hardware: Option<(u64, HardwareReport, Vec<crate::game_installs::GameInstall>)>,
     state: Option<(u64, SecurityReport, super::restore::RestoreStatus)>,
     background: Option<(u64, Probe<BackgroundLoad>)>,
 }
@@ -74,6 +74,10 @@ pub struct SystemProbe {
     restore: Arc<RestoreService>,
     cache: Mutex<Cache>,
     background_wait: std::time::Duration,
+    /// `%ProgramData%` and the interactive user's profile folder, where the
+    /// known games record their installs (`game_installs.rs`).
+    program_data: std::path::PathBuf,
+    profile: Option<std::path::PathBuf>,
 }
 
 impl SystemProbe {
@@ -90,7 +94,19 @@ impl SystemProbe {
             restore,
             cache: Mutex::default(),
             background_wait: BACKGROUND_WAIT,
+            program_data: std::env::var_os("ProgramData")
+                .map(Into::into)
+                .unwrap_or_else(|| r"C:\ProgramData".into()),
+            profile: interactive_profile(),
         }
+    }
+
+    /// Tests and fixtures: look for game installs under these folders.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_game_folders(mut self, program_data: std::path::PathBuf, profile: Option<std::path::PathBuf>) -> Self {
+        self.program_data = program_data;
+        self.profile = profile;
+        self
     }
 
     /// Tests and fixtures: sample the background load without waiting.
@@ -101,17 +117,35 @@ impl SystemProbe {
     }
 }
 
+/// The interactive user's profile folder: per-user games live there, and under
+/// alternate admin credentials it is not this process's own profile.
+#[cfg(windows)]
+fn interactive_profile() -> Option<std::path::PathBuf> {
+    let user = crate::identity::detect_user().ok()?;
+    crate::identity::profile_dir_for_sid(&user.sid).ok().flatten()
+}
+
+#[cfg(not(windows))]
+fn interactive_profile() -> Option<std::path::PathBuf> {
+    None
+}
+
 impl EnvProbe for SystemProbe {
     fn probe(&self, elevated: bool) -> SystemEnv {
         let now = now_ms();
         let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
 
-        let hardware = match &cache.hardware {
-            Some((at, h)) if now.saturating_sub(*at) < HARDWARE_TTL_MS => h.clone(),
+        let (hardware, game_installs) = match &cache.hardware {
+            Some((at, h, g)) if now.saturating_sub(*at) < HARDWARE_TTL_MS => (h.clone(), g.clone()),
             _ => {
                 let h = probe_hardware(self.wmi.as_ref(), self.facts.as_ref());
-                cache.hardware = Some((now, h.clone()));
-                h
+                // Installs rarely move, so they share the hardware cache.
+                let g =
+                    crate::game_installs::probe_game_installs(&self.program_data, self.profile.as_deref(), &|drive| {
+                        crate::hardware::probe_drive(self.wmi.as_ref(), drive)
+                    });
+                cache.hardware = Some((now, h.clone(), g.clone()));
+                (h, g)
             }
         };
         let (security, restore) = match &cache.state {
@@ -150,6 +184,7 @@ impl EnvProbe for SystemProbe {
             // so it is not cached.
             power_plan: Some(crate::power::probe_power_plan(self.reg.as_ref())),
             background: Some(background),
+            game_installs: Some(game_installs),
         }
     }
 

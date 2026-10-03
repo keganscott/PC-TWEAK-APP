@@ -10,6 +10,7 @@ pub mod engine;
 pub mod env;
 pub mod error;
 pub mod fsutil;
+pub mod game_installs;
 pub mod gpu_driver;
 pub mod hardware;
 pub mod journal;

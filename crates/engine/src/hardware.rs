@@ -398,6 +398,11 @@ fn media_from_code(code: u64) -> Option<DiskMedia> {
 /// physical disk. The query text is built only from a validated drive letter and
 /// a number.
 pub fn probe_boot_disk(wmi: &dyn WmiSource, system_drive: &str) -> Probe<BootDisk> {
+    probe_drive(wmi, system_drive)
+}
+
+/// The physical disk behind a drive letter (`"D:"`) and whether it is an SSD.
+pub fn probe_drive(wmi: &dyn WmiSource, system_drive: &str) -> Probe<BootDisk> {
     if !valid_drive(system_drive) {
         return Probe::unknown(format!("unexpected system drive {system_drive:?}"));
     }

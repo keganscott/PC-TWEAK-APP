@@ -251,7 +251,19 @@ fn audit() -> SystemAudit {
     );
     let mut env = SystemProbe::new(wmi, reg, Arc::new(FixtureFacts), restore)
         .with_background_wait(std::time::Duration::ZERO)
+        .with_game_folders(std::path::PathBuf::from("no-such-program-data"), None)
         .probe(true);
+    // A game on a hard drive, so the sample shows that finding.
+    env.game_installs = Some(vec![crate::game_installs::GameInstall {
+        game_id: "fortnite".into(),
+        name: "Fortnite".into(),
+        path: r"D:\Epic Games\Fortnite".into(),
+        drive: "D:".into(),
+        disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
+            media: crate::hardware::DiskMedia::Hdd,
+            name: "Example HDD".into(),
+        }),
+    }]);
     // The fake answers both process samples with the same rows (no time
     // passes), which reads as unknown; the sample shows a measured case.
     env.background = Some(crate::probe::Probe::yes(crate::background::BackgroundLoad {

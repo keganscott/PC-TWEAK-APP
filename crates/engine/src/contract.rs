@@ -263,6 +263,7 @@ fn audit() -> SystemAudit {
             media: crate::hardware::DiskMedia::Hdd,
             name: "Example HDD".into(),
         }),
+        exe: Some(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe".into()),
     }]);
     env.gpu_choices = Some(vec![crate::gpu_choice::GameGpuChoice {
         game_id: "fortnite".into(),

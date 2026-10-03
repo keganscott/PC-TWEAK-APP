@@ -472,7 +472,8 @@ export const systemAudit = {
             "media": "hdd",
             "name": "Example HDD"
           }
-        }
+        },
+        "exe": "D:\\Epic Games\\Fortnite\\FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe"
       }
     ],
     "gpuChoices": [

@@ -31,6 +31,10 @@ pub struct GameInstall {
     /// `"D:"`.
     pub drive: String,
     pub disk: Probe<BootDisk>,
+    /// The program file the game runs, when PeakTweaks looks for it and found
+    /// it (`program_file`). Minecraft's is not looked for: it runs inside a
+    /// Java program the launcher picks.
+    pub exe: Option<String>,
 }
 
 /// The drive letter a Windows path is on, `"D:"`, if it starts with one.
@@ -93,6 +97,7 @@ pub fn probe_game_installs(
             let path = path.to_string_lossy().into_owned();
             let drive = drive_of(&path);
             GameInstall {
+                exe: program_file(id, &path),
                 game_id: id.into(),
                 name: name.into(),
                 disk: match &drive {
@@ -104,6 +109,59 @@ pub fn probe_game_installs(
             }
         })
         .collect()
+}
+
+fn windows_path(p: &str) -> String {
+    p.trim().replace('/', "\\").trim_end_matches('\\').to_owned()
+}
+
+/// The newest `RobloxPlayerBeta.exe` under `Versions\<version>\`.
+fn newest_roblox_player(versions: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(versions)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path().join("RobloxPlayerBeta.exe"))
+        .filter_map(|exe| {
+            let modified = std::fs::metadata(&exe).ok()?.modified().ok()?;
+            Some((modified, exe))
+        })
+        .max()
+        .map(|(_, exe)| exe)
+}
+
+/// True for the games whose program file is looked for (`program_file`).
+pub fn program_file_is_looked_for(game_id: &str) -> bool {
+    matches!(game_id, "fortnite" | "roblox")
+}
+
+/// Why a looked-for program file is missing, for an unknown reading.
+pub fn program_file_missing(install: &GameInstall) -> String {
+    format!(
+        "{}'s program file was not found under {}",
+        install.name,
+        install.path.trim()
+    )
+}
+
+/// The program file a found game runs, as Windows writes paths (backslashes,
+/// no trailing separator). `None` when it is not looked for or not found.
+/// VERIFY (NOTES.md N7, N56): Fortnite's
+/// `FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe` under its
+/// install; Roblox's `RobloxPlayerBeta.exe` in the newest `Versions` folder.
+pub fn program_file(game_id: &str, install_path: &str) -> Option<String> {
+    let base = Path::new(install_path.trim());
+    let found = match game_id {
+        "fortnite" => Some(
+            base.join("FortniteGame")
+                .join("Binaries")
+                .join("Win64")
+                .join("FortniteClient-Win64-Shipping.exe"),
+        )
+        .filter(|exe| exe.is_file()),
+        "roblox" => newest_roblox_player(base),
+        _ => None,
+    };
+    found.map(|exe| windows_path(&exe.to_string_lossy()))
 }
 
 /// True when the install is on a hard drive (not an SSD).
@@ -122,6 +180,36 @@ mod tests {
             media,
             name: "disk".into(),
         })
+    }
+
+    #[test]
+    fn program_files_are_found_for_fortnite_and_roblox_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let fortnite = dir.path().join("Fortnite");
+        assert_eq!(
+            program_file("fortnite", &fortnite.to_string_lossy()),
+            None,
+            "not there yet"
+        );
+        let bin = fortnite.join("FortniteGame").join("Binaries").join("Win64");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("FortniteClient-Win64-Shipping.exe"), b"").unwrap();
+        let exe = program_file("fortnite", &format!("{}/", fortnite.to_string_lossy())).unwrap();
+        assert!(
+            exe.ends_with(r"\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe"),
+            "{exe}"
+        );
+        assert!(!exe.contains('/'), "written the way Windows writes paths: {exe}");
+
+        let versions = dir.path().join("Versions");
+        std::fs::create_dir_all(versions.join("version-1")).unwrap();
+        std::fs::write(versions.join("version-1").join("RobloxPlayerBeta.exe"), b"").unwrap();
+        assert!(program_file("roblox", &versions.to_string_lossy())
+            .unwrap()
+            .ends_with(r"version-1\RobloxPlayerBeta.exe"));
+
+        assert_eq!(program_file("minecraft", &dir.path().to_string_lossy()), None);
+        assert!(program_file_is_looked_for("roblox") && !program_file_is_looked_for("minecraft"));
     }
 
     #[test]

@@ -195,6 +195,27 @@ describe("review regressions", () => {
     expect(within(minecraft).queryByText(/Source:/)).toBeNull();
   });
 
+  it("a new comparison fills in the program name of a game found on this PC, never over typed text", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    await userEvent.click(screen.getByRole("button", { name: "New comparison" }));
+    const program = screen.getByLabelText("Game program name") as HTMLInputElement;
+    const game = screen.getByLabelText("Game (optional)");
+
+    await userEvent.selectOptions(game, "fortnite");
+    expect(program.value).toBe("FortniteClient-Win64-Shipping.exe");
+    expect(screen.getByText(/Found on this PC: D:\\Epic Games\\Fortnite\\FortniteGame/)).toBeTruthy();
+
+    // Not found in the sample: the filled-in name is cleared, not left behind.
+    await userEvent.selectOptions(game, "minecraft");
+    expect(program.value).toBe("");
+
+    await userEvent.type(program, "javaw.exe");
+    await userEvent.selectOptions(game, "fortnite");
+    expect(program.value).toBe("javaw.exe");
+  });
+
   it("Backups says where the undo files are for a PC that will not start", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

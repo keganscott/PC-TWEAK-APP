@@ -10,4 +10,10 @@ gameId: string, name: string, path: string,
 /**
  * `"D:"`.
  */
-drive: string, disk: Probe<BootDisk>, };
+drive: string, disk: Probe<BootDisk>, 
+/**
+ * The program file the game runs, when PeakTweaks looks for it and found
+ * it (`program_file`). Minecraft's is not looked for: it runs inside a
+ * Java program the launcher picks.
+ */
+exe: string | null, };

@@ -16,13 +16,11 @@
 //! - Minecraft (Java Edition) runs inside a Java program the launcher picks, so
 //!   it is not checked.
 
-use std::path::{Path, PathBuf};
-
 use serde::Serialize;
 use ts_rs::TS;
 
 use super::error::Result;
-use super::game_installs::GameInstall;
+use super::game_installs::{program_file_is_looked_for, program_file_missing, GameInstall};
 use super::probe::Probe;
 use super::types::RawValue;
 
@@ -69,51 +67,6 @@ pub fn parse_preference(data: &str) -> Option<GpuPreference> {
     }
 }
 
-fn windows_path(p: &str) -> String {
-    p.trim().replace('/', "\\").trim_end_matches('\\').to_owned()
-}
-
-/// The newest `RobloxPlayerBeta.exe` under `Versions\<version>\`.
-fn newest_roblox_player(versions: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(versions)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path().join("RobloxPlayerBeta.exe"))
-        .filter_map(|exe| {
-            let modified = std::fs::metadata(&exe).ok()?.modified().ok()?;
-            Some((modified, exe))
-        })
-        .max()
-        .map(|(_, exe)| exe)
-}
-
-/// The program file a found game runs, written as Windows names it in the
-/// setting (backslashes, no trailing separator). `Ok(None)`: this game is not
-/// checked. `Err`: it is checked but the file was not where expected.
-pub fn game_exe(install: &GameInstall) -> std::result::Result<Option<String>, String> {
-    let base = Path::new(install.path.trim());
-    let found = match install.game_id.as_str() {
-        "fortnite" => Some(
-            base.join("FortniteGame")
-                .join("Binaries")
-                .join("Win64")
-                .join("FortniteClient-Win64-Shipping.exe"),
-        )
-        .filter(|exe| exe.is_file()),
-        "roblox" => newest_roblox_player(base),
-        _ => return Ok(None),
-    };
-    found
-        .map(|exe| Some(windows_path(&exe.to_string_lossy())))
-        .ok_or_else(|| {
-            format!(
-                "{}'s program file was not found under {}",
-                install.name,
-                install.path.trim()
-            )
-        })
-}
-
 /// Reads one value under `KEY` in the user's hive, by program path.
 pub type ReadSetting<'a> = &'a dyn Fn(&str) -> Result<Option<RawValue>>;
 
@@ -124,10 +77,13 @@ pub fn probe_gpu_choices(installs: &[GameInstall], read: Option<ReadSetting<'_>>
     installs
         .iter()
         .filter_map(|g| {
-            let (exe, preference) = match game_exe(g) {
-                Ok(None) => return None,
-                Err(why) => (None, Probe::unknown(why)),
-                Ok(Some(exe)) => {
+            if !program_file_is_looked_for(&g.game_id) {
+                return None;
+            }
+            let (exe, preference) = match &g.exe {
+                None => (None, Probe::unknown(program_file_missing(g))),
+                Some(exe) => {
+                    let exe = exe.clone();
                     let preference = match read {
                         None => Probe::unknown("whose Windows settings to read could not be worked out"),
                         Some(read) => preference_from(read(&exe)),
@@ -163,11 +119,15 @@ fn preference_from(value: Result<Option<RawValue>>) -> Probe<GpuPreference> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+    use crate::game_installs::program_file;
     use crate::hardware::{BootDisk, DiskMedia};
 
     fn install(id: &str, name: &str, path: &Path) -> GameInstall {
         GameInstall {
+            exe: program_file(id, &path.to_string_lossy()),
             game_id: id.into(),
             name: name.into(),
             path: path.to_string_lossy().into_owned(),

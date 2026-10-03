@@ -108,8 +108,23 @@ function NewSession({ onCreated, onCancel }: { onCreated: (id: string) => void; 
   const beginOp = useStore((s) => s.proof.beginOp);
   const technical = useTechnical();
   const { beginSession } = useActions();
+  const installs = useStore((s) => s.audit?.env.gameInstalls ?? null);
   const [exe, setExe] = useState("");
   const [gameId, setGameId] = useState<string>("");
+  // The program name filled in from a game found on this PC, so picking
+  // another game replaces it but never something the user typed.
+  const [filled, setFilled] = useState<string | null>(null);
+  const found = installs?.find((i) => i.gameId === gameId && i.exe) ?? null;
+
+  const pickGame = (id: string) => {
+    setGameId(id);
+    const path = installs?.find((i) => i.gameId === id)?.exe ?? null;
+    const name = path ? path.slice(path.lastIndexOf("\\") + 1) : null;
+    if (exe.trim() === "" || exe === filled) {
+      setExe(name ?? "");
+      setFilled(name);
+    }
+  };
   const [build, setBuild] = useState("");
   const ids = { exe: useId(), game: useId(), build: useId() };
 
@@ -123,6 +138,27 @@ function NewSession({ onCreated, onCancel }: { onCreated: (id: string) => void; 
     <Card>
       <h2 className="text-lg font-semibold">New comparison</h2>
       <form className="mt-4 flex flex-col gap-4" onSubmit={(e) => void submit(e)}>
+        <div>
+          <label htmlFor={ids.game} className="block text-sm font-medium">
+            Game (optional)
+          </label>
+          <select
+            id={ids.game}
+            value={gameId}
+            onChange={(e) => pickGame(e.target.value)}
+            className="mt-1 w-full rounded-md border border-line bg-surface-0 px-3 py-2 text-sm"
+          >
+            <option value="">Not listed</option>
+            {games.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+          {found?.exe && (
+            <p className="mt-1 text-xs text-ink-faint wrap-anywhere">Found on this PC: {found.exe}</p>
+          )}
+        </div>
         <div>
           <label htmlFor={ids.exe} className="block text-sm font-medium">
             Game program name
@@ -139,24 +175,6 @@ function NewSession({ onCreated, onCancel }: { onCreated: (id: string) => void; 
           <p id={`${ids.exe}-hint`} className="mt-1 text-xs text-ink-faint">
             The .exe name as Task Manager shows it under Details.
           </p>
-        </div>
-        <div>
-          <label htmlFor={ids.game} className="block text-sm font-medium">
-            Game (optional)
-          </label>
-          <select
-            id={ids.game}
-            value={gameId}
-            onChange={(e) => setGameId(e.target.value)}
-            className="mt-1 w-full rounded-md border border-line bg-surface-0 px-3 py-2 text-sm"
-          >
-            <option value="">Not listed</option>
-            {games.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
         </div>
         <div>
           <label htmlFor={ids.build} className="block text-sm font-medium">

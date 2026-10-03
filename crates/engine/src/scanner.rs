@@ -1217,6 +1217,7 @@ mod tests {
             path: format!(r"{drive}\Games\{name}"),
             drive: drive.into(),
             disk,
+            exe: None,
         }
     }
 

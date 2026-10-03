@@ -11,20 +11,26 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use ts_rs::TS;
 
+use super::background::BackgroundLoad;
 use super::env::EnvProbe;
 use super::hardware::RigClass;
 use super::hardware::{probe_hardware, HardwareReport, OsFacts};
 use super::journal::now_ms;
+use super::probe::Probe;
 use super::registry::RegistryBackend;
 use super::restore::RestoreService;
 use super::scanner::{scan, ScanReport};
 use super::security::{anti_cheat_readiness, probe_security, AntiCheatReadiness, SecurityReport};
 use super::settings::Settings;
 use super::types::SystemEnv;
-use super::wmi::WmiSource;
+use super::wmi::{WmiSource, NS_CIMV2};
 
 const HARDWARE_TTL_MS: u64 = 10 * 60 * 1000;
 const STATE_TTL_MS: u64 = 30 * 1000;
+/// The background sample takes `background_wait` to measure, so it is kept for
+/// a minute and is not re-measured before every apply (`invalidate`).
+const BACKGROUND_TTL_MS: u64 = 60 * 1000;
+const BACKGROUND_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// What `audit_system` returns.
 #[derive(Debug, Clone, Serialize, TS)]
@@ -58,6 +64,7 @@ impl SystemAudit {
 struct Cache {
     hardware: Option<(u64, HardwareReport)>,
     state: Option<(u64, SecurityReport, super::restore::RestoreStatus)>,
+    background: Option<(u64, Probe<BackgroundLoad>)>,
 }
 
 pub struct SystemProbe {
@@ -66,6 +73,7 @@ pub struct SystemProbe {
     facts: Arc<dyn OsFacts>,
     restore: Arc<RestoreService>,
     cache: Mutex<Cache>,
+    background_wait: std::time::Duration,
 }
 
 impl SystemProbe {
@@ -81,7 +89,15 @@ impl SystemProbe {
             facts,
             restore,
             cache: Mutex::default(),
+            background_wait: BACKGROUND_WAIT,
         }
+    }
+
+    /// Tests and fixtures: sample the background load without waiting.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_background_wait(mut self, wait: std::time::Duration) -> Self {
+        self.background_wait = wait;
+        self
     }
 }
 
@@ -108,6 +124,21 @@ impl EnvProbe for SystemProbe {
             }
         };
 
+        let background = match &cache.background {
+            Some((at, b)) if now.saturating_sub(*at) < BACKGROUND_TTL_MS => b.clone(),
+            _ => {
+                let logical = hardware.cpu.value().map(|c| c.logical_processors);
+                let wmi = self.wmi.clone();
+                let b = crate::background::sample(
+                    &move || crate::background::snapshot_from(&wmi.query(NS_CIMV2, crate::background::WQL_PROCESSES)),
+                    self.background_wait,
+                    logical,
+                );
+                cache.background = Some((now, b.clone()));
+                b
+            }
+        };
+
         SystemEnv {
             elevated,
             target_game: None, // the engine fills this in
@@ -118,6 +149,7 @@ impl EnvProbe for SystemProbe {
             // Cheap (one registry read) and it changes when the user changes it,
             // so it is not cached.
             power_plan: Some(crate::power::probe_power_plan(self.reg.as_ref())),
+            background: Some(background),
         }
     }
 
@@ -168,7 +200,11 @@ mod tests {
         let reg = Arc::new(FakeRegistry::new());
         let restore =
             Arc::new(RestoreService::new(Arc::new(FakeRestoreOps::new()), reg.clone(), wmi.clone()).without_waiting());
-        (SystemProbe::new(wmi.clone(), reg, Arc::new(Facts), restore), wmi)
+        (
+            SystemProbe::new(wmi.clone(), reg, Arc::new(Facts), restore)
+                .with_background_wait(std::time::Duration::ZERO),
+            wmi,
+        )
     }
 
     #[test]

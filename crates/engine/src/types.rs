@@ -341,6 +341,8 @@ pub struct SystemEnv {
     pub restore: Option<RestoreStatus>,
     /// The active Windows power plan (read-only). `None` until probed.
     pub power_plan: Option<crate::probe::Probe<crate::power::PowerPlan>>,
+    /// What else used the processor during a short sample. `None` until probed.
+    pub background: Option<crate::probe::Probe<crate::background::BackgroundLoad>>,
 }
 
 impl SystemEnv {

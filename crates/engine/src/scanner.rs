@@ -18,6 +18,7 @@
 use serde::Serialize;
 use ts_rs::TS;
 
+use super::background::BackgroundLoad;
 use super::gpu_driver::{nvidia_branch, NvidiaBranch, VENDOR_NVIDIA};
 use super::hardware::{ChannelLayout, DiskMedia, HardwareReport};
 use super::power::{PowerPlan, PowerPlanKind};
@@ -113,6 +114,9 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
     if let Some(sec) = &env.security {
         findings.push(memory_integrity(&sec.memory_integrity));
     }
+    if let Some(load) = &env.background {
+        findings.extend(background_load(load));
+    }
     let sticks = env
         .hardware
         .as_ref()
@@ -142,9 +146,12 @@ fn fix_by(f: &Finding, sticks: usize) -> FixBy {
         "memory.channels" | "storage.boot_disk" | "gpu.driver_branch" => FixBy::Hardware,
         // XMP/EXPO, refresh rate, Windows version, power plan, Memory Integrity:
         // settings the user changes.
-        "memory.speed" | "display.refresh_rate" | "os.support" | "power.plan" | "security.memory_integrity" => {
-            FixBy::You
-        }
+        "memory.speed"
+        | "display.refresh_rate"
+        | "os.support"
+        | "power.plan"
+        | "security.memory_integrity"
+        | "background.load" => FixBy::You,
         // `every_rule_says_who_can_fix_it` keeps this unreachable; a release
         // build must not lose the whole scan over a missing entry.
         other => {
@@ -425,6 +432,72 @@ fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
             ),
         ),
     })
+}
+
+/// Plan 6.2 item 9, read-only half. VERIFY/ASSUMED (NOTES.md N53): the
+/// thresholds are a first guess. The sample runs while PeakTweaks itself is
+/// open, which is as close to "idle" as a scan can get; PeakTweaks and its
+/// WebView2 processes are left out of it.
+const BUSY_TOTAL_PERCENT: f64 = 15.0;
+const BUSY_ONE_PERCENT: f64 = 10.0;
+
+fn background_load(load: &Probe<BackgroundLoad>) -> Option<Finding> {
+    const ID: &str = "background.load";
+    const TITLE: &str = "Other programs";
+    let value = match load {
+        Probe::Unknown { reason } => return Some(unknown(ID, TITLE, reason)),
+        Probe::No { .. } => return None,
+        Probe::Yes { value } => value,
+    };
+    let secs = (value.sample_ms as f64 / 1000.0).round().max(1.0);
+    let named: Vec<String> = value
+        .top
+        .iter()
+        .filter(|p| p.cpu_percent >= 1.0)
+        .take(3)
+        .map(|p| {
+            let copies = if p.processes > 1 {
+                format!(", {} processes", p.processes)
+            } else {
+                String::new()
+            };
+            format!("{} ({}%{copies})", p.name, p.cpu_percent)
+        })
+        .collect();
+    let reading = format!(
+        "Over {secs} seconds while PeakTweaks was checking this PC, other programs used {} percent of the processor.{}",
+        value.cpu_percent,
+        if named.is_empty() {
+            String::new()
+        } else {
+            format!(" Busiest: {}.", named.join(", "))
+        }
+    );
+    let busiest = value.top.first().map_or(0.0, |p| p.cpu_percent);
+    Some(
+        if value.cpu_percent >= BUSY_TOTAL_PERCENT || busiest >= BUSY_ONE_PERCENT {
+            finding(
+                ID,
+                Status::Attention,
+                "Other programs are using the processor",
+                reading,
+                Some(
+                    "If you do not need them while you play, close them before starting a game, or stop them \
+                 starting with Windows in Task Manager > Startup apps. PeakTweaks does not close or change them.",
+                ),
+                true,
+            )
+        } else {
+            finding(
+                ID,
+                Status::Fine,
+                "Little else is using the processor",
+                reading,
+                None,
+                false,
+            )
+        },
+    )
 }
 
 /// Reads the power *plan*. Windows 11 also has a separate "power mode" setting
@@ -912,6 +985,57 @@ mod tests {
             Some(FixBy::You),
             "two modules: move them"
         );
+    }
+
+    fn load(total: f64, top: &[(&str, u32, f64)]) -> Probe<BackgroundLoad> {
+        Probe::yes(BackgroundLoad {
+            sample_ms: 2000,
+            cpu_percent: total,
+            top: top
+                .iter()
+                .map(|(name, processes, cpu)| crate::background::ProgramLoad {
+                    name: (*name).into(),
+                    processes: *processes,
+                    cpu_percent: *cpu,
+                    memory_bytes: 0,
+                })
+                .collect(),
+            unreadable: 0,
+        })
+    }
+
+    #[test]
+    fn background_load_names_the_busiest_programs_and_says_who_can_act() {
+        let mut env = env_with(hardware());
+        env.background = Some(load(
+            23.4,
+            &[("Updater", 1, 14.2), ("chrome", 12, 6.9), ("idle-ish", 1, 0.4)],
+        ));
+        let f = get(&scan(&env), "background.load").clone();
+        assert_eq!(f.status, Status::Attention);
+        assert_eq!(f.fix_by, Some(FixBy::You));
+        assert!(f.reading.contains("23.4 percent"), "{}", f.reading);
+        assert!(
+            f.reading.contains("Updater (14.2%), chrome (6.9%, 12 processes)."),
+            "{}",
+            f.reading
+        );
+        assert!(!f.reading.contains("idle-ish"), "under 1% is not worth naming");
+        assert!(f.remedy.unwrap().contains("does not close or change them"));
+
+        env.background = Some(load(11.0, &[("OneBusy", 1, 10.5)]));
+        assert_eq!(
+            get(&scan(&env), "background.load").status,
+            Status::Attention,
+            "one program over 10%"
+        );
+
+        env.background = Some(load(4.0, &[("a", 1, 3.0), ("b", 1, 1.0)]));
+        let f = get(&scan(&env), "background.load").clone();
+        assert_eq!((f.status, f.fix_by), (Status::Fine, None));
+
+        env.background = Some(Probe::unknown("WMI timed out"));
+        assert_eq!(get(&scan(&env), "background.load").status, Status::Unknown);
     }
 
     #[test]

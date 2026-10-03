@@ -437,6 +437,28 @@ export const systemAudit = {
     "powerPlan": {
       "state": "unknown",
       "reason": "Windows has not recorded an active power plan"
+    },
+    "background": {
+      "state": "yes",
+      "value": {
+        "sampleMs": 2000,
+        "cpuPercent": 23.4,
+        "top": [
+          {
+            "name": "ExampleUpdater",
+            "processes": 1,
+            "cpuPercent": 14.2,
+            "memoryBytes": 220200960
+          },
+          {
+            "name": "ExampleBrowser",
+            "processes": 12,
+            "cpuPercent": 6.9,
+            "memoryBytes": 1887436800
+          }
+        ],
+        "unreadable": 0
+      }
     }
   },
   "antiCheat": {
@@ -511,6 +533,16 @@ export const systemAudit = {
         "title": "The display is set below its highest refresh rate",
         "reading": "Running at 60 Hz; this display offers 144 Hz at 1920x1080.",
         "remedy": "Windows Settings > System > Display > Advanced display lets you choose the refresh rate.",
+        "guidedOnly": true,
+        "fixTweakId": null,
+        "fixBy": "you"
+      },
+      {
+        "id": "background.load",
+        "status": "attention",
+        "title": "Other programs are using the processor",
+        "reading": "Over 2 seconds while PeakTweaks was checking this PC, other programs used 23.4 percent of the processor. Busiest: ExampleUpdater (14.2%), ExampleBrowser (6.9%, 12 processes).",
+        "remedy": "If you do not need them while you play, close them before starting a game, or stop them starting with Windows in Task Manager > Startup apps. PeakTweaks does not close or change them.",
         "guidedOnly": true,
         "fixTweakId": null,
         "fixBy": "you"

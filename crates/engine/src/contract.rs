@@ -249,7 +249,30 @@ fn audit() -> SystemAudit {
             .with_clock(Arc::new(FixedClock(now)))
             .without_waiting(),
     );
-    let mut env = SystemProbe::new(wmi, reg, Arc::new(FixtureFacts), restore).probe(true);
+    let mut env = SystemProbe::new(wmi, reg, Arc::new(FixtureFacts), restore)
+        .with_background_wait(std::time::Duration::ZERO)
+        .probe(true);
+    // The fake answers both process samples with the same rows (no time
+    // passes), which reads as unknown; the sample shows a measured case.
+    env.background = Some(crate::probe::Probe::yes(crate::background::BackgroundLoad {
+        sample_ms: 2000,
+        cpu_percent: 23.4,
+        top: vec![
+            crate::background::ProgramLoad {
+                name: "ExampleUpdater".into(),
+                processes: 1,
+                cpu_percent: 14.2,
+                memory_bytes: 210 << 20,
+            },
+            crate::background::ProgramLoad {
+                name: "ExampleBrowser".into(),
+                processes: 12,
+                cpu_percent: 6.9,
+                memory_bytes: 1_800 << 20,
+            },
+        ],
+        unreadable: 0,
+    }));
     env.target_game = Some("fortnite".into());
     SystemAudit::from_env(
         env,

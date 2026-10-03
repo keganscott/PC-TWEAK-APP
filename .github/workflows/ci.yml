@@ -323,13 +323,13 @@ jobs:
           }
 
       # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
-      # Windows' own connection audit log, a positive control, then 60 s of the
+      # Windows' own connection audit log, a positive control, then 150 s of the
       # shipped exe and every process it starts. Fails on any network connection
       # by peaktweaks.exe; reports WebView2's own (NOTES.md N40). Last, so its
       # report is at the end of the log.
       - name: The app opens no network connections
         shell: pwsh
-        run: ./scripts/check-no-outbound.ps1 -Exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe') -Seconds 60
+        run: ./scripts/check-no-outbound.ps1 -Exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe') -Seconds 150
 
   # Fast cross-OS check: the engine's journal and transaction logic runs against
   # the in-memory registry, so it is tested on Linux too.

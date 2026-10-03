@@ -168,3 +168,27 @@ fn the_test_build_capability_is_the_shipped_one_minus_revert_all() {
     assert_eq!(got, expected);
     assert_eq!(e2e.get("remote"), None, "no remote origins");
 }
+
+/// WebView2's own background networking is switched off in the shipped window
+/// (NOTES.md N40), and the WebDriver test build must use the same switches
+/// plus only its debugging port, or the e2e and network checks stop testing
+/// the shipped behaviour.
+#[test]
+fn the_window_turns_off_webview2_background_networking_in_both_builds() {
+    let shipped: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let e2e: serde_json::Value = serde_json::from_str(include_str!("../../e2e-tauri/tauri.e2e.conf.json")).unwrap();
+    let args = shipped["app"]["windows"][0]["additionalBrowserArgs"].as_str().unwrap();
+    for switch in [
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--disable-domain-reliability",
+        "--no-pings",
+        "msSmartScreenProtection",
+    ] {
+        assert!(args.contains(switch), "{switch} missing from {args}");
+    }
+    assert_eq!(
+        e2e["app"]["windows"][0]["additionalBrowserArgs"].as_str().unwrap(),
+        format!("{args} --remote-debugging-port=9222")
+    );
+}

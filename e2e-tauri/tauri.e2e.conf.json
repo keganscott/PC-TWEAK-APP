@@ -8,7 +8,7 @@
         "height": 760,
         "minWidth": 1024,
         "minHeight": 640,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings --remote-debugging-port=9222"
       }
     ],
     "security": {

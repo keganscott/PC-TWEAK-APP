@@ -174,6 +174,27 @@ describe("review regressions", () => {
     expect(await within(row).findByText("Windows refused a settings change.")).toBeTruthy();
   });
 
+  it("game cards say where each game is and what to change in its own settings", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const card = (name: string) =>
+      screen.getAllByRole("heading", { level: 3 }).find((h) => h.textContent === name)!.closest("li") as HTMLElement;
+    await screen.findByRole("heading", { name: "Per game" });
+
+    const fortnite = card("Fortnite");
+    expect(within(fortnite).getByText(/Installed at D:\\Epic Games\\Fortnite \(D:, a hard drive\)/)).toBeTruthy();
+    expect(within(fortnite).getByText("Rendering mode: Performance.")).toBeTruthy();
+    expect(within(fortnite).getByText(/Source: Epic Games/)).toBeTruthy();
+    // The sample PC is not a two-chip laptop, so no graphics-chip line.
+    expect(within(fortnite).queryByText(/Graphics chip/)).toBeNull();
+
+    const minecraft = card("Minecraft");
+    expect(within(minecraft).getByText("Not found in the places PeakTweaks looks.")).toBeTruthy();
+    expect(within(minecraft).getByText(/no Minecraft settings advice yet/)).toBeTruthy();
+    expect(within(minecraft).queryByText(/Source:/)).toBeNull();
+  });
+
   it("Backups says where the undo files are for a PC that will not start", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

@@ -1,9 +1,13 @@
+import type { GameGpuChoice } from "../../generated/GameGpuChoice";
+import type { GameInstall } from "../../generated/GameInstall";
 import type { GameReadiness } from "../../generated/GameReadiness";
+import type { GpuPreference } from "../../generated/GpuPreference";
 import type { Probe } from "../../generated/Probe";
 import type { SecurityFeature } from "../../generated/SecurityFeature";
 import { explain } from "../../lib/errors";
+import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { Callout, Card, ErrorCallout, PageHeader, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { Callout, Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
 const FEATURE: Record<SecurityFeature, string> = {
   secure_boot: "Secure Boot",
@@ -23,8 +27,14 @@ export function GamesView() {
   const targetOp = useStore((s) => s.targetOp);
   const audit = useStore((s) => s.audit);
   const technical = useTechnical();
+  const sample = useStore((s) => s.sample);
   const { selectTargetGame } = useActions();
   const readiness = audit?.antiCheat ?? null;
+  const installs = audit?.env.gameInstalls ?? null;
+  // The graphics chip matters only where the scanner looked at it: laptops
+  // with more than one chip.
+  const twoChips = audit?.scan.findings.some((f) => f.id === "gpu.choice") ?? false;
+  const choices = twoChips ? (audit?.env.gpuChoices ?? []) : [];
 
   return (
     <>
@@ -99,13 +109,21 @@ export function GamesView() {
 
         {readiness && (
           <section aria-labelledby="per-game-title">
-            <h2 id="per-game-title" className="mb-3 text-lg font-semibold">
-              Per game
-            </h2>
+            <div className="mb-3 flex items-center gap-2">
+              <h2 id="per-game-title" className="text-lg font-semibold">
+                Per game
+              </h2>
+              {sample && <SampleBadge />}
+            </div>
             <ul className="flex flex-col gap-3">
               {readiness.perGame.map((g) => (
                 <li key={g.gameId}>
-                  <GameCard readiness={g} name={games.find((x) => x.id === g.gameId)?.name ?? g.gameId} />
+                  <GameCard
+                    readiness={g}
+                    name={games.find((x) => x.id === g.gameId)?.name ?? g.gameId}
+                    install={installs ? (installs.find((i) => i.gameId === g.gameId) ?? null) : undefined}
+                    choice={choices.find((c) => c.gameId === g.gameId)}
+                  />
                 </li>
               ))}
             </ul>
@@ -116,7 +134,40 @@ export function GamesView() {
   );
 }
 
-function GameCard({ readiness, name }: { readiness: GameReadiness; name: string }) {
+const CHOICE: Record<GpuPreference, string> = {
+  not_set: "no choice saved in Windows, so Windows or the graphics driver picks",
+  let_windows_decide: "set to let Windows decide",
+  power_saving: "set to Power saving",
+  high_performance: "set to High performance",
+};
+
+function installText(install: GameInstall): string {
+  const kind =
+    install.disk.state !== "yes"
+      ? ""
+      : install.disk.value.media === "hdd"
+        ? ", a hard drive"
+        : ", a solid-state drive";
+  return `Installed at ${install.path}${install.drive ? ` (${install.drive}${kind})` : ""}.`;
+}
+
+/**
+ * One game: anti-cheat readiness, where it is installed, the graphics chip on
+ * two-chip laptops, and advice for the game's own settings. `install` is
+ * `undefined` when the scan has not looked yet and `null` when it found nothing.
+ */
+function GameCard({
+  readiness,
+  name,
+  install,
+  choice,
+}: {
+  readiness: GameReadiness;
+  name: string;
+  install: GameInstall | null | undefined;
+  choice: GameGpuChoice | undefined;
+}) {
+  const guidance = GAME_GUIDANCE[readiness.gameId];
   const s = readiness.status;
   const badge =
     s.status === "ready"
@@ -150,6 +201,30 @@ function GameCard({ readiness, name }: { readiness: GameReadiness; name: string 
           <Callout tone="info" title="Turning these on happens in your PC's firmware setup (BIOS/UEFI).">
             Your motherboard manual shows how. PeakTweaks does not change firmware settings.
           </Callout>
+        </div>
+      )}
+      {install !== undefined && (
+        <p className="mt-3 text-sm wrap-anywhere">
+          {install ? installText(install) : "Not found in the places PeakTweaks looks."}
+        </p>
+      )}
+      {choice && (
+        <p className="mt-1 text-sm text-ink-muted">
+          Graphics chip: {choice.preference.state === "yes" ? CHOICE[choice.preference.value] : "could not tell"}.
+        </p>
+      )}
+      {guidance && (
+        <div className="mt-3 border-t border-line pt-3">
+          <h4 className="text-sm font-medium">In the game's own settings</h4>
+          <p className="mt-1 text-sm text-ink-muted">{guidance.intro}</p>
+          {guidance.steps.length > 0 && (
+            <ul className="mt-2 list-disc pl-5 text-sm">
+              {guidance.steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ul>
+          )}
+          {guidance.source && <p className="mt-2 text-xs text-ink-faint">Source: {guidance.source}</p>}
         </div>
       )}
     </Card>

@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import * as fx from "./generated/fixtures";
 import { App } from "./App";
 import type { Backend } from "./services/backend";
 import { createMockBackend, type MockOptions } from "./services/mockIpc";
@@ -223,6 +224,15 @@ describe("review regressions", () => {
     const card = (await screen.findByRole("heading", { name: "If Windows will not start" })).closest("section, div") as HTMLElement;
     expect(within(card).getByText(/recover\.cmd/)).toBeTruthy();
     expect(within(card).getByText(/Safe Mode/)).toBeTruthy();
+    expect(within(card).queryByText(/could not be brought up to date/)).toBeNull();
+  });
+
+  it("Backups says when the offline undo files could not be updated at start-up", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({ ...base, listJournal: () => Promise.resolve(fx.journalView) });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    expect(await screen.findByText(/offline undo files could not be brought up to date/)).toBeTruthy();
   });
 
   it("Tools does not lock changes while it does not yet know about restore points", async () => {

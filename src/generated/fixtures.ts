@@ -200,7 +200,8 @@ export const journalView = {
       "kind": "unparsable_line",
       "detail": "skipped: expected value at line 1 column 1"
     }
-  ]
+  ],
+  "offlineError": "C:\\ProgramData\\PeakTweaks\\offline\\001_input.mouseaccel.reg: Access is denied. (os error 5)"
 } satisfies JournalView;
 
 export const engineErrors = [

@@ -105,6 +105,9 @@ fn journal_view() -> JournalView {
             kind: JournalWarningKind::UnparsableLine,
             detail: "skipped: expected value at line 1 column 1".into(),
         }],
+        offline_error: Some(
+            r"C:\ProgramData\PeakTweaks\offline\001_input.mouseaccel.reg: Access is denied. (os error 5)".into(),
+        ),
     }
 }
 

@@ -207,7 +207,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
             return { tweakId: t.id, ok: true, error: null };
           }),
       ),
-    listJournal: () => reply("listJournal", [], () => ({ records: clone(records), warnings: clone(fx.journalView.warnings) })),
+    listJournal: () => reply("listJournal", [], () => ({ records: clone(records), warnings: clone(fx.journalView.warnings), offlineError: null })),
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {
         const now = Date.now();

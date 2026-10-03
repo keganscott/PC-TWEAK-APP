@@ -284,6 +284,48 @@ fn crash_mid_apply_still_reverts() {
     assert_eq!(dw(&h, "C"), None);
 }
 
+#[test]
+fn a_crash_mid_apply_reaches_the_offline_undo_set_at_the_next_start() {
+    let tweak = TestTweak::new("t", KEY, &[("A", 1), ("B", 2)]);
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1), ("B", 2)])));
+    {
+        let (resolver, journal, _) = h.engine.parts_for_test();
+        let mut tx = Transaction::begin(&tweak, resolver, journal, JournalAction::Apply).unwrap();
+        tx.set_dword(RegRoot::LocalMachine, KEY, "A", 1).unwrap();
+        drop(tx); // crash: no commit, so no offline file was written
+    }
+    let offline = h.dir.path().join(crate::offline::DIR);
+    let reg_files = || -> Vec<String> {
+        std::fs::read_dir(&offline)
+            .map(|d| {
+                d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.ends_with(".reg"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(reg_files().is_empty());
+
+    h.restart(one(TestTweak::new("t", KEY, &[("A", 1), ("B", 2)])));
+    h.engine.refresh_offline_undo();
+    assert_eq!(reg_files(), ["001_t.reg"]);
+    assert_eq!(h.engine.journal_view().offline_error, None);
+}
+
+#[test]
+fn a_failed_offline_refresh_at_start_is_shown_and_cleared_by_the_next_change() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    // A file where the folder should be: the refresh cannot create it.
+    std::fs::write(h.dir.path().join(crate::offline::DIR), b"in the way").unwrap();
+    h.engine.refresh_offline_undo();
+    let err = h.engine.journal_view().offline_error.expect("the failure is kept");
+    assert!(err.contains("offline"), "{err}");
+
+    std::fs::remove_file(h.dir.path().join(crate::offline::DIR)).unwrap();
+    h.engine.apply("t").unwrap();
+    assert_eq!(h.engine.journal_view().offline_error, None);
+}
+
 // R6
 #[test]
 fn a_failed_apply_rolls_back_its_own_writes_and_returns_the_original_error() {

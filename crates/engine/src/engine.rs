@@ -55,6 +55,10 @@ pub struct RevertResult {
 pub struct JournalView {
     pub records: Vec<Record>,
     pub warnings: Vec<JournalWarning>,
+    /// Why the files for undoing changes from outside Windows (`offline.rs`)
+    /// could not be brought up to date at start-up, if they could not. Cleared
+    /// by the next apply or undo, which rewrites them or fails.
+    pub offline_error: Option<String>,
 }
 
 /// Progress event emitted on `engine://progress` while a command runs.
@@ -87,6 +91,7 @@ pub struct Engine {
     proof: Option<std::sync::Arc<crate::proof::service::ProofService>>,
     settings: crate::settings::Settings,
     settings_store: crate::settings::SettingsStore,
+    offline_error: Option<String>,
 }
 
 impl Engine {
@@ -117,6 +122,7 @@ impl Engine {
             proof: None,
             settings: crate::settings::Settings::default(),
             settings_store: crate::settings::SettingsStore::in_memory(),
+            offline_error: None,
         }
     }
 
@@ -352,6 +358,9 @@ impl Engine {
             }
         };
         self.probe.invalidate();
+        if result.is_ok() {
+            self.offline_error = None;
+        }
         result
     }
 
@@ -379,6 +388,9 @@ impl Engine {
         // cached probe results must not outlive it.
         let result = reverted.and_then(|()| tx.commit());
         self.probe.invalidate();
+        if result.is_ok() {
+            self.offline_error = None;
+        }
         result
     }
 
@@ -483,7 +495,18 @@ impl Engine {
         JournalView {
             records: self.journal.records().to_vec(),
             warnings: self.journal.warnings().to_vec(),
+            offline_error: self.offline_error.clone(),
         }
+    }
+
+    /// Bring the offline undo files in line with the journal. Run at start-up:
+    /// an apply that a crash cut short is outstanding in the journal but never
+    /// reached the commit that would have added it. A failure does not stop
+    /// the app; it is kept and shown in Backups.
+    pub fn refresh_offline_undo(&mut self) {
+        self.offline_error = crate::transaction::refresh_offline_set(&self.resolver, &self.journal, None)
+            .err()
+            .map(|e| e.to_string());
     }
 }
 
@@ -530,9 +553,11 @@ impl Engine {
         let resolver = ContextResolver::detect(elevated)?;
         let journal = Journal::open(&dir)?;
         let proof = Arc::new(build_proof_service(&dir));
-        Ok(Self::new(resolver, journal, tweaks, probe, license)
+        let mut engine = Self::new(resolver, journal, tweaks, probe, license)
             .with_proof_service(proof)
-            .with_settings_in(&dir))
+            .with_settings_in(&dir);
+        engine.refresh_offline_undo();
+        Ok(engine)
     }
 }
 

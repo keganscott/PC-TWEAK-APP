@@ -230,43 +230,8 @@ impl<'a> Transaction<'a> {
     /// revert (its commit closes them all). A rollback needs no refresh: it
     /// only runs before its apply's commit, which is what would have added it.
     fn refresh_offline(&self) -> Result<()> {
-        let outstanding: Vec<(String, Vec<JournalEntry>)> = self
-            .journal
-            .applied_tweaks_newest_first()
-            .into_iter()
-            .filter(|id| !(self.action == JournalAction::Revert && *id == self.tweak_id))
-            .map(|id| {
-                let writes = self.journal.outstanding(&id).to_vec();
-                (id, writes)
-            })
-            .collect();
-        let mut facts = offline::Facts {
-            control_set: self
-                .resolver
-                .read_dword(RegRoot::LocalMachine, r"SYSTEM\Select", "Current")
-                .ok()
-                .flatten(),
-            system_drive: std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()),
-            profiles: Default::default(),
-        };
-        for e in outstanding.iter().flat_map(|(_, w)| w) {
-            if let Some(sid) = e
-                .display_path
-                .strip_prefix("HKEY_USERS\\")
-                .and_then(|r| r.split('\\').next())
-            {
-                if !facts.profiles.contains_key(sid) {
-                    let key = format!(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}");
-                    let image = self
-                        .resolver
-                        .read_string(RegRoot::LocalMachine, &key, "ProfileImagePath")
-                        .ok()
-                        .flatten();
-                    facts.profiles.insert(sid.to_owned(), image);
-                }
-            }
-        }
-        offline::refresh(self.journal.root(), &offline::plan(&outstanding, &facts))
+        let closing = (self.action == JournalAction::Revert).then_some(self.tweak_id.as_str());
+        refresh_offline_set(self.resolver, self.journal, closing)
     }
 
     /// A per-user change is undone in the hive it was made in. The current
@@ -446,6 +411,46 @@ impl<'a> Transaction<'a> {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/// Rewrite `offline\` (offline.rs) to every tweak's outstanding applies,
+/// leaving out `closing`, a tweak whose revert is about to commit. Also run at
+/// start-up, which catches up after an apply that a crash cut short.
+pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal, closing: Option<&str>) -> Result<()> {
+    let outstanding: Vec<(String, Vec<JournalEntry>)> = journal
+        .applied_tweaks_newest_first()
+        .into_iter()
+        .filter(|id| Some(id.as_str()) != closing)
+        .map(|id| {
+            let writes = journal.outstanding(&id).to_vec();
+            (id, writes)
+        })
+        .collect();
+    let mut facts = offline::Facts {
+        control_set: resolver
+            .read_dword(RegRoot::LocalMachine, r"SYSTEM\Select", "Current")
+            .ok()
+            .flatten(),
+        system_drive: std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()),
+        profiles: Default::default(),
+    };
+    for e in outstanding.iter().flat_map(|(_, w)| w) {
+        if let Some(sid) = e
+            .display_path
+            .strip_prefix("HKEY_USERS\\")
+            .and_then(|r| r.split('\\').next())
+        {
+            if !facts.profiles.contains_key(sid) {
+                let key = format!(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}");
+                let image = resolver
+                    .read_string(RegRoot::LocalMachine, &key, "ProfileImagePath")
+                    .ok()
+                    .flatten();
+                facts.profiles.insert(sid.to_owned(), image);
+            }
+        }
+    }
+    offline::refresh(journal.root(), &offline::plan(&outstanding, &facts))
+}
 
 /// Registry value names allow characters that filenames do not. Also capped so
 /// a long name cannot push the path past MAX_PATH.

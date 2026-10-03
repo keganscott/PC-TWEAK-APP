@@ -5,4 +5,10 @@ import type { Record } from "./Record";
 /**
  * The journal as shown in the Backups tab.
  */
-export type JournalView = { records: Array<Record>, warnings: Array<JournalWarning>, };
+export type JournalView = { records: Array<Record>, warnings: Array<JournalWarning>, 
+/**
+ * Why the files for undoing changes from outside Windows (`offline.rs`)
+ * could not be brought up to date at start-up, if they could not. Cleared
+ * by the next apply or undo, which rewrites them or fails.
+ */
+offlineError: string | null, };

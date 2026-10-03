@@ -117,6 +117,14 @@ export function BackupsView() {
           <p className="mt-2 text-xs text-ink-faint">
             Note this down now: if Windows does not start, this page cannot be opened.
           </p>
+          {journal?.offlineError && (
+            <div className="mt-3">
+              <Callout tone="warn" title="The offline undo files could not be brought up to date when PeakTweaks started.">
+                <p>They will be rewritten at the next change or Undo; if that fails too, it says why.</p>
+                {technical && <p className="mt-1 break-all font-mono text-xs">{journal.offlineError}</p>}
+              </Callout>
+            </div>
+          )}
         </Card>
 
         <Card aria-labelledby="journal-title">

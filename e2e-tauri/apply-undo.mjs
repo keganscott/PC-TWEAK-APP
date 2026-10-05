@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { Builder, By, until } from "selenium-webdriver";
+import { Builder, By, Key, until } from "selenium-webdriver";
 
 const KEY = "HKCU\\Control Panel\\Mouse";
 const VALUES = ["MouseSpeed", "MouseThreshold1", "MouseThreshold2"];
@@ -70,6 +70,12 @@ try {
 
   await step("the dev-stubs build starts with changes unlocked", async () => {
     await driver.wait(until.elementLocated(heading("Home")), 60_000);
+    // The first-run welcome (if this machine has not seen it) covers the window.
+    const welcome = await driver.findElements(By.xpath(`//*[@role='dialog'][.//*[contains(normalize-space(), 'Welcome to PeakTweaks')]]`));
+    if (welcome.length > 0) {
+      await driver.actions().sendKeys(Key.ESCAPE).perform();
+      await driver.wait(async () => (await driver.findElements(By.css("[role='dialog']"))).length === 0, 10_000);
+    }
     await open("Tools");
     await driver.wait(until.elementLocated(text("Pointer precision")), 15_000);
     assert.equal((await driver.findElements(text("Changes are locked until there is a restore point."))).length, 0);

@@ -34,6 +34,8 @@ export interface MockOptions {
   gateOpen?: boolean;
   /** Make the next call to `command` fail with `error`. */
   failures?: Partial<Record<keyof Backend, EngineError>>;
+  /** Start as a first launch: the welcome has not been seen. Default: seen. */
+  firstRun?: boolean;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -44,6 +46,7 @@ const SAMPLE_NAMES: Record<string, { name: string; summary: string }> = {
   "fixture.foreign": { name: "Sample setting C", summary: "SAMPLE: already set by something other than PeakTweaks." },
   "fixture.blocked": { name: "Sample setting D", summary: "SAMPLE: not available on this PC." },
   "fixture.unknown": { name: "Sample setting E", summary: "SAMPLE: its current state could not be read." },
+  "fixture.drifted": { name: "Sample setting F", summary: "SAMPLE: applied, then changed outside PeakTweaks." },
 };
 
 function sampleTweaks(): TweakView[] {
@@ -64,7 +67,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   const failures = { ...options.failures };
   const listeners = new Set<(p: Progress) => void>();
   let tweaks = sampleTweaks();
-  let settings: Settings = clone(fx.systemAudit.settings) as Settings;
+  let settings: Settings = { ...(clone(fx.systemAudit.settings) as Settings), welcomeSeen: !options.firstRun };
   let targetGame: string | null = null;
   let gateOpen = options.gateOpen ?? false;
   let seq = 100;

@@ -7,7 +7,15 @@ import { probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Dialog, ErrorCallout } from "../ui/primitives";
 
-export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsDialog({
+  open,
+  onClose,
+  onShowWelcome,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onShowWelcome: () => void;
+}) {
   const settings = useStore((s) => s.settings);
   const detected = useStore((s) => probeValue(s.audit?.env.hardware?.rigClass));
   const settingsOp = useStore((s) => s.settingsOp);
@@ -27,7 +35,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
 
   const save = async () => {
     // Stay open on failure so the error is seen next to what was chosen.
-    if (await saveSettings({ language, rigClassOverride: rig || null })) onClose();
+    // Only what this dialog edits changes; anything else stored is kept.
+    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null }))) onClose();
   };
 
   return (
@@ -90,6 +99,11 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           <p className="mt-1 text-xs text-ink-faint">
             Changes defaults and wording only. It never turns off a safety check.
           </p>
+        </div>
+        <div>
+          <Button variant="ghost" onClick={onShowWelcome}>
+            Show the welcome again
+          </Button>
         </div>
         {settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
       </div>

@@ -109,3 +109,18 @@ test("a printed scan has no app chrome, keeps every finding and says it is SAMPL
   const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   expect(bg).toBe("rgb(255, 255, 255)");
 });
+
+test("the welcome walks through its three steps and passes an accessibility scan", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Show the welcome again" }).click();
+  const dialog = page.getByRole("dialog", { name: /Welcome to PeakTweaks/ });
+  await expect(dialog).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  for (const step of ["Your safety net", "Your scan"]) {
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByRole("dialog", { name: new RegExp(step) })).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Get started" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});

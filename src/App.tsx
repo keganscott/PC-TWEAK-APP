@@ -12,6 +12,7 @@ import { HomeView } from "./components/views/HomeView";
 import { ProofView } from "./components/views/ProofView";
 import { SettingsDialog } from "./components/views/SettingsDialog";
 import { ToolsView } from "./components/views/ToolsView";
+import { WelcomeDialog } from "./components/views/WelcomeDialog";
 
 const VIEW: Record<ViewId, () => React.JSX.Element> = {
   home: HomeView,
@@ -23,11 +24,26 @@ const VIEW: Record<ViewId, () => React.JSX.Element> = {
 
 export function App() {
   const boot = useStore((s) => s.boot);
-  const { boot: start } = useActions();
+  const settings = useStore((s) => s.settings);
+  const { boot: start, saveSettings } = useActions();
   const [view, setView] = useState<ViewId>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  // First launch: the welcome shows until it is closed once. Closing it is
+  // remembered by the engine; if that save fails it simply shows next time.
+  const [welcomeClosed, setWelcomeClosed] = useState(false);
+  const [welcomeAgain, setWelcomeAgain] = useState(false);
+  const welcomeOpen = welcomeAgain || (settings !== null && !settings.welcomeSeen && !welcomeClosed);
+  const closeWelcome = useCallback(() => {
+    setWelcomeClosed(true);
+    setWelcomeAgain(false);
+    if (settings && !settings.welcomeSeen) void saveSettings({ ...settings, welcomeSeen: true });
+  }, [settings, saveSettings]);
+  const showWelcome = useCallback(() => {
+    setSettingsOpen(false);
+    setWelcomeAgain(true);
+  }, []);
 
   useEffect(() => {
     void start();
@@ -57,7 +73,8 @@ export function App() {
       <AppShell view={view} onNavigate={setView} onOpenSettings={openSettings}>
         <View />
       </AppShell>
-      <SettingsDialog open={settingsOpen} onClose={closeSettings} />
+      <SettingsDialog open={settingsOpen} onClose={closeSettings} onShowWelcome={showWelcome} />
+      <WelcomeDialog open={welcomeOpen && !settingsOpen} onClose={closeWelcome} />
     </>
   );
 }

@@ -6,4 +6,9 @@ export type Settings = {
 /**
  * When set, replaces the detected rig class for defaults and copy.
  */
-rigClassOverride: RigClass | null, language: Language, };
+rigClassOverride: RigClass | null, language: Language, 
+/**
+ * The first-run welcome was shown and closed. Missing in older files,
+ * which then show it once.
+ */
+welcomeSeen: boolean, };

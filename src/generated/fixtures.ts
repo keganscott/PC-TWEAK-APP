@@ -678,7 +678,8 @@ export const systemAudit = {
   },
   "settings": {
     "rigClassOverride": null,
-    "language": "plain"
+    "language": "plain",
+    "welcomeSeen": false
   },
   "effectiveRigClass": "mid"
 } satisfies SystemAudit;

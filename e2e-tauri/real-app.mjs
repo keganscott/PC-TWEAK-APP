@@ -83,6 +83,31 @@ try {
     }
   });
 
+  await step("a first launch shows the welcome, and closing it is remembered by the engine", async () => {
+    const welcome = By.xpath(`//*[@role='dialog'][.//*[contains(normalize-space(), 'Welcome to PeakTweaks')]]`);
+    const shown = await driver
+      .wait(until.elementLocated(welcome), 10_000)
+      .then(() => true)
+      .catch(() => false);
+    if (!shown) {
+      // Settings on this runner may already say it was seen (an earlier run).
+      const settings = await ipc("get_settings");
+      assert.ok(settings.ok && settings.value.welcomeSeen, "no welcome, and the engine says it was never seen");
+      console.log("(not shown: already seen on this machine)");
+      return;
+    }
+    const dialog = await driver.findElement(welcome);
+    console.log(`\n===== Welcome =====\n${(await dialog.getText()).slice(0, 600)}\n`);
+    for (const label of ["Next", "Next", "Get started"]) {
+      await (await driver.findElement(By.xpath(`//*[@role='dialog']//button[normalize-space()='${label}']`))).click();
+    }
+    await driver.wait(async () => (await driver.findElements(welcome)).length === 0, 10_000);
+    await driver.wait(async () => {
+      const settings = await ipc("get_settings");
+      return settings.ok && settings.value.welcomeSeen === true;
+    }, 10_000);
+  });
+
   await step("no SAMPLE data inside the real app", async () => {
     const t = await bodyText();
     assert.ok(!t.includes("Demo data, not this PC"), "the SAMPLE banner is showing inside the real app");

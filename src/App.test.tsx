@@ -250,6 +250,37 @@ describe("review regressions", () => {
     expect(program.value).toBe("javaw.exe");
   });
 
+  it("a first launch shows the welcome once, step by step, and remembers it was closed", async () => {
+    const backend = createMockBackend({ gateOpen: true, firstRun: true });
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    const dialog = await screen.findByRole("dialog", { name: /Welcome to PeakTweaks: What PeakTweaks does/ });
+    expect(within(dialog).getByText(/collects no data/)).toBeTruthy();
+    expect(within(dialog).getByText("Step 1 of 3")).toBeTruthy();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("dialog", { name: /Your safety net/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("dialog", { name: /What PeakTweaks does/ })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ welcomeSeen: true })));
+  });
+
+  it("the welcome stays away once seen and can be shown again from Settings", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Show the welcome again" }));
+    expect(await screen.findByRole("dialog", { name: /What PeakTweaks does/ })).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("Backups lists the change PeakTweaks makes for a restore point, and Undo all covers it", async () => {
     renderApp(createMockBackend({ gateOpen: false }));
     await userEvent.click(await screen.findByRole("button", { name: "Make a restore point" }));

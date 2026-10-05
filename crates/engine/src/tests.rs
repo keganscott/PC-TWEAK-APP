@@ -923,6 +923,7 @@ fn settings_persist_and_the_override_wins_over_the_detected_rig_class() {
         .set_settings(Settings {
             rig_class_override: Some(RigClass::High),
             language: Language::Technical,
+            ..Settings::default()
         })
         .unwrap();
     assert_eq!(engine.effective_rig_class(), Some(RigClass::High));

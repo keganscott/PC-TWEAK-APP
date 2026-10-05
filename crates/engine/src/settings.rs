@@ -1,6 +1,6 @@
 //! The few choices a user makes that are not tweaks: a rig-class override
-//! (plan 6.1: "User can override") and the plain/technical wording (plan
-//! section 7). Stored as `settings.json` in the protected data directory.
+//! (plan 6.1: "User can override"), the plain/technical wording (plan
+//! section 7), and whether the first-run welcome was seen. Stored as `settings.json` in the protected data directory.
 //!
 //! Settings are preferences only. They change defaults and copy; they never
 //! open a gate, change a licence or hide a safety check, and nothing in here is
@@ -37,6 +37,9 @@ pub struct Settings {
     /// When set, replaces the detected rig class for defaults and copy.
     pub rig_class_override: Option<RigClass>,
     pub language: Language,
+    /// The first-run welcome was shown and closed. Missing in older files,
+    /// which then show it once.
+    pub welcome_seen: bool,
 }
 
 /// Where settings live. `None` (tests, dev) keeps them in memory only.
@@ -105,6 +108,7 @@ mod tests {
         let s = Settings {
             rig_class_override: Some(RigClass::High),
             language: Language::Technical,
+            welcome_seen: true,
         };
         store(dir.path()).save(&s).unwrap();
         assert_eq!(store(dir.path()).load(), s);
@@ -139,6 +143,18 @@ mod tests {
         let s = store(dir.path()).load();
         assert_eq!(s.language, Language::Technical);
         assert_eq!(s.rig_class_override, None);
+        assert!(!s.welcome_seen, "a file from before the welcome existed shows it once");
+    }
+
+    #[test]
+    fn having_seen_the_welcome_is_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Settings {
+            welcome_seen: true,
+            ..Settings::default()
+        };
+        store(dir.path()).save(&s).unwrap();
+        assert!(store(dir.path()).load().welcome_seen);
     }
 
     #[test]

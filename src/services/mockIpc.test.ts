@@ -39,9 +39,19 @@ describe("the SAMPLE mock keeps the engine's rules", () => {
     const start = (await b.listJournal()).records.length;
     await b.createRestorePoint();
     await b.applyTweak("fixture.default");
-    const records = (await b.listJournal()).records;
-    expect(records.length).toBe(start + 3); // restore point, write, commit
-    expect(records.some((r) => r.record === "restore_point")).toBe(true);
+    const journal = await b.listJournal();
+    // As the engine: the restore-frequency change (write, commit), the restore
+    // point, then the apply (write, commit).
+    expect(journal.records.length).toBe(start + 5);
+    expect(journal.records.some((r) => r.record === "restore_point")).toBe(true);
+    const applied = journal.applied.map((c) => [c.tweakId, c.kind]);
+    expect(applied).toContainEqual(["fixture.default", "catalogue"]);
+    expect(applied).toContainEqual(["system.restore.frequency", "internal"]);
+
+    // Undo all reverts everything listed, the engine's own change included.
+    const results = await b.revertAll();
+    expect(results.map((r) => r.tweakId).sort()).toEqual(journal.applied.map((c) => c.tweakId).sort());
+    expect((await b.listJournal()).applied).toEqual([]);
   });
 
   it("reports progress to subscribers until they unsubscribe", async () => {

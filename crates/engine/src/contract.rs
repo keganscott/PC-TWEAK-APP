@@ -86,6 +86,18 @@ fn journal_view() -> JournalView {
         created_keys: created,
     };
     JournalView {
+        applied: vec![
+            crate::engine::AppliedChange {
+                tweak_id: "input.mouseaccel".into(),
+                name: "Pointer precision".into(),
+                kind: crate::engine::ChangeKind::Catalogue,
+            },
+            crate::engine::AppliedChange {
+                tweak_id: "system.restore.frequency".into(),
+                name: "Allow a restore point on demand".into(),
+                kind: crate::engine::ChangeKind::Internal,
+            },
+        ],
         records: vec![
             Record::Write(entry(2, Some(RawValue::sz("1")), vec![])),
             Record::Write(entry(3, None, vec![r"Control Panel\Mouse".into()])),

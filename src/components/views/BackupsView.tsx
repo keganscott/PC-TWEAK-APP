@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { Undo2 } from "lucide-react";
 
+import type { AppliedChange } from "../../generated/AppliedChange";
+import type { ChangeKind } from "../../generated/ChangeKind";
 import type { Record as JournalRecord } from "../../generated/Record";
 import { explain } from "../../lib/errors";
 import { formatDateTime } from "../../lib/format";
@@ -17,9 +19,12 @@ export function BackupsView() {
   const { revertAll } = useActions();
   const [confirming, setConfirming] = useState(false);
 
-  const applied = useMemo(() => tweaks.filter((t) => t.state.status === "applied"), [tweaks]);
+  // From the journal, not the tweak list: every change with an apply still on
+  // record, including PeakTweaks' own and any this version no longer ships.
+  const applied = useMemo(() => journal?.applied ?? [], [journal]);
   const records = useMemo(() => [...(journal?.records ?? [])].sort((a, b) => b.seq - a.seq), [journal]);
-  const name = (id: string) => tweaks.find((t) => t.id === id)?.name ?? id;
+  const name = (id: string) =>
+    tweaks.find((t) => t.id === id)?.name ?? applied.find((c) => c.tweakId === id)?.name ?? id;
 
   return (
     <>
@@ -63,8 +68,8 @@ export function BackupsView() {
             <p className="mt-2 text-sm text-ink-muted">Nothing PeakTweaks changed is in effect.</p>
           ) : (
             <ul className="mt-3 divide-y divide-line">
-              {applied.map((t) => (
-                <AppliedRow key={t.id} id={t.id} name={t.name} technical={technical} />
+              {applied.map((c) => (
+                <AppliedRow key={c.tweakId} change={c} technical={technical} />
               ))}
             </ul>
           )}
@@ -184,13 +189,25 @@ export function BackupsView() {
 }
 
 /** One applied change with its own Undo: busy while it runs, and its error if it fails. */
-function AppliedRow({ id, name, technical }: { id: string; name: string; technical: boolean }) {
+const KIND_NOTE: Record<ChangeKind, string | null> = {
+  catalogue: null,
+  internal: "Made by PeakTweaks so it can create a restore point when you ask, even if Windows made one in the last day.",
+  retired: "This version of PeakTweaks no longer includes this change, so Undo may not be able to put it back.",
+};
+
+function AppliedRow({ change, technical }: { change: AppliedChange; technical: boolean }) {
+  const id = change.tweakId;
   const op = useStore((s) => s.tweakOps[id]);
   const { revertTweak, clearTweakOp } = useActions();
+  const note = KIND_NOTE[change.kind];
   return (
     <li className="py-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm">{name}</span>
+        <div className="min-w-0">
+          <span className="text-sm">{change.name}</span>
+          {note && <p className="text-xs text-ink-faint">{note}</p>}
+          {technical && <p className="font-mono text-xs text-ink-faint">{id}</p>}
+        </div>
         <Button variant="ghost" busy={op?.status === "running"} onClick={() => void revertTweak(id)}>
           Undo
         </Button>

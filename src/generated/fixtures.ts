@@ -148,6 +148,18 @@ export const revertResults = [
 ] satisfies RevertResult[];
 
 export const journalView = {
+  "applied": [
+    {
+      "tweakId": "input.mouseaccel",
+      "name": "Pointer precision",
+      "kind": "catalogue"
+    },
+    {
+      "tweakId": "system.restore.frequency",
+      "name": "Allow a restore point on demand",
+      "kind": "internal"
+    }
+  ],
   "records": [
     {
       "record": "write",

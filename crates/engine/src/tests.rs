@@ -1215,3 +1215,43 @@ fn the_audit_after_a_change_reuses_hardware_and_only_an_explicit_rescan_forgets_
         "the user's rescan forgets everything"
     );
 }
+
+/// B1 (docs/AUDIT-2026-10-04.md): every change with an outstanding apply is
+/// listed for the Backups tab, including the engine's own restore-frequency
+/// change, newest first, so the user can see and undo it.
+#[test]
+fn the_journal_view_lists_every_outstanding_change_including_the_engines_own() {
+    use crate::engine::ChangeKind;
+
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    assert!(h.engine.journal_view().applied.is_empty());
+
+    h.engine.ensure_restore_frequency().unwrap();
+    h.engine.apply("t").unwrap();
+    let applied = h.engine.journal_view().applied;
+    let ids: Vec<&str> = applied.iter().map(|c| c.tweak_id.as_str()).collect();
+    assert_eq!(ids, ["t", crate::tweaks::system_restore::ID], "newest first");
+    assert_eq!(applied[0].kind, ChangeKind::Catalogue);
+    assert_eq!(applied[1].kind, ChangeKind::Internal);
+    assert_eq!(applied[1].name, "Allow a restore point on demand");
+
+    // Undoing the engine's own change works from the same list.
+    h.engine.revert(crate::tweaks::system_restore::ID).unwrap();
+    let ids: Vec<String> = h
+        .engine
+        .journal_view()
+        .applied
+        .into_iter()
+        .map(|c| c.tweak_id)
+        .collect();
+    assert_eq!(ids, ["t"]);
+
+    // A change this version no longer ships is still listed, by its id.
+    h.restart(vec![]);
+    let applied = h.engine.journal_view().applied;
+    assert_eq!(
+        (applied[0].tweak_id.as_str(), applied[0].kind),
+        ("t", ChangeKind::Retired)
+    );
+    assert_eq!(applied[0].name, "t");
+}

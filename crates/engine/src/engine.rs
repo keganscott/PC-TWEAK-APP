@@ -48,11 +48,39 @@ pub struct RevertResult {
     pub error: Option<String>,
 }
 
+/// Where a change with an outstanding apply comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    /// A tweak from the catalogue (Tools).
+    Catalogue,
+    /// A change PeakTweaks makes for itself (`tweaks::internal`), such as
+    /// allowing a restore point on demand.
+    Internal,
+    /// A tweak this version no longer ships (NOTES.md N49).
+    Retired,
+}
+
+/// A change whose apply is still outstanding in the journal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct AppliedChange {
+    pub tweak_id: String,
+    /// The tweak's name, or its id when this version does not ship it.
+    pub name: String,
+    pub kind: ChangeKind,
+}
+
 /// The journal as shown in the Backups tab.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct JournalView {
+    /// Every change with an outstanding apply, most recent first: what Undo
+    /// all reverts, whatever kind it is.
+    pub applied: Vec<AppliedChange>,
     pub records: Vec<Record>,
     pub warnings: Vec<JournalWarning>,
     /// Why the files for undoing changes from outside Windows (`offline.rs`)
@@ -509,7 +537,25 @@ impl Engine {
     }
 
     pub fn journal_view(&self) -> JournalView {
+        let applied = self
+            .journal
+            .applied_tweaks_newest_first()
+            .into_iter()
+            .map(|id| {
+                let (name, kind) = match self.slot_of(&id) {
+                    Ok(Slot::Catalogue(i)) => (self.tweaks[i].metadata().name.to_string(), ChangeKind::Catalogue),
+                    Ok(Slot::Internal(i)) => (self.internal[i].metadata().name.to_string(), ChangeKind::Internal),
+                    Err(_) => (id.clone(), ChangeKind::Retired),
+                };
+                AppliedChange {
+                    tweak_id: id,
+                    name,
+                    kind,
+                }
+            })
+            .collect();
         JournalView {
+            applied,
             records: self.journal.records().to_vec(),
             warnings: self.journal.warnings().to_vec(),
             offline_error: self.offline_error.clone(),

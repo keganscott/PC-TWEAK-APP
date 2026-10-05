@@ -11,6 +11,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import * as fx from "../generated/fixtures";
+import type { AppliedChange } from "../generated/AppliedChange";
 import type { BlockedReason } from "../generated/BlockedReason";
 import type { EngineError } from "../generated/EngineError";
 import type { JournalEntry } from "../generated/JournalEntry";
@@ -126,6 +127,17 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     return entry;
   };
 
+  // The engine's own restore-frequency change (an internal tweak): made with
+  // the first restore point, listed in Backups, undoable like any change.
+  const INTERNAL = fx.journalView.applied.find((c) => c.kind === "internal")!;
+  let internalApplied = false;
+  const outstanding = (): AppliedChange[] => [
+    ...tweaks
+      .filter((t) => t.state.status === "applied" || t.state.status === "drifted")
+      .map((t): AppliedChange => ({ tweakId: t.id, name: t.name, kind: "catalogue" })),
+    ...(internalApplied ? [clone(INTERNAL)] : []),
+  ];
+
   const find = (id: string): TweakView => {
     const t = tweaks.find((x) => x.id === id);
     if (!t) throw new EngineFault({ kind: "unknown_tweak", tweakId: id });
@@ -168,6 +180,10 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         emit("restore_create", "Creating the restore point (this can take a minute)");
         emit("restore_verify", "Checking Windows recorded it");
         gateOpen = true;
+        if (!internalApplied) {
+          write(INTERNAL.tweakId, "apply");
+          internalApplied = true;
+        }
         seq += 1;
         records.push({ record: "restore_point", ...clone(fx.journalView.records[3]), seq, unixMs: Date.now() } as JournalRecord);
         return clone(fx.restoreOutcome);
@@ -191,6 +207,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       }),
     revertTweak: (id) =>
       reply("revertTweak", [id], () => {
+        if (id === INTERNAL.tweakId && internalApplied) {
+          emit("revert", "Undoing", id);
+          internalApplied = false;
+          return [write(id, "revert")];
+        }
         const t = find(id);
         // As in the engine: anything with an apply still on record can be undone.
         if (t.state.status !== "applied" && t.state.status !== "drifted") {
@@ -203,15 +224,20 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       }),
     revertAll: () =>
       reply("revertAll", [], () =>
-        tweaks
-          .filter((t) => t.state.status === "applied" || t.state.status === "drifted")
-          .map((t) => {
-            write(t.id, "revert");
-            setState(t.id, { status: "default" });
-            return { tweakId: t.id, ok: true, error: null };
-          }),
+        outstanding().map((c) => {
+          write(c.tweakId, "revert");
+          if (c.kind === "internal") internalApplied = false;
+          else setState(c.tweakId, { status: "default" });
+          return { tweakId: c.tweakId, ok: true, error: null };
+        }),
       ),
-    listJournal: () => reply("listJournal", [], () => ({ records: clone(records), warnings: clone(fx.journalView.warnings), offlineError: null })),
+    listJournal: () =>
+      reply("listJournal", [], () => ({
+        applied: outstanding(),
+        records: clone(records),
+        warnings: clone(fx.journalView.warnings),
+        offlineError: null,
+      })),
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {
         const now = Date.now();

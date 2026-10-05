@@ -250,6 +250,17 @@ describe("review regressions", () => {
     expect(program.value).toBe("javaw.exe");
   });
 
+  it("Backups lists the change PeakTweaks makes for a restore point, and Undo all covers it", async () => {
+    renderApp(createMockBackend({ gateOpen: false }));
+    await userEvent.click(await screen.findByRole("button", { name: "Make a restore point" }));
+    expect(await screen.findByText(/Restore point #\d+ is ready\./)).toBeTruthy();
+    await goTo("Backups");
+    const row = (await screen.findByText("Allow a restore point on demand")).closest("li") as HTMLElement;
+    expect(within(row).getByText(/Made by PeakTweaks so it can create a restore point/)).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "Undo" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Undo all" }).hasAttribute("disabled")).toBe(false);
+  });
+
   it("Backups says where the undo files are for a PC that will not start", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

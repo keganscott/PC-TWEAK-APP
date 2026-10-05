@@ -60,5 +60,5 @@ mod tests;
 #[cfg(test)]
 mod testutil;
 
-pub use engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, TweakView};
+pub use engine::{AppliedChange, ChangeKind, ContextInfo, Engine, JournalView, Progress, RevertResult, TweakView};
 pub use sysprobe::SystemAudit;

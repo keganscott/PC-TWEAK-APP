@@ -11,6 +11,7 @@ const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }>
   default: { tone: "neutral", label: "Not applied" },
   applied: { tone: "ok", label: "Applied" },
   foreign: { tone: "info", label: "Already set outside PeakTweaks" },
+  drifted: { tone: "warn", label: "Changed outside PeakTweaks since it was applied" },
   blocked: { tone: "bad", label: "Not available" },
   unknown: { tone: "warn", label: "Could not read its current state" },
 };
@@ -93,6 +94,9 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
   const { tone, label } = STATE[tweak.state.status];
   const running = op?.status === "running";
   const applied = tweak.state.status === "applied";
+  // Our apply is still on record but Windows has another value now: both
+  // directions stay open (set ours again, or put back what was there before).
+  const drifted = tweak.state.status === "drifted";
   const canApply =
     !applied && !tweak.blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!tweak.tradeoff || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
@@ -118,6 +122,11 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
           {tweak.state.status === "unknown" && technical && (
             <p className="mt-2 font-mono text-xs text-ink-faint">{tweak.state.detail}</p>
           )}
+          {drifted && (
+            <p className="mt-2 text-sm text-ink-muted">
+              Windows no longer has the value PeakTweaks set. Undo puts back what was there before PeakTweaks changed it.
+            </p>
+          )}
           {tweak.requiresReboot && <p className="mt-2 text-xs text-ink-faint">Takes effect after a restart.</p>}
           {technical && <p className="mt-2 break-all font-mono text-xs text-ink-faint">{tweak.target}</p>}
         </div>
@@ -127,9 +136,16 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
               Undo
             </Button>
           ) : (
-            <Button variant="primary" busy={running} disabled={!canApply} onClick={() => void applyTweak(tweak.id)}>
-              Apply
-            </Button>
+            <>
+              <Button variant="primary" busy={running} disabled={!canApply} onClick={() => void applyTweak(tweak.id)}>
+                {drifted ? "Apply again" : "Apply"}
+              </Button>
+              {drifted && (
+                <Button busy={running} onClick={() => void revertTweak(tweak.id)}>
+                  Undo
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>

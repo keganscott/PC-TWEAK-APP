@@ -193,6 +193,11 @@ pub enum TweakState {
     /// Non-default, but we have no journal entry: someone else set this.
     /// The UI offers "Undo it" rather than a toggle.
     Foreign,
+    /// The journal still holds our apply, but Windows does not have the value
+    /// we wrote: something outside PeakTweaks changed it since, or the apply
+    /// was cut short (a crash). Undo restores the values from before our
+    /// apply; Apply sets ours again.
+    Drifted,
     /// Predicate failed.
     Blocked { reason: BlockedReason },
     /// We could not read the state. The UI shows this and blocks Apply; a read

@@ -301,6 +301,9 @@ impl Engine {
                     // A read failure is its own state. Reporting it as Default
                     // would invite an Apply on top of something we cannot see.
                     match tweak.read_state(&self.resolver, applied) {
+                        // Our apply is outstanding but Windows no longer has
+                        // our value: changed outside PeakTweaks. Kept undoable.
+                        Ok(TweakState::Default | TweakState::Foreign) if applied => TweakState::Drifted,
                         Ok(s) => s,
                         Err(e) => TweakState::Unknown { detail: e.to_string() },
                     }

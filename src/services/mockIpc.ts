@@ -176,6 +176,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       reply("applyTweak", [id], () => {
         const t = find(id);
         if (t.state.status === "blocked") throw blocked(t.state.reason);
+        if (t.blocked) throw blocked(t.blocked);
         if (!gateOpen) {
           throw blocked({
             code: "no_restore_point",
@@ -191,7 +192,10 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     revertTweak: (id) =>
       reply("revertTweak", [id], () => {
         const t = find(id);
-        if (t.state.status !== "applied") throw new EngineFault({ kind: "no_journal_entry", tweakId: id });
+        // As in the engine: anything with an apply still on record can be undone.
+        if (t.state.status !== "applied" && t.state.status !== "drifted") {
+          throw new EngineFault({ kind: "no_journal_entry", tweakId: id });
+        }
         emit("revert", "Undoing", id);
         const entry = write(id, "revert");
         setState(id, { status: "default" });
@@ -200,7 +204,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     revertAll: () =>
       reply("revertAll", [], () =>
         tweaks
-          .filter((t) => t.state.status === "applied")
+          .filter((t) => t.state.status === "applied" || t.state.status === "drifted")
           .map((t) => {
             write(t.id, "revert");
             setState(t.id, { status: "default" });

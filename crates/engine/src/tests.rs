@@ -277,7 +277,8 @@ fn crash_mid_apply_still_reverts() {
     // App restarts; the journal has the writes but no commit.
     h.restart(one(TestTweak::new("t", KEY, &[("A", 1), ("B", 2), ("C", 3)])));
     let views = h.engine.list().unwrap();
-    assert_eq!(views[0].state, TweakState::Default); // not all three set
+    // Not all three set, but the journal holds the two writes: undoable.
+    assert_eq!(views[0].state, TweakState::Drifted);
     h.engine.revert("t").unwrap();
     assert_eq!(dw(&h, "A"), None);
     assert_eq!(dw(&h, "B"), Some(99));
@@ -603,6 +604,26 @@ fn the_list_shows_the_plan_a_change_needs_before_apply_is_tried() {
     t.tier = Tier::Pro;
     let engine = build_engine(&fake, dir.path(), one(t), true, Tier::Pro);
     assert!(engine.list().unwrap()[0].blocked.is_none());
+}
+
+/// B2 (docs/AUDIT-2026-10-04.md): a change undone or altered outside
+/// PeakTweaks while its apply is still outstanding in the journal keeps its
+/// Undo, and says so, instead of reading as "not applied".
+#[test]
+fn a_change_altered_outside_peaktweaks_reads_as_drifted_and_keeps_its_undo() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(5));
+    h.engine.apply("t").unwrap();
+    assert_eq!(h.engine.list().unwrap()[0].state, TweakState::Applied);
+
+    // Someone sets it back to what it was before (or to anything else).
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(7));
+    assert_eq!(h.engine.list().unwrap()[0].state, TweakState::Drifted);
+
+    // Undo still restores the value from before the apply.
+    h.engine.revert("t").unwrap();
+    assert_eq!(dw(&h, "A"), Some(5));
+    assert_eq!(h.engine.list().unwrap()[0].state, TweakState::Default);
 }
 
 #[test]

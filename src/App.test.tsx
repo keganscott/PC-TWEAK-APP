@@ -96,6 +96,23 @@ describe("agent brief", () => {
     expect(within(card).getByRole("button", { name: "Undo" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("a change altered outside PeakTweaks offers both Apply again and Undo", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({
+      ...base,
+      listTweaks: async () =>
+        (await base.listTweaks()).map((t) =>
+          t.id === "fixture.default" ? { ...t, safety: "safe" as const, state: { status: "drifted" as const } } : t,
+        ),
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(card).getByText("Changed outside PeakTweaks since it was applied")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Apply again" }).hasAttribute("disabled")).toBe(false);
+    expect(within(card).getByRole("button", { name: "Undo" }).hasAttribute("disabled")).toBe(false);
+  });
+
   it("a change the plan does not include says so and cannot be applied, without an error first", async () => {
     const base = createMockBackend({ gateOpen: true });
     const reason = { code: "tier_required" as const, trigger: "pro", message: "This change needs the Pro plan." };

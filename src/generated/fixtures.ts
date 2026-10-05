@@ -107,6 +107,23 @@ export const tweakViews = [
       "detail": "registry test: cannot read"
     },
     "blocked": null
+  },
+  {
+    "id": "fixture.drifted",
+    "name": "test",
+    "summary": "test",
+    "target": "test",
+    "category": "test",
+    "tier": "free",
+    "safety": "safe",
+    "impact": "moderate",
+    "tradeoff": null,
+    "requiresReboot": false,
+    "context": "service",
+    "state": {
+      "status": "drifted"
+    },
+    "blocked": null
   }
 ] satisfies TweakView[];
 

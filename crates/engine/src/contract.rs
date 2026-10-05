@@ -48,6 +48,7 @@ fn views() -> Vec<crate::engine::TweakView> {
     blocked.block = true;
     let mut unknown = TestTweak::new("fixture.unknown", "K5", &[("A", 1)]);
     unknown.fail_read = true;
+    let drifted = TestTweak::new("fixture.drifted", "K6", &[("A", 1)]);
 
     let tweaks: Vec<Box<dyn Tweak>> = vec![
         Box::new(plain),
@@ -55,9 +56,13 @@ fn views() -> Vec<crate::engine::TweakView> {
         Box::new(foreign),
         Box::new(blocked),
         Box::new(unknown),
+        Box::new(drifted),
     ];
     let mut h = Harness::new(tweaks);
     h.engine.apply("fixture.applied").unwrap();
+    h.engine.apply("fixture.drifted").unwrap();
+    h.fake
+        .set_external(crate::registry::Hive::LocalMachine, "K6", "A", RawValue::dword(9));
     h.fake
         .set_external(crate::registry::Hive::LocalMachine, "K3", "A", RawValue::dword(1));
     h.engine.list().unwrap()

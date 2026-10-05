@@ -365,10 +365,12 @@ fn verify_new_point(svc: &RestoreService, max_before: u32, expected: Option<u32>
         }
         let after = svc.ops.list_points()?;
         let newer: Vec<&RestorePoint> = after.iter().filter(|p| p.sequence_number > max_before).collect();
+        // Ours only: the number Windows gave us, else our own description. A
+        // newer point with neither is another program's (Windows Update makes
+        // them too) and is never recorded as ours.
         let pick = expected
             .and_then(|n| newer.iter().copied().find(|p| p.sequence_number == n))
-            .or_else(|| newer.iter().copied().find(|p| p.description == RESTORE_DESCRIPTION))
-            .or_else(|| newer.iter().copied().max_by_key(|p| p.sequence_number));
+            .or_else(|| newer.iter().copied().find(|p| p.description == RESTORE_DESCRIPTION));
         if let Some(p) = pick {
             return Ok(p.clone());
         }
@@ -405,6 +407,8 @@ mod fake {
         pub protection: Option<Probe<()>>,
         pub next_sequence: u32,
         pub created_at_ms: u64,
+        /// Another program's point that appears while ours is being made.
+        pub foreign_point_during_create: Option<RestorePoint>,
     }
 
     #[derive(Default)]
@@ -461,6 +465,9 @@ mod fake {
                     exit_code: Some(1),
                     detail: d,
                 });
+            }
+            if let Some(p) = s.foreign_point_during_create.take() {
+                s.points.push(p);
             }
             let seq = s.next_sequence;
             s.next_sequence += 1;
@@ -832,6 +839,37 @@ mod tests {
         let svc = Arc::new(r.svc);
         let (engine, _dir) = engine_for(&r.reg, svc.clone());
         assert!(create_restore_point(&engine, &svc, &no_progress).is_err());
+    }
+
+    #[test]
+    fn another_programs_new_point_is_never_taken_for_ours() {
+        // Ours is silently skipped while Windows Update makes one at the same
+        // moment, with a number Windows did not give us.
+        let ops = FakeRestoreOps::new().creating_at(NOW);
+        {
+            let mut s = ops.state.lock().unwrap();
+            s.create_silently_does_nothing = true;
+            s.foreign_point_during_create = Some(RestorePoint {
+                sequence_number: 300,
+                description: "Windows Update".into(),
+                created_unix_ms: Some(NOW),
+            });
+        }
+        let r = rig(ops, product_type(1));
+        let svc = Arc::new(r.svc);
+        let (engine, _dir) = engine_for(&r.reg, svc.clone());
+        let err = create_restore_point(&engine, &svc, &no_progress).unwrap_err();
+        assert!(
+            matches!(&err, EngineError::Command { detail, .. } if detail.contains("no new restore point")),
+            "{err:?}"
+        );
+        assert!(!engine
+            .lock()
+            .unwrap()
+            .journal_view()
+            .records
+            .iter()
+            .any(|rec| matches!(rec, crate::journal::Record::RestorePoint(_))));
     }
 
     #[test]

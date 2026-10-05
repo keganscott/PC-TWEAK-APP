@@ -583,6 +583,28 @@ fn tier_is_enforced_by_the_engine() {
     assert_eq!(License::free().tier(), Tier::Free);
 }
 
+/// B3 (docs/AUDIT-2026-10-04.md): the list says a change needs a higher plan
+/// before anyone clicks Apply, and still reads its real state.
+#[test]
+fn the_list_shows_the_plan_a_change_needs_before_apply_is_tried() {
+    let mut t = TestTweak::new("t", KEY, &[("A", 1)]);
+    t.tier = Tier::Pro;
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let engine = build_engine(&fake, dir.path(), one(t), true, Tier::Free);
+    let view = &engine.list().unwrap()[0];
+    let reason = view.blocked.as_ref().expect("blocked on the free plan");
+    assert_eq!(reason.code, BlockedCode::TierRequired);
+    assert_eq!(reason.trigger.as_deref(), Some("pro"));
+    assert_eq!(view.state, TweakState::Default, "the state is still read, not hidden");
+
+    // The same change on a plan that includes it is not blocked.
+    let mut t = TestTweak::new("t", KEY, &[("A", 1)]);
+    t.tier = Tier::Pro;
+    let engine = build_engine(&fake, dir.path(), one(t), true, Tier::Pro);
+    assert!(engine.list().unwrap()[0].blocked.is_none());
+}
+
 #[test]
 fn predicates_block_apply() {
     let mut t = TestTweak::new("t", KEY, &[("A", 1)]);

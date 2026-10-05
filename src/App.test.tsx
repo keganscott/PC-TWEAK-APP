@@ -95,6 +95,22 @@ describe("agent brief", () => {
     expect(within(card).getByText("SAMPLE: blocked for the chosen game.")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Undo" }).hasAttribute("disabled")).toBe(false);
   });
+
+  it("a change the plan does not include says so and cannot be applied, without an error first", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    const reason = { code: "tier_required" as const, trigger: "pro", message: "This change needs the Pro plan." };
+    renderApp({
+      ...base,
+      listTweaks: async () =>
+        (await base.listTweaks()).map((t) => (t.id === "fixture.default" ? { ...t, safety: "safe" as const, blocked: reason } : t)),
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(card).getByText("This change needs the Pro plan.")).toBeTruthy();
+    expect(within(card).getByText("Not applied")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
+  });
 });
 
 describe("restore point shown on Home", () => {

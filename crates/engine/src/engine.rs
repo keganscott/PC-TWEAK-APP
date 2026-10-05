@@ -269,6 +269,19 @@ impl Engine {
         })
     }
 
+    /// Why the licence does not cover this tweak, if it does not. The one tier
+    /// check: `list` shows it, `apply` enforces it.
+    fn tier_block(&self, tweak: &dyn Tweak) -> Option<BlockedReason> {
+        let required = tweak.metadata().tier;
+        (required > self.license.tier()).then(|| {
+            BlockedReason::new(
+                BlockedCode::TierRequired,
+                format!("This change needs the {required:?} plan."),
+            )
+            .with_trigger(format!("{required:?}").to_lowercase())
+        })
+    }
+
     pub fn list(&self) -> Result<Vec<TweakView>> {
         let mut out = Vec::with_capacity(self.tweaks.len());
 
@@ -277,11 +290,11 @@ impl Engine {
             // Predicate first: a blocked tweak's state is not probed (the probe
             // may not be meaningful), except that an apply still open in the
             // journal is reported as Applied, so it can be undone.
-            let blocked = match tweak.evaluate_predicate(&self.env) {
+            let predicate = match tweak.evaluate_predicate(&self.env) {
                 PredicateOutcome::Block(reason) => Some(reason),
                 PredicateOutcome::Allow => None,
             };
-            let state = match &blocked {
+            let state = match &predicate {
                 Some(_) if applied => TweakState::Applied,
                 Some(reason) => TweakState::Blocked { reason: reason.clone() },
                 None => {
@@ -294,6 +307,9 @@ impl Engine {
                 }
             };
 
+            // A plan that does not include the change blocks Apply but not
+            // the reading of its state (the user may want to see it is set).
+            let blocked = self.tier_block(tweak.as_ref()).or(predicate);
             out.push(TweakView {
                 metadata: tweak.metadata(),
                 context: tweak.execution_context(),
@@ -308,15 +324,8 @@ impl Engine {
         let idx = self.index_of(id)?;
 
         // Tier is enforced here, in Rust, against a license the UI cannot set.
-        let required = self.tweaks[idx].metadata().tier;
-        if required > self.license.tier() {
-            return Err(EngineError::Blocked {
-                reason: BlockedReason::new(
-                    BlockedCode::TierRequired,
-                    format!("This change needs the {required:?} plan."),
-                )
-                .with_trigger(format!("{required:?}").to_lowercase()),
-            });
+        if let Some(reason) = self.tier_block(self.tweaks[idx].as_ref()) {
+            return Err(EngineError::Blocked { reason });
         }
 
         // Fresh state for this decision: the state probes (security, restore) are

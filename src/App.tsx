@@ -63,6 +63,11 @@ export function App() {
             </Button>
           }
         />
+        <p className="text-sm text-ink-muted">
+          When the engine itself could not start, the same reason is also saved, newest last, in{" "}
+          <span className="break-all font-mono text-xs">%LOCALAPPDATA%\PeakTweaks\startup-error.log</span>, for
+          support.
+        </p>
       </div>
     );
   }

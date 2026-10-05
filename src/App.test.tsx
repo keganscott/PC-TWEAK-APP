@@ -30,6 +30,7 @@ describe("App", () => {
     renderApp(createMockBackend(options));
     expect(await screen.findByRole("heading", { name: "PeakTweaks could not start" })).toBeTruthy();
     expect(screen.getByText("PeakTweaks is not running as administrator.")).toBeTruthy();
+    expect(screen.getByText("%LOCALAPPDATA%\\PeakTweaks\\startup-error.log")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("heading", { name: "Home", level: 1 })).toBeTruthy();
   });

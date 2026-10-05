@@ -11,6 +11,8 @@ export type RestorePointRecord = { seq: number, unixMs: number,
  */
 sequenceNumber: number, description: string, method: RestoreMethod, 
 /**
- * True when we turned System Protection on to do it.
+ * Whether we turned System Protection on to do it: `Some(true)` it was
+ * off and we turned it on, `Some(false)` it was already on, `None` it
+ * could not be told (NOTES.md N23). Older journals hold a plain bool.
  */
-protectionEnabledByUs: boolean, };
+protectionEnabledByUs: boolean | null, };

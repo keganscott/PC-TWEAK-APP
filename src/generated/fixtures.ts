@@ -752,7 +752,7 @@ export const restoreOutcome = {
   "sequenceNumber": 42,
   "description": "PeakTweaks: before changes",
   "method": "api",
-  "protectionEnabledByUs": false
+  "protectionEnabledByUs": null
 } satisfies RestoreOutcome;
 
 export const progressEvent = {

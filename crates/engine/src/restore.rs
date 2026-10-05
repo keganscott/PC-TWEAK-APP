@@ -290,7 +290,8 @@ pub struct RestoreOutcome {
     pub sequence_number: u32,
     pub description: String,
     pub method: RestoreMethod,
-    pub protection_enabled_by_us: bool,
+    /// See `RestorePointRecord::protection_enabled_by_us`.
+    pub protection_enabled_by_us: Option<bool>,
 }
 
 fn blocked(msg: &str) -> EngineError {
@@ -319,7 +320,13 @@ pub fn create_restore_point(
             "System Restore is turned off by Group Policy (DisableSR), so Windows will not make a restore point.",
         ));
     }
-    let protection_enabled_by_us = status.protection.is_no();
+    // Off before we enabled it: we turned it on. On: we did not. Unknown stays
+    // unknown rather than being recorded as either.
+    let protection_enabled_by_us = match &status.protection {
+        Probe::No { .. } => Some(true),
+        Probe::Yes { .. } => Some(false),
+        Probe::Unknown { .. } => None,
+    };
 
     progress("restore_enable", "Turning on System Protection");
     svc.ops.enable_protection()?;
@@ -692,7 +699,10 @@ mod tests {
         assert_eq!(out.sequence_number, 100);
         assert_eq!(out.description, RESTORE_DESCRIPTION);
         assert_eq!(out.method, RestoreMethod::Api);
-        assert!(!out.protection_enabled_by_us, "protection state was Unknown, not No");
+        assert_eq!(
+            out.protection_enabled_by_us, None,
+            "protection state was Unknown, so whether we turned it on is unknown"
+        );
         assert_eq!(r.ops.state.lock().unwrap().enable_calls, 1);
         assert_eq!(r.ops.state.lock().unwrap().create_calls, 1);
 
@@ -761,10 +771,26 @@ mod tests {
         let r = rig(ops, product_type(1));
         let svc = Arc::new(r.svc);
         let (engine, _dir) = engine_for(&r.reg, svc.clone());
-        assert!(
+        assert_eq!(
             create_restore_point(&engine, &svc, &no_progress)
                 .unwrap()
-                .protection_enabled_by_us
+                .protection_enabled_by_us,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn protection_that_was_already_on_is_recorded_as_not_turned_on_by_us() {
+        let ops = FakeRestoreOps::new().creating_at(NOW);
+        ops.state.lock().unwrap().protection = Some(Probe::yes(()));
+        let r = rig(ops, product_type(1));
+        let svc = Arc::new(r.svc);
+        let (engine, _dir) = engine_for(&r.reg, svc.clone());
+        assert_eq!(
+            create_restore_point(&engine, &svc, &no_progress)
+                .unwrap()
+                .protection_enabled_by_us,
+            Some(false)
         );
     }
 

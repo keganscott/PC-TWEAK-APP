@@ -97,7 +97,7 @@ fn journal_view() -> JournalView {
                 sequence_number: 42,
                 description: "PeakTweaks: before changes".into(),
                 method: RestoreMethod::PowerShell,
-                protection_enabled_by_us: true,
+                protection_enabled_by_us: Some(true),
             }),
         ],
         warnings: vec![JournalWarning {
@@ -503,7 +503,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             sequence_number: 42,
             description: "PeakTweaks: before changes".into(),
             method: RestoreMethod::Api,
-            protection_enabled_by_us: false,
+            protection_enabled_by_us: None,
         },
     );
     ts_const(

@@ -476,7 +476,7 @@ impl Engine {
         sequence_number: u32,
         description: &str,
         method: crate::journal::RestoreMethod,
-        protection_enabled_by_us: bool,
+        protection_enabled_by_us: Option<bool>,
     ) -> Result<()> {
         let seq = self.journal.take_seq();
         self.journal.append_restore_point(crate::journal::RestorePointRecord {

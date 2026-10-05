@@ -140,8 +140,10 @@ pub struct RestorePointRecord {
     pub sequence_number: u32,
     pub description: String,
     pub method: RestoreMethod,
-    /// True when we turned System Protection on to do it.
-    pub protection_enabled_by_us: bool,
+    /// Whether we turned System Protection on to do it: `Some(true)` it was
+    /// off and we turned it on, `Some(false)` it was already on, `None` it
+    /// could not be told (NOTES.md N23). Older journals hold a plain bool.
+    pub protection_enabled_by_us: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -568,6 +570,23 @@ pub(crate) mod tests {
         assert_eq!(p.records, vec![rec]);
         assert!(p.warnings.is_empty());
         assert_eq!(p.keep_len, bytes.len());
+    }
+
+    #[test]
+    fn restore_point_records_written_before_unknown_existed_still_parse() {
+        // Earlier builds wrote a plain bool; it reads as a known answer.
+        let old = br#"{"record":"restore_point","seq":3,"unixMs":1,"sequenceNumber":7,"description":"d","method":"api","protectionEnabledByUs":false}"#;
+        let parsed = parse_journal(&[old.as_slice(), b"\n"].concat());
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        match &parsed.records[0] {
+            Record::RestorePoint(r) => assert_eq!(r.protection_enabled_by_us, Some(false)),
+            other => panic!("{other:?}"),
+        }
+        let unknown = br#"{"record":"restore_point","seq":4,"unixMs":1,"sequenceNumber":8,"description":"d","method":"api","protectionEnabledByUs":null}"#;
+        match &parse_journal(&[unknown.as_slice(), b"\n"].concat()).records[0] {
+            Record::RestorePoint(r) => assert_eq!(r.protection_enabled_by_us, None),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -48,7 +48,7 @@ Values are stored as their raw registry type number and bytes (comma-separated h
 
 ### `restore_point`: a restore point PeakTweaks created and verified
 
-`seq`, `unixMs`, `sequenceNumber` (Windows' own number for the point), `description`, `method` (`api` or `power_shell`), `protectionEnabledByUs`.
+`seq`, `unixMs`, `sequenceNumber` (Windows' own number for the point), `description`, `method` (`api` or `power_shell`), `protectionEnabledByUs` (`true` it was off and PeakTweaks turned it on, `false` it was already on, `null` could not be told; older journals hold only `true`/`false`).
 
 ## Order of operations
 

@@ -216,9 +216,14 @@ impl Engine {
         self.rescan();
     }
 
-    /// Everything we know about this machine, freshly probed.
+    /// Everything we know about this machine. Security and restore state are
+    /// read again (a change or a new restore point alters them); the slow
+    /// hardware probes and the background sample come from their caches. The
+    /// user's "Check again" (`rescan` command, `rescan_fresh`) is what forgets
+    /// those, and the UI asks for this audit right after it.
     pub fn audit(&mut self) -> crate::sysprobe::SystemAudit {
-        self.rescan_fresh();
+        self.probe.invalidate();
+        self.rescan();
         crate::sysprobe::SystemAudit::from_env(self.env.clone(), self.settings.clone(), self.effective_rig_class())
     }
 

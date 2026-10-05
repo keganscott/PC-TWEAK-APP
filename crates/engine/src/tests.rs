@@ -1107,3 +1107,68 @@ fn spi_getmouse_order_matches_the_named_registry_values() {
          the array is [threshold1, threshold2, acceleration] (VERIFIED on this Windows)"
     );
 }
+
+/// B4 (docs/AUDIT-2026-10-04.md): the audit the UI asks for after every change
+/// re-reads what a change can affect (security and restore state) but reuses
+/// the slow hardware probes. Only the user's explicit rescan forgets them.
+#[test]
+fn the_audit_after_a_change_reuses_hardware_and_only_an_explicit_rescan_forgets_it() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct Counts {
+        probes: AtomicUsize,
+        invalidate: AtomicUsize,
+        invalidate_all: AtomicUsize,
+    }
+    struct Counting(Arc<Counts>);
+    impl crate::env::EnvProbe for Counting {
+        fn probe(&self, elevated: bool) -> crate::types::SystemEnv {
+            self.0.probes.fetch_add(1, Ordering::SeqCst);
+            crate::types::SystemEnv {
+                elevated,
+                ..Default::default()
+            }
+        }
+        fn restore_gate_open(&self) -> bool {
+            true
+        }
+        fn invalidate(&self) {
+            self.0.invalidate.fetch_add(1, Ordering::SeqCst);
+        }
+        fn invalidate_all(&self) {
+            self.0.invalidate_all.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let counts = Arc::new(Counts::default());
+    let fake = Arc::new(crate::registry::fake::FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = crate::engine::Engine::new(
+        crate::context::ContextResolver::new(crate::testutil::user(true), true, fake),
+        crate::journal::Journal::open(&crate::secure_dir::TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+        vec![],
+        Box::new(Counting(counts.clone())),
+        crate::env::License::dev(crate::types::Tier::Ultimate),
+    );
+
+    engine.audit();
+    engine.audit();
+    assert_eq!(
+        counts.invalidate_all.load(Ordering::SeqCst),
+        0,
+        "audit keeps cached hardware"
+    );
+    assert!(
+        counts.invalidate.load(Ordering::SeqCst) >= 2,
+        "audit re-reads security and restore state"
+    );
+
+    engine.rescan_fresh();
+    assert_eq!(
+        counts.invalidate_all.load(Ordering::SeqCst),
+        1,
+        "the user's rescan forgets everything"
+    );
+}

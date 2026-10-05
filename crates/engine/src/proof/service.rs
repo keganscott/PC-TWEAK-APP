@@ -286,9 +286,47 @@ impl ProofService {
                 .collect()
         };
         let mut comparison = compare(&summarise(Side::Before), &summarise(Side::After));
-        comparison.warnings = runs.iter().filter_map(throttle_warning).collect();
+        comparison.warnings = change_warnings(&runs);
+        comparison.warnings.extend(runs.iter().filter_map(throttle_warning));
         Ok(comparison)
     }
+}
+
+/// Whether the runs can say anything about a PeakTweaks change: every run on
+/// a side recorded with the same applied changes, and the two sides differing.
+/// Each run stores what was applied when it was captured (`applied_tweaks`).
+fn change_warnings(runs: &[ProofRun]) -> Vec<String> {
+    let set = |r: &ProofRun| {
+        let mut v = r.applied_tweaks.clone();
+        v.sort();
+        v
+    };
+    let side_set = |side: Side| -> Option<Option<Vec<String>>> {
+        let mut sets = runs.iter().filter(|r| r.side == side).map(set);
+        let first = sets.next()?;
+        // Some(Some(set)): one set for the whole side; Some(None): mixed.
+        Some(sets.all(|s| s == first).then_some(first))
+    };
+    let mut out = Vec::new();
+    let (before, after) = (side_set(Side::Before), side_set(Side::After));
+    for (name, side) in [("before", &before), ("after", &after)] {
+        if let Some(None) = side {
+            out.push(format!(
+                "The {name} runs were not all recorded with the same PeakTweaks changes in place, so they do \
+                 not describe one setup."
+            ));
+        }
+    }
+    if let (Some(Some(b)), Some(Some(a))) = (&before, &after) {
+        if a == b {
+            out.push(
+                "The before and after runs were recorded with the same PeakTweaks changes in place, so any \
+                 difference between them did not come from a PeakTweaks change."
+                    .to_owned(),
+            );
+        }
+    }
+    out
 }
 
 /// A sentence about a run whose GPU was held back by heat or power, or `None`.
@@ -354,6 +392,51 @@ mod tests {
     }
 
     fn quiet(_: &str, _: &str) {}
+
+    /// Captures two runs per side with the given applied changes per run.
+    fn session_with(applied: [&[&str]; 4]) -> Comparison {
+        let d = tempfile::tempdir().unwrap();
+        let svc = service(d.path(), FakeCapture::new(|call, _| frames(10.0 + call as f64 * 0.01)));
+        let session = begin(&svc, Tier::Pro).unwrap();
+        for (i, set) in applied.iter().enumerate() {
+            let side = if i < 2 { Side::Before } else { Side::After };
+            let ids = set.iter().map(|s| s.to_string()).collect();
+            svc.capture(&session.session_id, side, 30, 5, ids, &quiet).unwrap();
+        }
+        svc.compare(&session.session_id).unwrap()
+    }
+
+    #[test]
+    fn a_comparison_says_when_no_peaktweaks_change_lies_between_the_sides() {
+        let c = session_with([&["a"], &["a"], &["a"], &["a"]]);
+        assert!(
+            c.warnings.iter().any(|w| w.contains("same PeakTweaks changes")),
+            "{:?}",
+            c.warnings
+        );
+        let c = session_with([&[], &[], &["a"], &["a"]]);
+        assert!(c.warnings.is_empty(), "a change between the sides: {:?}", c.warnings);
+    }
+
+    #[test]
+    fn a_comparison_says_when_a_side_was_recorded_with_different_changes() {
+        let c = session_with([&[], &["a"], &["a", "b"], &["a", "b"]]);
+        assert!(
+            c.warnings
+                .iter()
+                .any(|w| w.contains("before runs were not all recorded")),
+            "{:?}",
+            c.warnings
+        );
+        let c = session_with([&[], &[], &["a"], &["b"]]);
+        assert!(
+            c.warnings
+                .iter()
+                .any(|w| w.contains("after runs were not all recorded")),
+            "{:?}",
+            c.warnings
+        );
+    }
 
     #[test]
     fn a_before_after_session_produces_a_better_verdict_backed_by_stored_runs() {

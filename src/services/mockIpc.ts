@@ -255,7 +255,20 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         emit("proof_capture", `Recording ${side} run`);
         const list = runs.get(sessionId) ?? [];
         const index = list.filter((r) => r.side === side).length + 1;
-        const run: ProofRun = { ...clone(fx.proofRun), runId: `run-${Date.now()}-${list.length}`, sessionId, side, index, seconds, delaySeconds };
+        // As the engine: each run records the catalogue changes applied now.
+        const appliedTweaks = outstanding()
+          .filter((c) => c.kind === "catalogue")
+          .map((c) => c.tweakId);
+        const run: ProofRun = {
+          ...clone(fx.proofRun),
+          runId: `run-${Date.now()}-${list.length}`,
+          sessionId,
+          side,
+          index,
+          seconds,
+          delaySeconds,
+          appliedTweaks,
+        };
         runs.set(sessionId, [...list, run]);
         if (side === "before") summary.beforeRuns += 1;
         else summary.afterRuns += 1;

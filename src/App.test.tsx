@@ -229,6 +229,41 @@ describe("review regressions", () => {
     expect(within(minecraft).queryByText(/Source:/)).toBeNull();
   });
 
+  it("the proof guide walks before runs, one change, then after runs", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    await userEvent.click(screen.getByRole("button", { name: "New comparison" }));
+    await userEvent.type(screen.getByLabelText("Game program name"), "GuideTest.exe");
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await screen.findByRole("heading", { name: "Steps" });
+    const guide = () => screen.getByRole("heading", { name: "Steps" }).closest("section, div") as HTMLElement;
+    const step = (title: string) => within(guide()).getByText(title).closest("li") as HTMLElement;
+    expect(within(step("Record the game before the change")).getByText("0 of 3 runs.")).toBeTruthy();
+    expect((screen.getByRole("radio", { name: "Before the change" }) as HTMLInputElement).checked).toBe(true);
+    for (let i = 1; i <= 3; i += 1) {
+      await userEvent.click(screen.getByRole("button", { name: "Record" }));
+      await waitFor(() => within(step("Record the game before the change")).getByText(`${i} of 3 runs.`));
+    }
+    // Nothing changed since the before runs: the guide says so and points at Tools.
+    expect(within(guide()).getByText("The same PeakTweaks changes are in place as during the before runs.")).toBeTruthy();
+    expect((screen.getByRole("radio", { name: "Before the change" }) as HTMLInputElement).checked).toBe(true);
+
+    await userEvent.click(within(guide()).getByRole("button", { name: "Open Tools" }));
+    await screen.findByRole("heading", { name: "Tools", level: 1 });
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    await userEvent.click(within(card).getByRole("button", { name: "Apply" }));
+    await within(card).findByRole("button", { name: "Undo" });
+
+    await goTo("Proof");
+    await userEvent.click(await screen.findByRole("button", { name: /GuideTest\.exe/ }));
+    expect(await within(guide()).findByText("Changed since the before runs: Sample setting A.")).toBeTruthy();
+    await waitFor(() =>
+      expect((screen.getByRole("radio", { name: "After the change" }) as HTMLInputElement).checked).toBe(true),
+    );
+  });
+
   it("a new comparison fills in the program name of a game found on this PC, never over typed text", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

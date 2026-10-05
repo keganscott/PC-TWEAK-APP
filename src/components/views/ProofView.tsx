@@ -8,11 +8,15 @@ import type { Side } from "../../generated/Side";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatNumber } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { useNavigate } from "../shell/nav";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, Spinner, cx } from "../ui/primitives";
 
 /** The engine's limits (proof/capture.rs `validate_timing`). */
 const SECONDS = { min: 10, max: 600, default: 30 };
 const DELAY = { min: 0, max: 120, default: 5 };
+/** Runs per side the guide asks for. The engine needs at least two
+ * (proof/verdict.rs `MIN_RUNS_PER_SIDE`); three show the spread better. */
+const SUGGESTED_RUNS = 3;
 
 export function ProofView() {
   const sessions = useStore((s) => s.proof.sessions);
@@ -91,7 +95,7 @@ function SessionList({ sessions, selected, onSelect }: { sessions: ProofSessionS
               )}
             >
               <span className="block font-medium">{session.exe}</span>
-              <span className="block text-xs text-ink-faint">{formatDateTime(session.createdUnixMs)}</span>
+              <span className="block text-xs text-ink-muted">{formatDateTime(session.createdUnixMs)}</span>
               <span className="mt-1 block text-xs text-ink-muted">
                 {beforeRuns} before · {afterRuns} after
               </span>
@@ -224,8 +228,18 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   const capturing = captureOp?.status === "running";
   const otherRecording = capturingSession !== null && capturingSession !== session.sessionId;
 
+  // The guide's next step decides which side the Record button is set to,
+  // until the user picks a side themselves.
+  const changedNow = useChangedSinceBefore(before);
+  const suggested: Side = before.length < SUGGESTED_RUNS || (after.length === 0 && !changedNow) ? "before" : "after";
+  const [sideTouched, setSideTouched] = useState(false);
+  useEffect(() => {
+    if (!sideTouched) setSide(suggested);
+  }, [suggested, sideTouched]);
+
   return (
     <div className="flex flex-col gap-5">
+      <ProofGuide before={before.length} after={after.length} changedNow={changedNow} />
       <Card>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">{session.exe}</h2>
@@ -254,7 +268,16 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
                     side === s ? "border-accent bg-accent/10" : "border-line text-ink-muted",
                   )}
                 >
-                  <input type="radio" name="side" className="sr-only" checked={side === s} onChange={() => setSide(s)} />
+                  <input
+                    type="radio"
+                    name="side"
+                    className="sr-only"
+                    checked={side === s}
+                    onChange={() => {
+                      setSideTouched(true);
+                      setSide(s);
+                    }}
+                  />
                   {s === "before" ? "Before the change" : "After the change"}
                 </label>
               ))}
@@ -342,6 +365,91 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * What PeakTweaks has applied now compared with what was applied during the
+ * before runs: the changes made since, by name, or null when nothing changed
+ * (or there are no before runs yet). Each run stores what was applied when it
+ * was recorded, and the journal says what is applied now.
+ */
+function useChangedSinceBefore(before: ProofRun[]): string[] | null {
+  const applied = useStore((s) => s.journal?.applied);
+  if (before.length === 0 || !applied) return null;
+  const then = new Set(before[before.length - 1]!.appliedTweaks);
+  const now = applied.filter((c) => c.kind === "catalogue");
+  const added = now.filter((c) => !then.has(c.tweakId)).map((c) => c.name);
+  const removed = [...then].filter((id) => !now.some((c) => c.tweakId === id));
+  const changed = [...added, ...removed.map((id) => `${id} undone`)];
+  return changed.length ? changed : null;
+}
+
+type StepState = "done" | "current" | "todo";
+
+/** The order a fair comparison needs, with where this session is in it. */
+function ProofGuide({ before, after, changedNow }: { before: number; after: number; changedNow: string[] | null }) {
+  const navigate = useNavigate();
+  const beforeDone = before >= SUGGESTED_RUNS;
+  const changeDone = after > 0 || changedNow !== null;
+  const afterDone = after >= SUGGESTED_RUNS;
+  const state = (done: boolean, ready: boolean): StepState => (done ? "done" : ready ? "current" : "todo");
+  const steps: { title: string; detail: string; state: StepState; action?: React.ReactNode }[] = [
+    {
+      title: "Record the game before the change",
+      detail: `${before} of ${SUGGESTED_RUNS} runs.`,
+      state: state(beforeDone, true),
+    },
+    {
+      title: "Make one change",
+      detail:
+        changedNow !== null
+          ? `Changed since the before runs: ${changedNow.join(", ")}.`
+          : after > 0
+            ? "Recorded after runs already."
+            : "The same PeakTweaks changes are in place as during the before runs.",
+      state: state(changeDone, beforeDone),
+      action: !changeDone && beforeDone ? <Button onClick={() => navigate("tools")}>Open Tools</Button> : undefined,
+    },
+    {
+      title: "Record the game after the change",
+      detail: `${after} of ${SUGGESTED_RUNS} runs.`,
+      state: state(afterDone, beforeDone && changeDone),
+    },
+    {
+      title: "Compare",
+      detail: "PeakTweaks calls a difference real only when it is bigger than the variation between your own runs.",
+      state: state(false, afterDone),
+    },
+  ];
+  return (
+    <Card aria-labelledby="proof-guide-title">
+      <h2 id="proof-guide-title" className="font-semibold">
+        Steps
+      </h2>
+      <ol className="mt-3 flex flex-col gap-3">
+        {steps.map((st, i) => (
+          <li key={st.title} className="flex items-start gap-3" aria-current={st.state === "current" ? "step" : undefined}>
+            <span
+              className={cx(
+                "flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
+                st.state === "done" && "border-ok bg-ok/15 text-ok",
+                st.state === "current" && "border-accent bg-accent/15 text-ink",
+                st.state === "todo" && "border-line text-ink-faint",
+              )}
+            >
+              {st.state === "done" ? "✓" : i + 1}
+              <span className="sr-only">{st.state === "done" ? " done" : st.state === "current" ? " next" : ""}</span>
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className={cx("text-sm font-medium", st.state === "todo" && "text-ink-muted")}>{st.title}</p>
+              <p className="text-xs text-ink-faint">{st.detail}</p>
+            </div>
+            {st.action}
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 

@@ -82,6 +82,8 @@ test("a proof comparison shows the engine's headline as given", async ({ page })
   await open(page);
   await nav(page, "Proof");
   await page.getByRole("navigation", { name: "Comparisons" }).getByRole("button").first().click();
+  await expect(page.getByRole("heading", { name: "Steps" })).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
   await page.getByRole("button", { name: "Compare" }).click();
   await expect(page.getByTestId("verdict-headline")).toContainText(/^(Better|Worse|No measurable change|Not enough data)/);
 });

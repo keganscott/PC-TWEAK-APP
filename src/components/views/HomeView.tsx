@@ -20,12 +20,12 @@ import type { Finding } from "../../generated/Finding";
 import type { FixBy } from "../../generated/FixBy";
 import type { Probe } from "../../generated/Probe";
 import type { SystemAudit } from "../../generated/SystemAudit";
-import type { BusEntry, State } from "../../store/store";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Facets } from "../brand/Facets";
 import { useNavigate } from "../shell/nav";
+import { RestorePointButton } from "../shell/RestorePointButton";
 import { Button, Callout, cx, ErrorCallout, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
 /** The small uppercase label used across the dashboard. */
@@ -156,9 +156,6 @@ function NextStep() {
   const audit = useStore((s) => s.audit);
   const restoreOp = useStore((s) => s.restoreOp);
   const targetGame = useStore((s) => s.targetGame);
-  const lastStage = useStore(currentRestoreStage);
-  const technical = useTechnical();
-  const { createRestorePoint } = useActions();
   const navigate = useNavigate();
 
   const auditFailed = useStore((s) => s.auditOp.status === "failed");
@@ -257,7 +254,6 @@ function NextStep() {
     );
   }
 
-  const running = restoreOp.status === "running";
   return (
     <VioletCard label="Next step">
       <Eyebrow className="text-white">Before the first change</Eyebrow>
@@ -266,37 +262,14 @@ function NextStep() {
       </h2>
       <p className="mt-2 max-w-lg text-sm">
         Before PeakTweaks changes anything it asks Windows for a restore point, so the whole PC can be put back the way
-        it is now. This turns on System Protection for the Windows drive if it is off, and can take a minute.
+        it is now. One click does it: this turns on System Protection for the Windows drive if it is off, and can take
+        a minute.
       </p>
-      {restoreOp.status === "failed" && (
-        <div className="mt-3">
-          <ErrorCallout text={explain(restoreOp.error)} technical={technical} />
-        </div>
-      )}
-      <div className="mt-auto flex flex-wrap items-center gap-4 pt-5">
-        <Button variant="go" busy={running} onClick={() => void createRestorePoint()}>
-          {restoreOp.status === "failed" ? "Try again" : "Make a restore point"}
-        </Button>
-        {running && lastStage && (
-          <span role="status" className="text-sm font-semibold">
-            {lastStage.message}
-          </span>
-        )}
-      </div>
+      <RestorePointButton variant="go" className="mt-auto pt-5" />
     </VioletCard>
   );
 }
 
-/** The newest restore progress message of the current attempt, or null. Returns
- * an entry already in state, so the selector is stable. */
-function currentRestoreStage(s: State): BusEntry | null {
-  for (let i = s.bus.length - 1; i >= 0; i -= 1) {
-    const e = s.bus[i]!;
-    if (e.id <= s.restoreSinceBusId) break;
-    if (e.stage.startsWith("restore_")) return e;
-  }
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Restore point and changes in effect

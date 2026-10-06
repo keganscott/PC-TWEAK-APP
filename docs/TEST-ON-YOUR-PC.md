@@ -20,9 +20,12 @@ is a Pro change. Everything that keeps the PC safe is the real thing:
 - It never touches the BIOS, drivers, game files or anti-cheat, and it collects
   no data.
 
-The top bar says **Tester build** on every screen. The catalogue is small today:
-**Pointer precision** (mouse acceleration off) and, under Tools > Advanced,
-**Fortnite process priority**.
+The top bar says **Tester build** on every screen. Tools lists 12 Windows
+settings: five in the main view (Pointer precision, Game Mode, Background game
+recording, Sticky Keys pop-ups, Transparency effects) and seven more under
+Tools > Advanced. Settings this PC already has are listed as
+**Already done on this PC**, not hidden. Fortnite process priority stays "Not
+available" until it has been tested against Fortnite's anti-cheat.
 
 ## 1. Get the two programs
 
@@ -95,7 +98,9 @@ restore point on demand" like the app does; afterwards, Backups > **Undo all** i
 the app (or `.\peaktweaks-field-check.exe --revert-all`) puts that back.
 Otherwise:
 
-1. On Home, click **Make a restore point**. It can take a minute.
+1. Click **Make a restore point** (on Home, on Tools above the list, or **Make
+   one now** in the sidebar). It can take a minute. PeakTweaks already runs as
+   administrator, so Windows does not ask again.
 2. Note what happened: success ("Restore point #... is ready") or the error text.
 3. Check in Windows: Start, type **Create a restore point**, open it, click
    **System Restore...**, **Next**. A point named "PeakTweaks: before changes"

@@ -43,12 +43,10 @@ test("changes stay locked until a restore point exists, then apply and undo", as
   const card = page.getByRole("listitem").filter({ hasText: "Sample setting A" });
   await expect(card.getByRole("button", { name: "Apply" })).toBeDisabled();
 
-  await page.getByRole("button", { name: "Make one on Home" }).click();
-  await page.getByRole("button", { name: "Make a restore point" }).click();
-  await expect(page.getByText(/Restore point #\d+ is ready\./)).toBeVisible();
+  // One click from the lock message itself, without leaving Tools.
+  await page.getByRole("main").getByRole("button", { name: "Make a restore point" }).click();
   await expect(page.getByText("Restore point ready")).toBeVisible();
-
-  await nav(page, "Tools");
+  await expect(page.getByText("Changes are locked until there is a restore point.")).toBeHidden();
   await card.getByRole("button", { name: "Apply" }).click();
   await expect(card.getByText("Applied", { exact: true })).toBeVisible();
 

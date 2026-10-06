@@ -1309,3 +1309,68 @@ fn the_journal_view_lists_every_outstanding_change_including_the_engines_own() {
     );
     assert_eq!(applied[0].name, "t");
 }
+
+#[test]
+fn a_value_tweak_already_set_on_the_pc_is_listed_as_done_and_round_trips() {
+    use crate::registry::RegistryBackend;
+    use crate::tweaks::registry_values::{BACKGROUND_CAPTURE, GAME_MODE, NETWORK_THROTTLING};
+    let fake = Arc::new(FakeRegistry::new());
+    // Windows' stock values for the network limit; nothing written for the others.
+    let mmcss = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
+    fake.create_key(Hive::LocalMachine, mmcss).unwrap();
+    fake.write_value(
+        Hive::LocalMachine,
+        mmcss,
+        "NetworkThrottlingIndex",
+        &RawValue::dword(10),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(
+        &fake,
+        dir.path(),
+        vec![
+            Box::new(GAME_MODE),
+            Box::new(BACKGROUND_CAPTURE),
+            Box::new(NETWORK_THROTTLING),
+        ],
+        true,
+        Tier::Ultimate,
+    );
+    let state = |e: &mut crate::engine::Engine, id: &str| {
+        e.list()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.metadata.id == id)
+            .unwrap()
+            .state
+    };
+
+    // Game Mode is on by default: shown as already done, not hidden.
+    assert!(matches!(state(&mut engine, "gaming.gamemode"), TweakState::Foreign));
+    assert!(matches!(state(&mut engine, "gaming.capture"), TweakState::Default));
+
+    engine.apply("gaming.capture").unwrap();
+    assert!(matches!(state(&mut engine, "gaming.capture"), TweakState::Applied));
+    assert_eq!(
+        fake.read_value_for_test(Hive::CurrentUser, r"System\GameConfigStore", "GameDVR_Enabled")
+            .and_then(|v| v.as_dword()),
+        Some(0)
+    );
+    engine.revert("gaming.capture").unwrap();
+    assert!(matches!(state(&mut engine, "gaming.capture"), TweakState::Default));
+
+    engine.apply("network.throttling").unwrap();
+    assert_eq!(
+        fake.read_value_for_test(Hive::LocalMachine, mmcss, "NetworkThrottlingIndex")
+            .and_then(|v| v.as_dword()),
+        Some(0xFFFF_FFFF)
+    );
+    engine.revert("network.throttling").unwrap();
+    assert_eq!(
+        fake.read_value_for_test(Hive::LocalMachine, mmcss, "NetworkThrottlingIndex")
+            .and_then(|v| v.as_dword()),
+        Some(10),
+        "revert puts Windows' value back"
+    );
+}

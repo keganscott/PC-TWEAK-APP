@@ -4,13 +4,13 @@ import type { TweakView } from "../../generated/TweakView";
 import { blockedHint } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { useNavigate } from "../shell/nav";
+import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
 const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }> = {
   default: { tone: "neutral", label: "Not applied" },
   applied: { tone: "ok", label: "Applied" },
-  foreign: { tone: "info", label: "Already set outside PeakTweaks" },
+  foreign: { tone: "ok", label: "Already done on this PC" },
   drifted: { tone: "warn", label: "Changed outside PeakTweaks since it was applied" },
   blocked: { tone: "bad", label: "Not available" },
   unknown: { tone: "warn", label: "Could not read its current state" },
@@ -25,7 +25,7 @@ export function ToolsView() {
   const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
   const [advanced, setAdvanced] = useState(false);
   const advancedId = useId();
-  const navigate = useNavigate();
+  const canMake = useCanMakeRestorePoint();
 
   const groups = useMemo(() => {
     const visible = tweaks.filter((t) => advanced || t.safety === "safe");
@@ -34,6 +34,9 @@ export function ToolsView() {
     return [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [tweaks, advanced]);
   const hiddenCount = tweaks.filter((t) => t.safety !== "safe").length;
+  // Settings this PC already has count as done, whoever set them: they are
+  // listed, not hidden, so the user sees the whole set.
+  const doneCount = tweaks.filter((t) => t.state.status === "applied" || t.state.status === "foreign").length;
 
   return (
     <>
@@ -60,8 +63,17 @@ export function ToolsView() {
           <Callout
             tone="warn"
             title="Changes are locked until there is a restore point."
-            action={<Button onClick={() => navigate("home")}>Make one on Home</Button>}
-          />
+            action={canMake === false ? undefined : <RestorePointButton />}
+          >
+            {canMake === false
+              ? "System Restore is not available on this PC, so PeakTweaks cannot make changes here."
+              : "A restore point lets Windows put the whole PC back the way it is now. One click makes it; it can take a minute."}
+          </Callout>
+        )}
+        {tweaks.length > 0 && (
+          <p className="text-sm text-ink-muted">
+            {doneCount} of {tweaks.length} already done on this PC.
+          </p>
         )}
         {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}
         {groups.map(([category, list]) => (
@@ -94,6 +106,9 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
   const { tone, label } = STATE[tweak.state.status];
   const running = op?.status === "running";
   const applied = tweak.state.status === "applied";
+  // Already set on this PC by Windows, the user or another program: nothing to
+  // apply and nothing of ours to undo.
+  const foreign = tweak.state.status === "foreign";
   // Our apply is still on record but Windows has another value now: both
   // directions stay open (set ours again, or put back what was there before).
   const drifted = tweak.state.status === "drifted";
@@ -122,6 +137,9 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
           {tweak.state.status === "unknown" && technical && (
             <p className="mt-2 font-mono text-xs text-ink-faint">{tweak.state.detail}</p>
           )}
+          {foreign && (
+            <p className="mt-2 text-sm text-ink-muted">This PC already has this setting, so there is nothing to apply.</p>
+          )}
           {drifted && (
             <p className="mt-2 text-sm text-ink-muted">
               Windows no longer has the value PeakTweaks set. Undo puts back what was there before PeakTweaks changed it.
@@ -131,7 +149,7 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
           {technical && <p className="mt-2 break-all font-mono text-xs text-ink-faint">{tweak.target}</p>}
         </div>
         <div className="flex shrink-0 gap-2">
-          {applied ? (
+          {foreign ? null : applied ? (
             <Button busy={running} onClick={() => void revertTweak(tweak.id)}>
               Undo
             </Button>
@@ -150,7 +168,7 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
         </div>
       </div>
 
-      {tweak.tradeoff && !applied && (
+      {tweak.tradeoff && !applied && !foreign && (
         <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 p-3 text-sm">
           <p className="font-bold text-warn">Before you apply</p>
           <p className="mt-1 text-ink">{tweak.tradeoff}</p>

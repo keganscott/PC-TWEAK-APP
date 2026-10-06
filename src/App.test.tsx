@@ -56,6 +56,29 @@ describe("App", () => {
     await waitFor(() => expect(within(after).getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(false));
   });
 
+  it("makes the restore point from the lock message on Tools, in one click", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const lock = (await screen.findByText("Changes are locked until there is a restore point.")).closest(
+      "[role=note]",
+    ) as HTMLElement;
+    await userEvent.click(within(lock).getByRole("button", { name: "Make a restore point" }));
+    await waitFor(() => expect(screen.queryByText("Changes are locked until there is a restore point.")).toBeNull());
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    await waitFor(() => expect(within(card).getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(false));
+  });
+
+  it("lists a setting the PC already has as done, with nothing to apply", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = screen.getByText("Sample setting C").closest("li") as HTMLElement;
+    expect(within(card).getByText("Already done on this PC")).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: "Apply" })).toBeNull();
+    expect(screen.getByText(/of \d+ already done on this PC\./)).toBeTruthy();
+  });
+
   it("a change with a trade-off cannot be applied until it is acknowledged", async () => {
     const base = createMockBackend({ gateOpen: true });
     const withTradeoff: Backend = {

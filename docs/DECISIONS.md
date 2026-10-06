@@ -194,3 +194,14 @@ Agent brief bug 9 left recovery from outside Windows as future work (N48). Choic
 - **Order:** files are named `NNN_<tweak>.reg` in Undo-all order and imported by name; inside a file the newest write comes first, so stacked writes end on the oldest prior value, as in-app Undo does.
 
 Tested on Windows CI against hive files made by `reg save` (`recover_cmd_restores_prior_values_in_offline_hive_files`). Never run in the recovery environment itself (N48).
+
+### 15.19 Kegan's blanket approval (2026-10-06)
+
+Kegan, in chat: "if you need anything, it's approved by me. I approve." Taken as approval of the open requests in `docs/AUDIT-2026-10-04.md` section 8, read narrowly:
+
+1. **New tweaks may be added** (the agent brief's Phase 3 hold is lifted). First: the two Starter fixes that fit `Transaction` today (game on the high-performance graphics chip; background recording off).
+2. **N50: the free Starter tier stays**, as plan 6.4 says; `Tier::Free` is kept and the Starter fixes are Free.
+3. **Restore frequency** stays as the locked decision says (journalled, kept until Undo); no change.
+4. **Refresh-rate fix**: to be built later with its own journal record kind, designed here first; not part of the first Starter fixes.
+
+Not covered by an approval, because they need Kegan's own action or knowledge: GitHub Actions billing (N58), the field-check run, the N2 reference documents, and plan section 11 (pricing, merchant of record, Store build, open-sourcing, next anti-cheat titles).

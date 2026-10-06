@@ -33,6 +33,21 @@ pub enum Data {
     Dword(u32),
     /// Written as `REG_SZ`.
     Str(&'static str),
+    /// A `REG_SZ` holding a decimal number, of which only the `clear` bits are
+    /// turned off; every other bit keeps the user's own setting. `default` is
+    /// what Windows assumes when the value is absent or not a number.
+    StrClearBits {
+        clear: u32,
+        default: u32,
+    },
+}
+
+impl Data {
+    /// The number a decimal-string value holds, or `default` when it is absent
+    /// or unreadable.
+    fn flags(raw: Option<String>, default: u32) -> u32 {
+        raw.and_then(|v| v.trim().parse().ok()).unwrap_or(default)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +77,15 @@ const fn string(key: &'static str, value: &'static str, data: &'static str) -> S
     }
 }
 
+const fn clear_bits(key: &'static str, value: &'static str, clear: u32, default: u32) -> Setting {
+    Setting {
+        key,
+        value,
+        data: Data::StrClearBits { clear, default },
+        absent_matches: false,
+    }
+}
+
 pub struct ValueTweak {
     pub id: &'static str,
     pub name: &'static str,
@@ -86,6 +110,7 @@ impl ValueTweak {
             let shown = match s.data {
                 Data::Dword(n) => format!(r"{root}\{}\{} = {n}", s.key, s.value),
                 Data::Str(v) => format!(r#"{root}\{}\{} = "{v}""#, s.key, s.value),
+                Data::StrClearBits { clear, .. } => format!(r"{root}\{}\{} &= ~{clear}", s.key, s.value),
             };
             parts.push(shown);
         }
@@ -93,11 +118,16 @@ impl ValueTweak {
     }
 
     fn matches(&self, res: &ContextResolver, s: &Setting) -> Result<bool> {
+        if let Data::StrClearBits { clear, default } = s.data {
+            let current = Data::flags(res.read_string(self.root, s.key, s.value)?, default);
+            return Ok(current & clear == 0);
+        }
         Ok(match res.read_raw(self.root, s.key, s.value)? {
             None => s.absent_matches,
             Some(raw) => match s.data {
                 Data::Dword(n) => raw.as_dword() == Some(n),
                 Data::Str(v) => raw.as_sz().as_deref() == Some(v),
+                Data::StrClearBits { .. } => unreachable!("handled above"),
             },
         })
     }
@@ -156,6 +186,10 @@ impl Tweak for ValueTweak {
             match s.data {
                 Data::Dword(n) => tx.set_dword(self.root, s.key, s.value, n)?,
                 Data::Str(v) => tx.set_string(self.root, s.key, s.value, v)?,
+                Data::StrClearBits { clear, default } => {
+                    let current = Data::flags(tx.resolver().read_string(self.root, s.key, s.value)?, default);
+                    tx.set_string(self.root, s.key, s.value, &(current & !clear).to_string())?
+                }
             }
         }
         Ok(())
@@ -177,6 +211,8 @@ const BG_APPS: &str = r"Software\Microsoft\Windows\CurrentVersion\BackgroundAcce
 const GRAPHICS: &str = r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers";
 const POWER_THROTTLING: &str = r"SYSTEM\CurrentControlSet\Control\Power\PowerThrottling";
 const MMCSS: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
+/// SKF_HOTKEYACTIVE, FKF_HOTKEYACTIVE and TKF_HOTKEYACTIVE share this bit.
+const HOTKEY_ACTIVE: u32 = 0x4;
 const MMCSS_GAMES: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games";
 
 /// Settings > Gaming > Game Mode. On by default since Windows 10 1903, so an
@@ -216,8 +252,10 @@ pub const BACKGROUND_CAPTURE: ValueTweak = ValueTweak {
 };
 
 /// Settings > Accessibility > Keyboard: the keyboard shortcuts for Sticky,
-/// Filter and Toggle Keys. The Flags strings are Windows' defaults (510, 126,
-/// 62) with the hotkey bit cleared.
+/// Filter and Toggle Keys. Only the hotkey bit (0x4: SKF_, FKF_ and
+/// TKF_HOTKEYACTIVE) is cleared, so a user who has one of these features on
+/// keeps it on, along with any other option they set. Windows' defaults are
+/// 510, 126 and 62.
 pub const ACCESSIBILITY_SHORTCUTS: ValueTweak = ValueTweak {
     id: "input.accessibilitykeys",
     name: "Sticky Keys pop-ups",
@@ -229,9 +267,9 @@ pub const ACCESSIBILITY_SHORTCUTS: ValueTweak = ValueTweak {
     tradeoff: None,
     requires_reboot: true,
     settings: &[
-        string(STICKY_KEYS, "Flags", "506"),
-        string(FILTER_KEYS, "Flags", "122"),
-        string(TOGGLE_KEYS, "Flags", "58"),
+        clear_bits(STICKY_KEYS, "Flags", HOTKEY_ACTIVE, 510),
+        clear_bits(FILTER_KEYS, "Flags", HOTKEY_ACTIVE, 126),
+        clear_bits(TOGGLE_KEYS, "Flags", HOTKEY_ACTIVE, 62),
     ],
 };
 

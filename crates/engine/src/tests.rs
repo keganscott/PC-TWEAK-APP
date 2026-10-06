@@ -1374,3 +1374,48 @@ fn a_value_tweak_already_set_on_the_pc_is_listed_as_done_and_round_trips() {
         "revert puts Windows' value back"
     );
 }
+
+#[test]
+fn the_sticky_keys_tool_clears_only_the_shortcut_and_keeps_the_users_own_settings() {
+    use crate::registry::RegistryBackend;
+    use crate::tweaks::registry_values::ACCESSIBILITY_SHORTCUTS;
+    let fake = Arc::new(FakeRegistry::new());
+    let sticky = r"Control Panel\Accessibility\StickyKeys";
+    // Sticky Keys itself switched on (bit 0x1) on top of Windows' defaults.
+    fake.create_key(Hive::CurrentUser, sticky).unwrap();
+    fake.write_value(Hive::CurrentUser, sticky, "Flags", &RawValue::sz("511"))
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(
+        &fake,
+        dir.path(),
+        vec![Box::new(ACCESSIBILITY_SHORTCUTS)],
+        true,
+        Tier::Ultimate,
+    );
+    let flags = |key: &str| {
+        fake.read_value_for_test(Hive::CurrentUser, key, "Flags")
+            .and_then(|v| v.as_sz())
+    };
+    let state = |e: &mut crate::engine::Engine| e.list().unwrap().remove(0).state;
+
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("input.accessibilitykeys").unwrap();
+    assert_eq!(
+        flags(sticky).as_deref(),
+        Some("507"),
+        "Sticky Keys stays on, only the shortcut goes"
+    );
+    // Absent values start from Windows' defaults.
+    assert_eq!(
+        flags(r"Control Panel\Accessibility\Keyboard Response").as_deref(),
+        Some("122")
+    );
+    assert_eq!(flags(r"Control Panel\Accessibility\ToggleKeys").as_deref(), Some("58"));
+    assert!(matches!(state(&mut engine), TweakState::Applied));
+
+    engine.revert("input.accessibilitykeys").unwrap();
+    assert_eq!(flags(sticky).as_deref(), Some("511"));
+    assert_eq!(flags(r"Control Panel\Accessibility\ToggleKeys"), None);
+    assert!(matches!(state(&mut engine), TweakState::Default));
+}

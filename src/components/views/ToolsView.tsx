@@ -66,7 +66,7 @@ export function ToolsView() {
         {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}
         {groups.map(([category, list]) => (
           <section key={category} aria-labelledby={`cat-${category}`}>
-            <h2 id={`cat-${category}`} className="mb-3 text-lg font-semibold">
+            <h2 id={`cat-${category}`} className="mb-3 text-base font-extrabold tracking-tight">
               {category.charAt(0).toUpperCase() + category.slice(1)}
             </h2>
             <ul className="flex flex-col gap-3">
@@ -106,7 +106,7 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-medium">{tweak.name}</h3>
+            <h3 className="font-bold">{tweak.name}</h3>
             <StatusBadge tone={tone}>{label}</StatusBadge>
             {tier && <StatusBadge tone="info">{tier}</StatusBadge>}
             {tweak.safety !== "safe" && <StatusBadge tone="warn">Advanced</StatusBadge>}
@@ -152,7 +152,7 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
 
       {tweak.tradeoff && !applied && (
         <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 p-3 text-sm">
-          <p className="font-medium text-warn">Before you apply</p>
+          <p className="font-bold text-warn">Before you apply</p>
           <p className="mt-1 text-ink">{tweak.tradeoff}</p>
           <label htmlFor={ackId} className="mt-2 flex cursor-pointer items-center gap-2 text-ink-muted">
             <input

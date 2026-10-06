@@ -2,12 +2,12 @@ import { createContext, useContext } from "react";
 
 export type ViewId = "home" | "games" | "tools" | "proof" | "backups";
 
-export const VIEWS: { id: ViewId; label: string }[] = [
-  { id: "home", label: "Home" },
-  { id: "games", label: "Games" },
-  { id: "tools", label: "Tools" },
-  { id: "proof", label: "Proof" },
-  { id: "backups", label: "Backups" },
+export const VIEWS: { id: ViewId; label: string; group: "Overview" | "Optimise" }[] = [
+  { id: "home", label: "Home", group: "Overview" },
+  { id: "games", label: "Games", group: "Overview" },
+  { id: "tools", label: "Tools", group: "Optimise" },
+  { id: "proof", label: "Proof", group: "Optimise" },
+  { id: "backups", label: "Backups", group: "Optimise" },
 ];
 
 export const NavContext = createContext<(view: ViewId) => void>(() => {});

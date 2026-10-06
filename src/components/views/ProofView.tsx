@@ -140,7 +140,7 @@ function NewSession({ onCreated, onCancel }: { onCreated: (id: string) => void; 
 
   return (
     <Card>
-      <h2 className="text-lg font-semibold">New comparison</h2>
+      <h2 className="text-base font-extrabold tracking-tight">New comparison</h2>
       <form className="mt-4 flex flex-col gap-4" onSubmit={(e) => void submit(e)}>
         <div>
           <label htmlFor={ids.game} className="block text-sm font-medium">
@@ -242,7 +242,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
       <ProofGuide before={before.length} after={after.length} changedNow={changedNow} />
       <Card>
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold">{session.exe}</h2>
+          <h2 className="text-base font-extrabold tracking-tight">{session.exe}</h2>
           {sample && <SampleBadge />}
         </div>
         <p className="mt-1 text-xs text-ink-faint">
@@ -343,7 +343,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Result</h2>
+          <h2 className="text-base font-extrabold tracking-tight">Result</h2>
           <Button
             onClick={() => void compare(session.sessionId)}
             busy={comparison?.status === "running"}
@@ -424,7 +424,7 @@ function ProofGuide({ before, after, changedNow }: { before: number; after: numb
   ];
   return (
     <Card aria-labelledby="proof-guide-title">
-      <h2 id="proof-guide-title" className="font-semibold">
+      <h2 id="proof-guide-title" className="font-extrabold tracking-tight">
         Steps
       </h2>
       <ol className="mt-3 flex flex-col gap-3">
@@ -456,7 +456,7 @@ function ProofGuide({ before, after, changedNow }: { before: number; after: numb
 function RunTable({ title, runs }: { title: string; runs: ProofRun[] }) {
   return (
     <Card className="p-4">
-      <h3 className="font-medium">{title}</h3>
+      <h3 className="font-bold">{title}</h3>
       {runs.length === 0 ? (
         <p className="mt-2 text-sm text-ink-muted">No runs yet.</p>
       ) : (

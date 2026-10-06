@@ -15,13 +15,16 @@ const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boo
 // Button
 // ---------------------------------------------------------------------------
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+/** primary: violet, the usual action. go: lime, the one main step on a
+ * violet card. secondary: outlined. ghost: text only. danger: undo-everything. */
+type Variant = "primary" | "go" | "secondary" | "ghost" | "danger";
 
 const VARIANT: Record<Variant, string> = {
-  primary: "bg-accent text-surface-0 hover:bg-accent-strong disabled:bg-surface-3 disabled:text-ink-faint",
-  secondary: "bg-surface-2 text-ink border border-line hover:bg-surface-3 disabled:text-ink-faint",
+  primary: "bg-violet text-white hover:bg-violet-strong disabled:bg-surface-3 disabled:text-ink-faint",
+  go: "bg-lime text-black hover:bg-lime-strong disabled:bg-black/30 disabled:text-white/70",
+  secondary: "border border-line-strong text-ink hover:bg-surface-2 disabled:text-ink-faint",
   ghost: "text-ink-muted hover:text-ink hover:bg-surface-2 disabled:text-ink-faint",
-  danger: "bg-bad/15 text-bad border border-bad/40 hover:bg-bad/25 disabled:text-ink-faint",
+  danger: "bg-bad/10 text-bad border border-bad/40 hover:bg-bad/20 disabled:border-line disabled:bg-transparent disabled:text-ink-faint",
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -39,7 +42,7 @@ export function Button({ variant = "secondary", busy = false, icon, className, c
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium",
+        "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-bold",
         "transition-colors disabled:cursor-not-allowed",
         VARIANT[variant],
         className,
@@ -57,7 +60,7 @@ export function Button({ variant = "secondary", busy = false, icon, className, c
 
 export function Card({ className, children, ...rest }: { className?: string; children: ReactNode } & React.HTMLAttributes<HTMLElement>) {
   return (
-    <section {...rest} className={cx("rounded-lg border border-line bg-surface-1 p-5", className)}>
+    <section {...rest} className={cx("rounded-2xl border border-line bg-surface-1 p-5", className)}>
       {children}
     </section>
   );
@@ -65,10 +68,10 @@ export function Card({ className, children, ...rest }: { className?: string; chi
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <header className="mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {description && <p className="mt-1 max-w-2xl text-sm text-ink-muted">{description}</p>}
+        <h1 className="text-3xl font-extrabold tracking-tight">{title}</h1>
+        {description && <p className="mt-2 max-w-2xl text-sm text-ink-muted">{description}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </header>
@@ -77,7 +80,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 export function Skeleton({ className, label = "Loading" }: { className?: string; label?: string }) {
   return (
-    <div role="status" aria-label={label} className={cx("animate-pulse rounded-md bg-surface-2", className)} />
+    <div role="status" aria-label={label} className={cx("animate-pulse rounded-xl bg-surface-2", className)} />
   );
 }
 
@@ -96,18 +99,19 @@ export function Spinner({ label }: { label: string }) {
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "neutral";
 
-const TONE: Record<Tone, { cls: string; Icon: typeof Info }> = {
-  ok: { cls: "border-ok/40 bg-ok/10 text-ok", Icon: CheckCircle2 },
-  warn: { cls: "border-warn/40 bg-warn/10 text-warn", Icon: AlertTriangle },
-  bad: { cls: "border-bad/40 bg-bad/10 text-bad", Icon: OctagonX },
-  info: { cls: "border-info/40 bg-info/10 text-info", Icon: Info },
-  neutral: { cls: "border-line bg-surface-2 text-ink-muted", Icon: CircleHelp },
+/** badge: the chip. edge/icon: how a Callout of that tone is drawn. */
+const TONE: Record<Tone, { badge: string; edge: string; icon: string; Icon: typeof Info }> = {
+  ok: { badge: "border-ok bg-ok text-black", edge: "border-ok/35", icon: "text-ok", Icon: CheckCircle2 },
+  warn: { badge: "border-violet bg-violet text-white", edge: "border-violet/70", icon: "text-violet-soft", Icon: AlertTriangle },
+  bad: { badge: "border-bad/50 bg-bad/10 text-bad", edge: "border-bad/50", icon: "text-bad", Icon: OctagonX },
+  info: { badge: "border-line-strong text-info", edge: "border-line-strong", icon: "text-info", Icon: Info },
+  neutral: { badge: "border-line-strong text-ink-muted", edge: "border-line", icon: "text-ink-muted", Icon: CircleHelp },
 };
 
 export function StatusBadge({ tone, children }: { tone: Tone; children: ReactNode }) {
-  const { cls, Icon } = TONE[tone];
+  const { badge, Icon } = TONE[tone];
   return (
-    <span className={cx("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium", cls)}>
+    <span className={cx("inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-bold", badge)}>
       <Icon aria-hidden className="size-3.5" />
       {children}
     </span>
@@ -115,12 +119,12 @@ export function StatusBadge({ tone, children }: { tone: Tone; children: ReactNod
 }
 
 export function Callout({ tone, title, children, action }: { tone: Tone; title: ReactNode; children?: ReactNode; action?: ReactNode }) {
-  const { cls, Icon } = TONE[tone];
+  const { edge, icon, Icon } = TONE[tone];
   return (
-    <div role={tone === "bad" ? "alert" : "note"} className={cx("flex gap-3 rounded-lg border p-4", cls)}>
-      <Icon aria-hidden className="mt-0.5 size-5 shrink-0" />
+    <div role={tone === "bad" ? "alert" : "note"} className={cx("flex gap-3 rounded-2xl border bg-surface-1 p-4", edge)}>
+      <Icon aria-hidden className={cx("mt-0.5 size-5 shrink-0", icon)} />
       <div className="min-w-0 flex-1 text-ink">
-        <p className="font-medium">{title}</p>
+        <p className="font-bold">{title}</p>
         {children && <div className="mt-1 text-sm text-ink-muted">{children}</div>}
         {action && <div className="mt-3">{action}</div>}
       </div>
@@ -216,25 +220,25 @@ export function Dialog({
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="w-full max-w-lg rounded-xl border border-line bg-surface-1 shadow-2xl"
+        className="w-full max-w-lg rounded-2xl border border-line-strong bg-surface-1"
       >
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <h2 id={titleId} className="text-lg font-semibold">
+        <div className="flex items-center justify-between border-b border-line px-6 py-4">
+          <h2 id={titleId} className="text-lg font-extrabold tracking-tight">
             {title}
           </h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-ink-muted hover:text-ink">
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-1 text-ink-muted hover:bg-surface-2 hover:text-ink">
             <X aria-hidden className="size-5" />
           </button>
         </div>
-        <div className="px-5 py-4 text-sm text-ink-muted">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-line px-5 py-4">{footer}</div>}
+        <div className="px-6 py-5 text-sm text-ink-muted">{children}</div>
+        {footer && <div className="flex items-center justify-end gap-2 border-t border-line px-6 py-4">{footer}</div>}
       </div>
     </div>
   );

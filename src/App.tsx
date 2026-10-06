@@ -3,6 +3,7 @@ import { RotateCcw } from "lucide-react";
 
 import { explain } from "./lib/errors";
 import { useActions, useStore } from "./store/hooks";
+import { Logo } from "./components/brand/Logo";
 import { AppShell } from "./components/shell/AppShell";
 import type { ViewId } from "./components/shell/nav";
 import { Button, ErrorCallout, Skeleton } from "./components/ui/primitives";
@@ -53,7 +54,8 @@ export function App() {
   if (boot.status === "failed") {
     return (
       <div className="mx-auto flex h-full max-w-xl flex-col justify-center gap-4 p-8">
-        <h1 className="text-2xl font-semibold">PeakTweaks could not start</h1>
+        <Logo />
+        <h1 className="text-2xl font-extrabold tracking-tight">PeakTweaks could not start</h1>
         <ErrorCallout
           text={explain(boot.error)}
           technical
@@ -87,13 +89,14 @@ export function App() {
 function BootScreen() {
   return (
     <div className="flex h-full" aria-busy="true">
-      <div className="w-52 border-r border-line bg-surface-1 p-4">
-        <Skeleton className="h-6 w-32" label="Starting PeakTweaks" />
+      <div className="w-60 border-r border-line px-6 pt-6">
+        <Logo />
+        <Skeleton className="mt-10 h-6 w-32" label="Starting PeakTweaks" />
       </div>
-      <div className="flex flex-1 flex-col gap-4 p-8">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-28 w-full max-w-4xl" />
-        <Skeleton className="h-28 w-full max-w-4xl" />
+      <div className="flex flex-1 flex-col gap-4 px-9 pt-16">
+        <Skeleton className="h-9 w-80" />
+        <Skeleton className="h-56 w-full max-w-[1240px]" />
+        <Skeleton className="h-32 w-full max-w-[1240px]" />
       </div>
     </div>
   );

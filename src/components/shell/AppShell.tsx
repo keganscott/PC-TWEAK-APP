@@ -1,14 +1,33 @@
 import { useCallback, useState, type ReactNode } from "react";
-import { Activity, Gamepad2, Home, LifeBuoy, Wrench } from "lucide-react";
+import { ChartColumn, Gamepad2, History, LayoutGrid, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 
 import { explain } from "../../lib/errors";
+import type { State } from "../../store/store";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { Logo } from "../brand/Logo";
 import { Button, cx, ErrorCallout } from "../ui/primitives";
 import { ExecutionBus } from "./ExecutionBus";
 import { NavContext, VIEWS, type ViewId } from "./nav";
+import { ProtectedCard } from "./ProtectedCard";
 import { TopBar } from "./TopBar";
 
-const ICON: Record<ViewId, typeof Home> = { home: Home, games: Gamepad2, tools: Wrench, proof: Activity, backups: LifeBuoy };
+const ICON: Record<ViewId, typeof LayoutGrid> = {
+  home: LayoutGrid,
+  games: Gamepad2,
+  tools: SlidersHorizontal,
+  proof: ChartColumn,
+  backups: History,
+};
+
+/** The small count next to a view, from what the engine reported; 0 shows nothing. */
+const COUNT: Partial<Record<ViewId, { select: (s: State) => number; describe: (n: number) => string }>> = {
+  home: {
+    select: (s) => s.audit?.scan.findings.filter((f) => f.status === "attention").length ?? 0,
+    describe: (n) => `${n} worth a look`,
+  },
+  games: { select: (s) => s.audit?.env.gameInstalls?.length ?? 0, describe: (n) => `${n} found on this PC` },
+  backups: { select: (s) => s.journal?.applied.length ?? 0, describe: (n) => `${n} applied` },
+};
 
 export function AppShell({
   view,
@@ -26,37 +45,37 @@ export function AppShell({
   return (
     <NavContext.Provider value={onNavigate}>
       <div className="flex h-full print:block print:h-auto">
-        <nav aria-label="Main" className="flex w-52 shrink-0 flex-col border-r border-line bg-surface-1">
-          <div className="flex h-14 items-center gap-2 border-b border-line px-5">
-            <span aria-hidden className="size-2.5 rounded-full bg-accent" />
-            <span className="text-base font-semibold tracking-tight">PeakTweaks</span>
+        <nav aria-label="Main" className="scrollbar-quiet flex w-60 shrink-0 flex-col overflow-y-auto border-r border-line bg-black px-4 pt-6 pb-4">
+          <div className="px-2">
+            <Logo />
           </div>
-          <ul className="flex flex-1 flex-col gap-1 p-3">
-            {VIEWS.map(({ id, label }) => {
-              const Icon = ICON[id];
-              const active = id === view;
-              return (
-                <li key={id}>
-                  <button
-                    type="button"
-                    onClick={() => onNavigate(id)}
-                    aria-current={active ? "page" : undefined}
-                    className={cx(
-                      "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm",
-                      active ? "bg-surface-3 font-medium text-ink" : "text-ink-muted hover:bg-surface-2 hover:text-ink",
-                    )}
-                  >
-                    <Icon aria-hidden className="size-4" />
-                    {label}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          {(["Overview", "Optimise"] as const).map((group) => (
+            <div key={group} className="mt-8">
+              <h2 className="px-2.5 pb-2 text-[10.5px] font-bold tracking-[0.14em] text-ink-faint uppercase">{group}</h2>
+              <ul className="flex flex-col gap-1">
+                {VIEWS.filter((v) => v.group === group).map(({ id, label }) => (
+                  <NavItem key={id} id={id} label={label} active={id === view} onNavigate={onNavigate} />
+                ))}
+              </ul>
+            </div>
+          ))}
+          <div className="mt-1">
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="flex h-10 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-semibold text-ink-muted hover:bg-surface-2 hover:text-ink"
+            >
+              <SettingsIcon aria-hidden className="size-[18px]" strokeWidth={1.8} />
+              Settings
+            </button>
+          </div>
+          <div className="mt-auto pt-6">
+            <ProtectedCard />
+          </div>
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar onOpenSettings={onOpenSettings} busOpen={busOpen} onToggleBus={toggleBus} />
-          <main className="min-h-0 flex-1 overflow-y-auto px-8 py-7 print:overflow-visible print:p-0">
+          <TopBar busOpen={busOpen} onToggleBus={toggleBus} />
+          <main className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto px-9 pt-2 pb-10 print:overflow-visible print:p-0">
             <RefreshBanner />
             {children}
           </main>
@@ -66,6 +85,54 @@ export function AppShell({
     </NavContext.Provider>
   );
 }
+
+function NavItem({
+  id,
+  label,
+  active,
+  onNavigate,
+}: {
+  id: ViewId;
+  label: string;
+  active: boolean;
+  onNavigate: (v: ViewId) => void;
+}) {
+  const Icon = ICON[id];
+  const count = COUNT[id];
+  const n = useStore(count?.select ?? zero);
+  const descId = `nav-count-${id}`;
+  return (
+    <li className="relative">
+      {active && <span aria-hidden className="absolute top-2.5 bottom-2.5 -left-4 w-[3px] rounded-r-sm bg-violet" />}
+      {/* The count is drawn from data-count by CSS, so the button's name stays
+          just the view's name; screen readers get it as the description. */}
+      <button
+        type="button"
+        onClick={() => onNavigate(id)}
+        aria-current={active ? "page" : undefined}
+        aria-describedby={n > 0 ? descId : undefined}
+        data-count={n > 0 ? String(n) : undefined}
+        className={cx(
+          "flex h-10 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-semibold",
+          "data-count:after:ml-auto data-count:after:grid data-count:after:h-5 data-count:after:min-w-5 data-count:after:place-items-center data-count:after:rounded-md data-count:after:px-1.5 data-count:after:text-[11px] data-count:after:font-bold data-count:after:content-[attr(data-count)]",
+          active
+            ? "bg-surface-2 text-ink data-count:after:bg-violet data-count:after:text-white"
+            : "text-ink-muted hover:bg-surface-2 hover:text-ink data-count:after:bg-surface-3 data-count:after:text-ink-muted",
+        )}
+      >
+        <Icon aria-hidden className={cx("size-[18px]", active && "text-lime")} strokeWidth={1.8} />
+        {label}
+      </button>
+      {n > 0 && count && (
+        <span id={descId} className="sr-only">
+          {count.describe(n)}
+        </span>
+      )}
+    </li>
+  );
+}
+
+const zero = () => 0;
 
 /** A re-read after a change failed: say that what is shown may be out of date. */
 function RefreshBanner() {

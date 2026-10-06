@@ -61,7 +61,7 @@ export function BackupsView() {
         )}
 
         <Card aria-labelledby="applied-title">
-          <h2 id="applied-title" className="font-semibold">
+          <h2 id="applied-title" className="font-extrabold tracking-tight">
             Applied now ({applied.length})
           </h2>
           {applied.length === 0 ? (
@@ -77,7 +77,7 @@ export function BackupsView() {
 
         <Card aria-labelledby="points-title">
           <div className="flex items-center gap-2">
-            <h2 id="points-title" className="font-semibold">
+            <h2 id="points-title" className="font-extrabold tracking-tight">
               Windows restore points
             </h2>
             {sample && <SampleBadge />}
@@ -110,7 +110,7 @@ export function BackupsView() {
         </Card>
 
         <Card aria-labelledby="no-start-title">
-          <h2 id="no-start-title" className="font-semibold">
+          <h2 id="no-start-title" className="font-extrabold tracking-tight">
             If Windows will not start
           </h2>
           <p className="mt-2 text-sm text-ink-muted">
@@ -134,7 +134,7 @@ export function BackupsView() {
 
         <Card aria-labelledby="journal-title">
           <div className="flex items-center gap-2">
-            <h2 id="journal-title" className="font-semibold">
+            <h2 id="journal-title" className="font-extrabold tracking-tight">
               Change record
             </h2>
             {sample && <SampleBadge />}

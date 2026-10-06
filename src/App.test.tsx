@@ -356,3 +356,46 @@ describe("review regressions", () => {
     expect(within(card).getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(false);
   });
 });
+
+describe("Home dashboard", () => {
+  it("keeps each view's button named by the view alone, with its count as the description", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "What the scan found" });
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    const home = within(nav).getByRole("button", { name: "Home" });
+    const attention = (await createMockBackend().auditSystem()).scan.findings.filter((f) => f.status === "attention").length;
+    expect(attention).toBeGreaterThan(0);
+    await waitFor(() => expect(home.getAttribute("data-count")).toBe(String(attention)));
+    expect(document.getElementById(home.getAttribute("aria-describedby")!)?.textContent).toBe(`${attention} worth a look`);
+    // The headline counts the same findings.
+    expect(screen.getByText(`${attention} things`)).toBeTruthy();
+  });
+
+  it("shows the hardware readings the engine reported, flagged by the scan, and says when one could not be read", async () => {
+    const base = createMockBackend();
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const a = await base.auditSystem();
+        const hw = a.env.hardware!;
+        return { ...a, env: { ...a.env, hardware: { ...hw, cpu: { state: "unknown" as const, reason: "SAMPLE: WMI failed" } } } };
+      },
+    });
+    const pc = (await screen.findByRole("heading", { name: "Your PC" })).closest("section")!;
+    const tile = (label: string) => within(pc).getByText(label).closest("li")!;
+    await waitFor(() => expect(within(tile("Memory")).getByText("/ 3200 MT/s")).toBeTruthy());
+    expect(within(tile("Memory")).getByText("2400")).toBeTruthy();
+    expect(within(tile("Memory")).getByRole("img", { name: "Running at 2400 of a rated 3200 MT/s" })).toBeTruthy();
+    expect(within(tile("Memory")).getByText("Worth a look")).toBeTruthy();
+    expect(within(tile("Display")).getByText("/ 144 Hz")).toBeTruthy();
+    expect(within(tile("Processor")).getByText("Could not tell")).toBeTruthy();
+  });
+
+  it("puts the restore point first, then sends the user to Tools", async () => {
+    renderApp();
+    const step = await screen.findByRole("region", { name: "Next step" });
+    await userEvent.click(await within(step).findByRole("button", { name: "Make a restore point" }));
+    await userEvent.click(await within(step).findByRole("button", { name: "Open Tools" }));
+    await screen.findByRole("heading", { name: "Tools", level: 1 });
+  });
+});

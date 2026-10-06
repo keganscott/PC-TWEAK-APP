@@ -15,10 +15,11 @@
       {
         "label": "main",
         "title": "PeakTweaks",
-        "width": 1180,
-        "height": 760,
+        "width": 1280,
+        "height": 820,
         "minWidth": 1024,
         "minHeight": 640,
+        "backgroundColor": "#000000",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings"
       }
     ],

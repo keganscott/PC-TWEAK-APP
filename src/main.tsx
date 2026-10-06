@@ -1,6 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+// Fonts ship inside the app (SIL Open Font License); nothing is fetched.
+import "@fontsource-variable/plus-jakarta-sans/wght.css";
+import "@fontsource/exo-2/latin-500.css";
+import "@fontsource/exo-2/latin-800.css";
 import "./index.css";
 import { App } from "./App";
 import { defaultBackend } from "./services/backend";

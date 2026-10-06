@@ -45,15 +45,15 @@ export function GamesView() {
       <div className="flex max-w-4xl flex-col gap-5">
         <Card>
           <fieldset>
-            <legend className="mb-3 font-semibold">Main game</legend>
+            <legend className="mb-3 font-bold">Main game</legend>
             <div className="flex flex-wrap gap-2">
               {[{ id: null as string | null, name: "None" }, ...games].map((g) => {
                 const checked = target === g.id;
                 return (
                   <label
                     key={g.id ?? "none"}
-                    className={`cursor-pointer rounded-md border px-3.5 py-2 text-sm ${
-                      checked ? "border-accent bg-accent/10 text-ink" : "border-line text-ink-muted hover:bg-surface-2"
+                    className={`cursor-pointer rounded-lg border px-3.5 py-2 text-sm has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-lime ${
+                      checked ? "border-violet bg-violet font-bold text-white" : "border-line-strong text-ink-muted hover:bg-surface-2 hover:text-ink"
                     }`}
                   >
                     <input
@@ -78,7 +78,7 @@ export function GamesView() {
         </Card>
 
         <section aria-labelledby="security-title">
-          <h2 id="security-title" className="mb-3 text-lg font-semibold">
+          <h2 id="security-title" className="mb-3 text-base font-extrabold tracking-tight">
             Security features some anti-cheats require
           </h2>
           {!readiness ? (
@@ -110,7 +110,7 @@ export function GamesView() {
         {readiness && (
           <section aria-labelledby="per-game-title">
             <div className="mb-3 flex items-center gap-2">
-              <h2 id="per-game-title" className="text-lg font-semibold">
+              <h2 id="per-game-title" className="text-base font-extrabold tracking-tight">
                 Per game
               </h2>
               {sample && <SampleBadge />}
@@ -180,7 +180,7 @@ function GameCard({
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{name}</h3>
+        <h3 className="font-bold">{name}</h3>
         <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
       </div>
       {readiness.requires.length > 0 && (
@@ -215,7 +215,7 @@ function GameCard({
       )}
       {guidance && (
         <div className="mt-3 border-t border-line pt-3">
-          <h4 className="text-sm font-medium">In the game's own settings</h4>
+          <h4 className="text-sm font-bold">In the game's own settings</h4>
           <p className="mt-1 text-sm text-ink-muted">{guidance.intro}</p>
           {guidance.steps.length > 0 && (
             <ul className="mt-2 list-disc pl-5 text-sm">

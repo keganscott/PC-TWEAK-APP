@@ -451,6 +451,7 @@ fn errors() -> Vec<EngineError> {
             timed_out: true,
         },
         EngineError::Internal { detail: "d".into() },
+        EngineError::AlreadyRunning,
     ]
 }
 
@@ -482,6 +483,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             resolution: UserResolution::InteractiveShell,
             is_self: false,
             elevated: true,
+            tester_build: false,
         },
     );
     ts_const(
@@ -560,7 +562,8 @@ fn every_engine_error_variant_has_a_fixture() {
             | EngineError::ContextViolation { .. }
             | EngineError::Command { .. }
             | EngineError::Wmi { .. }
-            | EngineError::Internal { .. } => {}
+            | EngineError::Internal { .. }
+            | EngineError::AlreadyRunning => {}
         }
     }
 }

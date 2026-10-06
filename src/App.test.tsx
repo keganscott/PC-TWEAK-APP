@@ -391,11 +391,77 @@ describe("Home dashboard", () => {
     expect(within(tile("Processor")).getByText("Could not tell")).toBeTruthy();
   });
 
+  it("finds the graphics driver by vendor when Windows names the card differently, and shows memory speed without a rating", async () => {
+    const base = createMockBackend();
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const a = await base.auditSystem();
+        const hw = a.env.hardware!;
+        if (hw.gpuDrivers.state !== "yes" || hw.memory.state !== "yes") throw new Error("fixture changed");
+        const drivers = hw.gpuDrivers.value.map((d) => ({ ...d, name: `${d.name} (WDDM)` }));
+        const sticks = hw.memory.value.sticks.map((s) => ({ ...s, ratedMhz: null }));
+        return {
+          ...a,
+          env: {
+            ...a.env,
+            hardware: {
+              ...hw,
+              gpuDrivers: { state: "yes" as const, value: drivers },
+              memory: { state: "yes" as const, value: { ...hw.memory.value, sticks } },
+            },
+          },
+        };
+      },
+    });
+    const pc = (await screen.findByRole("heading", { name: "Your PC" })).closest("section")!;
+    const tile = (label: string) => within(pc).getByText(label).closest("li")!;
+    await waitFor(() => expect(within(tile("Graphics")).getByText(/driver 581\.80/)).toBeTruthy());
+    expect(within(tile("Memory")).getByText("2400")).toBeTruthy();
+    expect(within(tile("Memory")).getByText("MT/s")).toBeTruthy();
+  });
+
+  it("says the check did not finish when the first scan fails, instead of still checking", async () => {
+    renderApp(createMockBackend({ failures: { auditSystem: { kind: "registry", path: "HKEY_LOCAL_MACHINE\\SAMPLE", value: null, detail: "SAMPLE" } } }));
+    expect(await screen.findAllByText("The check did not finish.")).toHaveLength(2);
+    expect(screen.queryByText(/Checking this PC\./)).toBeNull();
+    await userEvent.click(screen.getAllByRole("button", { name: "Check again" })[0]!);
+    await screen.findByRole("heading", { name: "What the scan found" });
+    expect(screen.queryByText("The check did not finish.")).toBeNull();
+  });
+
   it("puts the restore point first, then sends the user to Tools", async () => {
     renderApp();
     const step = await screen.findByRole("region", { name: "Next step" });
     await userEvent.click(await within(step).findByRole("button", { name: "Make a restore point" }));
     await userEvent.click(await within(step).findByRole("button", { name: "Open Tools" }));
     await screen.findByRole("heading", { name: "Tools", level: 1 });
+  });
+});
+
+describe("a second copy of PeakTweaks", () => {
+  it("says the app is already open and offers no Try again that cannot work", async () => {
+    renderApp(createMockBackend({ failures: { context: { kind: "already_running" } } }));
+    expect(await screen.findByRole("heading", { name: "PeakTweaks could not start" })).toBeTruthy();
+    expect(screen.getByText("PeakTweaks is already open.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+});
+
+describe("tester build", () => {
+  it("says so on every screen when the engine reports a tester build, and not otherwise", async () => {
+    const base = createMockBackend();
+    renderApp({ ...base, context: async () => ({ ...(await base.context()), testerBuild: true }) });
+    await screen.findByRole("heading", { name: "What the scan found" });
+    expect(screen.getByText("Tester build")).toBeTruthy();
+    expect(screen.getByText(/Every plan is unlocked for testing/)).toBeTruthy();
+    await goTo("Backups");
+    expect(screen.getByText("Tester build")).toBeTruthy();
+  });
+
+  it("shows no tester label in a normal build", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "What the scan found" });
+    expect(screen.queryByText("Tester build")).toBeNull();
   });
 });

@@ -584,6 +584,59 @@ fn tier_is_enforced_by_the_engine() {
     assert_eq!(License::free().tier(), Tier::Free);
 }
 
+/// A normal build never says it is a tester build.
+#[test]
+fn a_normal_build_is_not_labelled_a_tester_build() {
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let engine = build_engine(&fake, dir.path(), vec![], true, Tier::Free);
+    assert!(!engine.context_info().tester_build);
+    assert!(!License::free().is_tester());
+}
+
+/// The tester build (Cargo feature `tester`, docs/TEST-ON-YOUR-PC.md) unlocks
+/// every plan so the paid changes can be tried on a real PC before licensing
+/// exists. Everything else holds: no restore point, no change.
+#[cfg(feature = "tester")]
+#[test]
+fn a_tester_build_unlocks_every_plan_but_keeps_the_restore_gate() {
+    let tester_engine = |fake: &Arc<FakeRegistry>, dir: &std::path::Path, gate_open: bool| {
+        let mut t = TestTweak::new("t", KEY, &[("A", 1)]);
+        t.tier = Tier::Ultimate;
+        let resolver = crate::context::ContextResolver::new(user(true), true, fake.clone());
+        let journal = Journal::open(&TrustedDir::insecure_for_tests(dir)).unwrap();
+        let probe = if gate_open {
+            StubProbe::open_for_dev()
+        } else {
+            StubProbe::closed()
+        };
+        crate::engine::Engine::new(resolver, journal, one(t), Box::new(probe), License::tester())
+    };
+
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut closed = tester_engine(&fake, dir.path(), false);
+    assert!(closed.context_info().tester_build);
+    assert!(
+        closed.list().unwrap()[0].blocked.is_none(),
+        "no plan lock in a tester build"
+    );
+    let err = closed.apply("t").unwrap_err();
+    assert!(
+        matches!(&err, EngineError::Blocked { reason } if reason.code == BlockedCode::NoRestorePoint),
+        "{err:?}"
+    );
+    assert!(fake.snapshot().is_empty(), "nothing written without a restore point");
+
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut open = tester_engine(&fake, dir.path(), true);
+    open.apply("t").unwrap();
+    assert_eq!(hklm_dword(&fake, KEY, "A"), Some(1));
+    open.revert("t").unwrap();
+    assert!(fake.snapshot().is_empty());
+}
+
 /// B3 (docs/AUDIT-2026-10-04.md): the list says a change needs a higher plan
 /// before anyone clicks Apply, and still reads its real state.
 #[test]

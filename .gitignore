@@ -10,3 +10,6 @@
 /dist-e2e
 /test-results
 /playwright-report
+
+# Local tester build (scripts/build-tester.ps1)
+/tester-build

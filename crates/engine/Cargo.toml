@@ -11,6 +11,10 @@ publish.workspace = true
 test-support = []
 # Development-only stubs: an open restore gate and a paid license. Off by default.
 dev-stubs = []
+# The tester build for trying the app on a real PC before licensing exists:
+# every plan unlocked, everything else (restore gate included) real. Never in a
+# release; the UI labels it (docs/TEST-ON-YOUR-PC.md).
+tester = []
 # Embed the pinned PresentMon binary (vendor/presentmon, fetched by
 # scripts/fetch-presentmon.ps1) so the app stays one portable executable.
 bundle-presentmon = []

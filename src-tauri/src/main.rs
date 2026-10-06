@@ -10,12 +10,22 @@ use peaktweaks_engine::Engine;
 
 /// Build the engine. A normal build uses the real probes and the real restore
 /// service, and the Free license until Phase 7 (licensing) exists, so nothing
-/// in the catalogue can be applied yet. The `dev-stubs` feature swaps in an open
-/// restore gate and an Ultimate license so the engine can be driven by hand.
+/// in the catalogue can be applied yet. The `tester` feature keeps all of that
+/// but unlocks every plan, for trying the app on a real PC. The `dev-stubs`
+/// feature swaps in an open restore gate and an Ultimate license so the engine
+/// can be driven by hand on a machine without System Restore.
 #[cfg(not(feature = "dev-stubs"))]
 fn start_engine() -> peaktweaks_engine::error::Result<Engine> {
-    Engine::start_windows(tweaks::catalogue(), License::free())
+    #[cfg(feature = "tester")]
+    let license = License::tester();
+    #[cfg(not(feature = "tester"))]
+    let license = License::free();
+    Engine::start_windows(tweaks::catalogue(), license)
 }
+
+// A tester build must keep the real restore gate; dev-stubs opens it.
+#[cfg(all(feature = "tester", feature = "dev-stubs"))]
+compile_error!("the tester and dev-stubs features cannot be combined");
 
 #[cfg(feature = "dev-stubs")]
 fn start_engine() -> peaktweaks_engine::error::Result<Engine> {

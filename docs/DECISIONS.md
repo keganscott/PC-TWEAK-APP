@@ -217,3 +217,11 @@ Kegan chose the round-3 dashboard (`docs/design/mockups-2026-10-06/v3.png`: "Tha
 5. **Navigation** is unchanged (Home, Games, Tools, Proof, Backups) in two groups; Settings moved from the top bar to the sidebar. Counts next to a view come from engine data and are drawn by CSS from `data-count`, so a button's name stays the view's name (the tests and the Windows WebDriver test find views by name); screen readers get the count as the button's description.
 6. **Left out of the mockup**: the user's first name (the engine does not know it), the plan card "Starter, Free" (the UI never states tier on its own; it shows only what the engine reports) and the custom title bar (Windows' own title bar stays).
 
+### 15.21 A tester build for Kegan's own PC (2026-10-06)
+
+Kegan asked for the app to be ready for him to test on his personal PC. Two things stood in the way. GitHub Actions cannot build (N58). And a release build applies nothing, because both catalogue changes are Pro and the licence is the Free stub until Phase 7 (N15).
+
+The Cargo feature `tester` (`License::tester`) unlocks every plan and changes nothing else: real probes, the real restore gate, the journal, the allowlists. It is not `dev-stubs`, which opens the restore gate and must never reach a real PC; the two refuse to compile together. The tier is still decided in Rust at build time, never by the UI (plan section 12). The engine reports the build in `ContextInfo.testerBuild`, so the label comes from the engine, not the page.
+
+Delivery: CI builds it last and uploads `peaktweaks-tester-exe`, and `scripts/build-tester.ps1` builds it on a Windows PC. The steps and what to send back are in `docs/TEST-ON-YOUR-PC.md`. The feature goes when real licensing lands.
+

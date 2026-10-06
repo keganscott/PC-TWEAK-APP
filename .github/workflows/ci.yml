@@ -329,6 +329,37 @@ jobs:
             Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
           }
 
+      # The tester build Kegan runs on his own PC (docs/TEST-ON-YOUR-PC.md): the
+      # release configuration plus the `tester` feature (every plan unlocked;
+      # the real restore gate, journal and allowlists unchanged; labelled in the
+      # UI). Built last so it cannot replace the exes the steps above test, then
+      # launched once to show the engine starts.
+      - name: Tester build for a real PC
+        shell: pwsh
+        run: |
+          npx tauri build --no-bundle --features tester
+          $out = Join-Path $env:RUNNER_TEMP 'tester'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $exe = Join-Path $out 'peaktweaks-tester.exe'
+          Copy-Item target\release\peaktweaks.exe $exe
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          if (-not $text.Contains('requireAdministrator')) { throw "the tester exe does not ask for admin" }
+          $startupLog = Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log'
+          $before = if (Test-Path $startupLog) { (Get-Item $startupLog).Length } else { 0 }
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 20
+          $after = if (Test-Path $startupLog) { (Get-Item $startupLog).Length } else { 0 }
+          if ($after -ne $before) { Get-Content $startupLog | Write-Host; throw "the tester build's engine failed to start" }
+          if ($p.HasExited) { throw "peaktweaks-tester.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "tester build started and ran for 20 s: $exe"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: peaktweaks-tester-exe
+          path: ${{ runner.temp }}/tester/peaktweaks-tester.exe
+          if-no-files-found: error
+
       # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
       # Windows' own connection audit log, a positive control, then 150 s of the
       # shipped exe and every process it starts. Fails on any network connection
@@ -351,6 +382,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (engine only)
         run: cargo test -p peaktweaks-engine
+      # The tester build's licence (docs/TEST-ON-YOUR-PC.md) only unlocks plans.
+      - name: cargo test (engine, tester feature)
+        run: cargo test -p peaktweaks-engine --features tester tester
       # Plan 6.4: the default (Starter) build has no networking crate.
       - name: No networking crates in the default build
         run: ./scripts/check-no-network-deps.sh

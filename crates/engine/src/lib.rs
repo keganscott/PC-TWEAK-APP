@@ -15,6 +15,7 @@ pub mod gpu_choice;
 pub mod gpu_driver;
 pub mod hardware;
 pub mod ini;
+pub mod instance;
 pub mod journal;
 pub mod offline;
 pub mod power;

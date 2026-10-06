@@ -43,6 +43,7 @@ export function HomeView() {
     <div className="flex max-w-[1240px] flex-col gap-6">
       <Greeting
         audit={audit}
+        failed={!audit && auditOp.status === "failed"}
         actions={
           <Button onClick={() => void rescan()} busy={auditOp.status === "running"} icon={<RefreshCw aria-hidden className="size-4" />}>
             Check again
@@ -82,7 +83,7 @@ function partOfDay(hour: number): string {
   return "Good evening.";
 }
 
-function Greeting({ audit, actions }: { audit: SystemAudit | null; actions: ReactNode }) {
+function Greeting({ audit, failed, actions }: { audit: SystemAudit | null; failed: boolean; actions: ReactNode }) {
   const now = new Date();
   const attention = audit?.scan.findings.filter((f) => f.status === "attention").length ?? 0;
   return (
@@ -95,7 +96,9 @@ function Greeting({ audit, actions }: { audit: SystemAudit | null; actions: Reac
         </div>
         <p className="mt-2 text-3xl font-extrabold tracking-tight">
           {partOfDay(now.getHours())}{" "}
-          {!audit ? (
+          {failed ? (
+            <span>The check did not finish.</span>
+          ) : !audit ? (
             "Checking this PC."
           ) : attention === 0 ? (
             "Nothing needs a look."
@@ -158,9 +161,21 @@ function NextStep() {
   const { createRestorePoint } = useActions();
   const navigate = useNavigate();
 
+  const auditFailed = useStore((s) => s.auditOp.status === "failed");
   const restore = audit?.env.restore;
   const gateOpen = audit?.env.restoreGateOpen;
 
+  if (!audit && auditFailed) {
+    return (
+      <VioletCard label="Next step">
+        <Eyebrow className="text-white">Next step</Eyebrow>
+        <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight">The check did not finish.</h2>
+        <p className="mt-2 max-w-md text-sm">
+          The reason is shown above. Check again to try once more; nothing on this PC was changed.
+        </p>
+      </VioletCard>
+    );
+  }
   if (!audit || !restore) {
     return (
       <VioletCard label="Next step">
@@ -482,7 +497,12 @@ function CpuTile({ probe }: { probe: Probe<{ name: string; cores: number; logica
 
 function GpuTile({ audit, status }: { audit: SystemAudit; status: Tone | null }) {
   const gpu = probeValue(audit.env.hardware?.gpus)?.[0] ?? null;
-  const driver = probeValue(audit.env.hardware?.gpuDrivers)?.find((d) => gpu && d.name === gpu.name) ?? null;
+  // DXGI and Win32_VideoController can name the same card differently; the
+  // PCI vendor ties them together when the names do not match.
+  const drivers = probeValue(audit.env.hardware?.gpuDrivers) ?? [];
+  const driver = gpu
+    ? (drivers.find((d) => d.name === gpu.name) ?? drivers.find((d) => d.vendorId !== null && d.vendorId === gpu.vendorId) ?? null)
+    : null;
   const version = driver?.nvidiaVersion ?? driver?.driverVersion ?? null;
   return (
     <Tile label="Graphics" icon={Gpu} status={status} value={gpu ? gpu.name : <CouldNotTell />}>
@@ -512,6 +532,11 @@ function MemoryTile({ probe, status }: { probe: SystemAuditMemory; status: Tone 
           <>
             <span className="tabular-nums">{running}</span>
             <span className="ml-1 text-sm font-semibold text-ink-faint">/ {rated} MT/s</span>
+          </>
+        ) : running ? (
+          <>
+            <span className="tabular-nums">{running}</span>
+            <span className="ml-1 text-sm font-semibold text-ink-faint">MT/s</span>
           </>
         ) : (
           formatGiB(mem.installedBytes)

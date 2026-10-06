@@ -36,6 +36,9 @@ pub struct ContextInfo {
     pub resolution: UserResolution,
     pub is_self: bool,
     pub elevated: bool,
+    /// A tester build (`License::tester`): every plan is unlocked for testing,
+    /// nothing else differs. The UI says so on every screen.
+    pub tester_build: bool,
 }
 
 /// Outcome of one tweak in a `revert_all`.
@@ -120,6 +123,9 @@ pub struct Engine {
     settings: crate::settings::Settings,
     settings_store: crate::settings::SettingsStore,
     offline_error: Option<String>,
+    /// Held while this engine lives, so no second engine writes the same
+    /// journal (`instance.rs`). `None` for engines on test directories.
+    _instance: Option<crate::instance::InstanceLock>,
 }
 
 impl Engine {
@@ -151,6 +157,7 @@ impl Engine {
             settings: crate::settings::Settings::default(),
             settings_store: crate::settings::SettingsStore::in_memory(),
             offline_error: None,
+            _instance: None,
         }
     }
 
@@ -226,6 +233,7 @@ impl Engine {
             resolution: u.resolution,
             is_self: u.is_self,
             elevated: self.resolver.elevated(),
+            tester_build: self.license.is_tester(),
         }
     }
 
@@ -613,12 +621,15 @@ impl Engine {
 
         let elevated = super::identity::is_elevated();
         let dir = super::secure_dir::TrustedDir::ensure_program_data()?;
+        // Before anything reads or writes the journal: one engine at a time.
+        let instance = crate::instance::InstanceLock::acquire(&dir)?;
         let resolver = ContextResolver::detect(elevated)?;
         let journal = Journal::open(&dir)?;
         let proof = Arc::new(build_proof_service(&dir));
         let mut engine = Self::new(resolver, journal, tweaks, probe, license)
             .with_proof_service(proof)
             .with_settings_in(&dir);
+        engine._instance = Some(instance);
         engine.refresh_offline_undo();
         Ok(engine)
     }

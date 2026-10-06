@@ -65,21 +65,42 @@ impl EnvProbe for StubProbe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct License {
     tier: Tier,
+    tester: bool,
 }
 
 impl License {
     pub fn free() -> Self {
-        Self { tier: Tier::Free }
+        Self {
+            tier: Tier::Free,
+            tester: false,
+        }
     }
 
     /// Development and tests only.
     #[cfg(any(test, feature = "test-support", feature = "dev-stubs"))]
     pub fn dev(tier: Tier) -> Self {
-        Self { tier }
+        Self { tier, tester: false }
+    }
+
+    /// The tester build (Cargo feature `tester`, docs/TEST-ON-YOUR-PC.md):
+    /// every plan unlocked so the paid changes can be tried on a real PC
+    /// before licensing exists (Phase 7). Only the plan check changes; the
+    /// restore gate, the journal and every allowlist are the same as in a
+    /// release, and the UI labels the build from `ContextInfo::tester_build`.
+    #[cfg(feature = "tester")]
+    pub fn tester() -> Self {
+        Self {
+            tier: Tier::Ultimate,
+            tester: true,
+        }
     }
 
     pub fn tier(&self) -> Tier {
         self.tier
+    }
+
+    pub fn is_tester(&self) -> bool {
+        self.tester
     }
 }
 

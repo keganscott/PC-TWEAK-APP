@@ -90,6 +90,7 @@ const ALL_KINDS: Record<EngineError["kind"], true> = {
   command: true,
   wmi: true,
   internal: true,
+  already_running: true,
 };
 
 describe("error wording", () => {

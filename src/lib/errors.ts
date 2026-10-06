@@ -76,6 +76,12 @@ export function explain(error: EngineError): ErrorText {
       };
     case "internal":
       return { title: "Something went wrong inside PeakTweaks.", hint: "Try again. If it keeps happening, restart PeakTweaks.", detail: error.detail };
+    case "already_running":
+      return {
+        title: "PeakTweaks is already open.",
+        hint: "Close this window and use the one that is already open. If the field-check tool is running, let it finish first. Only one copy runs at a time so the record of changes stays correct.",
+        detail: null,
+      };
   }
 }
 

@@ -60,9 +60,12 @@ export function App() {
           text={explain(boot.error)}
           technical
           action={
-            <Button variant="primary" icon={<RotateCcw aria-hidden className="size-4" />} onClick={() => void start()}>
-              Try again
-            </Button>
+            // Another copy holds the engine; retrying in this window cannot change that.
+            boot.error.kind === "already_running" ? undefined : (
+              <Button variant="primary" icon={<RotateCcw aria-hidden className="size-4" />} onClick={() => void start()}>
+                Try again
+              </Button>
+            )
           }
         />
         <p className="text-sm text-ink-muted">

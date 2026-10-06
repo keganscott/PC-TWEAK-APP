@@ -131,7 +131,8 @@ export const contextInfo = {
   "sid": "S-1-5-21-1-2-3-1001",
   "resolution": "interactive_shell",
   "isSelf": false,
-  "elevated": true
+  "elevated": true,
+  "testerBuild": false
 } satisfies ContextInfo;
 
 export const revertResults = [
@@ -319,6 +320,9 @@ export const engineErrors = [
   {
     "kind": "internal",
     "detail": "d"
+  },
+  {
+    "kind": "already_running"
   }
 ] satisfies EngineError[];
 

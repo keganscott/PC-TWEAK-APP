@@ -10,6 +10,14 @@ export function TopBar({ busOpen, onToggleBus }: { busOpen: boolean; onToggleBus
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-4 px-9 print:hidden">
       <div className="flex items-center gap-3">
+        {context?.testerBuild && (
+          <span className="flex items-center gap-2 text-xs font-semibold text-ink-muted">
+            <span className="rounded-md border border-violet bg-violet px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase">
+              Tester build
+            </span>
+            <span>Every plan is unlocked for testing. Not a release.</span>
+          </span>
+        )}
         {sample && (
           <span className="flex items-center gap-2 text-xs font-semibold text-sample">
             <SampleBadge />

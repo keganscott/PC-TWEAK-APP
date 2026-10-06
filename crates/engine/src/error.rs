@@ -78,12 +78,20 @@ pub enum EngineError {
 
     /// An internal invariant failed (poisoned lock, panicked worker).
     Internal { detail: String },
+
+    /// Another PeakTweaks engine (the app or the field-check tool) is already
+    /// running on this PC (`instance.rs`). Only one may write the journal.
+    AlreadyRunning,
 }
 
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotElevated => write!(f, "PeakTweaks is not running elevated"),
+            Self::AlreadyRunning => write!(
+                f,
+                "PeakTweaks is already running on this PC (the app or the field-check tool); only one may run at a time"
+            ),
             Self::UserContextUnresolved { detail } => {
                 write!(f, "could not resolve the interactive user: {detail}")
             }

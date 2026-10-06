@@ -265,6 +265,10 @@ Read-only unless a flag below says otherwise. Run from an elevated PowerShell.
         let engine = match Engine::start_windows(peaktweaks_engine::tweaks::catalogue(), License::free()) {
             Ok(e) => Some(Arc::new(Mutex::new(e))),
             Err(e) => {
+                println!("  the PeakTweaks engine did not start: {e}");
+                if matches!(e, peaktweaks_engine::error::EngineError::AlreadyRunning) {
+                    println!("  close the PeakTweaks app, then run this again");
+                }
                 report.insert("engineStart".into(), json!({ "ok": false, "error": e.to_string() }));
                 None
             }

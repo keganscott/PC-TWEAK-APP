@@ -39,13 +39,18 @@ CI (`.github/workflows/ci.yml`) is the gate. Windows: fmt, clippy `-D warnings`,
 
 ## Running the engine by hand
 
-A normal build cannot apply anything: the restore-point gate is closed and the license is Free until Phases 3 and 7 exist. To exercise the engine yourself on a test machine:
+A normal build applies nothing yet: every catalogue change is Pro and the licence is Free until Phase 7. Two ways round that:
 
-```sh
-npx tauri dev --features dev-stubs   # from an elevated terminal (not yet run by anyone)
-```
+- **Tester build, for a real PC** (`docs/TEST-ON-YOUR-PC.md`): every plan unlocked, everything else real, including the restore-point gate; labelled "Tester build" in the app. CI uploads it as `peaktweaks-tester-exe`; on a Windows PC, `scripts\build-tester.ps1` builds it.
+  ```sh
+  npx tauri build --no-bundle --features tester
+  ```
+- **dev-stubs, for a machine without System Restore**: also opens the restore-point gate, so it must never run on a PC you care about.
+  ```sh
+  npx tauri dev --features dev-stubs   # from an elevated terminal (not yet run by anyone)
+  ```
 
-`dev-stubs` is never enabled in CI or release builds.
+Neither is a release build. CI builds the tester build last and never ships dev-stubs.
 
 ## Rules that are enforced by tests
 

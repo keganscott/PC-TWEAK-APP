@@ -225,3 +225,13 @@ The Cargo feature `tester` (`License::tester`) unlocks every plan and changes no
 
 Delivery: CI builds it last and uploads `peaktweaks-tester-exe`, and `scripts/build-tester.ps1` builds it on a Windows PC. The steps and what to send back are in `docs/TEST-ON-YOUR-PC.md`. The feature goes when real licensing lands.
 
+
+### 15.22 Every Hone and ExitLag feature, network use for the ExitLag ones, fewer warnings (2026-10-06)
+
+Kegan, in chat: "Any single feature that Hone has you can do", and "any single feature that ExitLag has, you can make". The list being built is `docs/CATALOGUE.md` (Hone H1-H31, ExitLag E1-E6).
+
+1. **Evidence.** A feature Hone ships counts as supported evidence for plan section 12's rule "no tweak whose only support is a forum post". Registry paths and values are still checked against Microsoft's documentation or a real PC before a VERIFY marker comes off.
+2. **Network.** The app may use the network for the ExitLag-style features: ping tests (Network Analyzer, E4) and traffic priority (QoS / Traffic Shaper, E3 and H26), started by the user. Nothing else goes online, and nothing about the user is sent anywhere. This replaces the old "never uses the network" description (C24, N40, `scripts/check-no-network-deps.sh`), which must be updated to say so honestly when E4 lands.
+3. **Fewer warnings.** No warning on well-supported changes; one short line only where there is a real cost (restart needed, battery, connection drops for a few seconds); one confirmation only for Advanced changes. The safety net is unchanged: a verified restore point before the first change, a `.reg` backup and journal record before each one, Undo and Undo all.
+4. **Never-do still stands.** Plan section 12's list is unchanged. If a Hone or ExitLag feature needs one of its items (Memory Integrity/VBS off, Secure Boot/TPM/IOMMU, game memory or injection, Roblox fast flags or FPS unlockers, game CPU affinity, BIOS, vulnerable drivers), it is not built; Kegan is asked first.
+5. **Not buildable:** E1 (ExitLag's routing over its own server network). It stays listed in the catalogue as such.

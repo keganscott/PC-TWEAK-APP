@@ -10,3 +10,13 @@ Notes for whichever is chosen:
 - Copy follows the app's rules: no efficacy claims, every change undoable, sample data labelled.
 - The rings in A and the meters in B show real readings only (memory speed against rated speed, display Hz against the maximum); live CPU/GPU load would need a new read-only monitor, which does not exist yet.
 - "Auto" is planned (plan 6.3) and needs the N2 reference documents for its safe set.
+
+## Round 2 (after Kegan's feedback: "like A, but not its colours; Hone/EXM-like with a better colour combo and a better UI")
+
+`v2.html` is one refined layout (custom title bar, Auto as a large circular hero button, restore point and Undo cards, hardware tiles with real readings, findings, game cards) in three palettes, chosen with `?p=aurora|ember|volt`:
+
+- **Aurora** (`v2-aurora.png`): cyan to mint on deep navy.
+- **Ember** (`v2-ember.png`): orange to amber on graphite.
+- **Volt** (`v2-volt.png`): electric lime to green on near-black; a modern nod to the original Xbox green.
+
+Each palette is a set of CSS variables, so the chosen one maps directly onto the app's existing theme tokens (`src/index.css`).

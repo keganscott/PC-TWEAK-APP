@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PeakTweaks mockup v3</title>
+<link rel="stylesheet" href="fonts/local.css" />
+<style>
+  :root {
+    --black: #000000;
+    --violet: #7e3bed;
+    --violet-2: #9a66f2;   /* violet text on black (AA) */
+    --white: #ffffff;
+    --lime: #c6ff34;
+    --s1: #0a0a0c;         /* card */
+    --s2: #111114;         /* raised */
+    --s3: #18181c;
+    --line: rgba(255,255,255,.08);
+    --line-2: rgba(255,255,255,.14);
+    --t2: rgba(255,255,255,.62);
+    --t3: rgba(255,255,255,.42);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden; background: var(--black); color: var(--white);
+    font-family: "Plus Jakarta Sans", sans-serif; font-size: 14px; letter-spacing: -.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+  .lines { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.045) 0 1px, transparent 1px 7px); }
+
+  /* title bar */
+  .title { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 0 0 16px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--t3); }
+  .title .win { display: flex; height: 100%; }
+  .title .win span { width: 46px; display: grid; place-items: center; }
+  .title .win svg { stroke: var(--t2); }
+
+  .app { display: grid; grid-template-columns: 240px 1fr; height: 866px; }
+
+  /* sidebar */
+  aside { border-right: 1px solid var(--line); padding: 22px 16px 18px; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; }
+  .word { font-family: "Exo 2", sans-serif; font-weight: 800; font-size: 16px; letter-spacing: .06em; }
+  .word span { font-weight: 500; color: var(--t2); }
+  .group { margin-top: 30px; }
+  .group h6 { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--t3); font-weight: 700; padding: 0 10px 8px; }
+  .nav { display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px; border-radius: 8px; color: var(--t2); font-weight: 600; font-size: 13.5px; position: relative; }
+  .nav svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .nav.on { background: var(--s2); color: var(--white); }
+  .nav.on::before { content: ""; position: absolute; left: -16px; top: 9px; bottom: 9px; width: 3px; background: var(--violet); border-radius: 0 2px 2px 0; }
+  .nav.on svg { stroke: var(--lime); }
+  .nav .n { margin-left: auto; font-size: 11px; font-weight: 700; min-width: 22px; height: 20px; padding: 0 6px; border-radius: 6px; display: grid; place-items: center; background: var(--s3); color: var(--t2); }
+  .nav.on .n { background: var(--violet); color: var(--white); }
+  .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+  .safe { border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .safe .row { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; }
+  .tick { width: 18px; height: 18px; border-radius: 5px; background: var(--lime); display: grid; place-items: center; flex: none; }
+  .tick svg { width: 11px; height: 11px; stroke: #000; stroke-width: 3; fill: none; }
+  .safe p { color: var(--t3); font-size: 12px; line-height: 1.5; margin-top: 6px; }
+  .plan { border-radius: 12px; padding: 14px; background: var(--s1); border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  .plan b { font-size: 13px; }
+  .plan small { display: block; color: var(--t3); font-size: 11.5px; margin-top: 2px; }
+  .plan .up { font-size: 12px; font-weight: 700; color: var(--black); background: var(--white); padding: 6px 10px; border-radius: 7px; }
+
+  /* main */
+  main { padding: 26px 34px 24px; display: flex; flex-direction: column; gap: 20px; position: relative; min-width: 0; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; }
+  header small { color: var(--t3); font-size: 12.5px; font-weight: 600; display: flex; gap: 10px; align-items: center; }
+  header small i { width: 3px; height: 3px; border-radius: 50%; background: var(--t3); }
+  header h1 { font-size: 30px; font-weight: 800; letter-spacing: -.035em; margin-top: 6px; }
+  header h1 em { font-style: normal; color: var(--lime); }
+  .btns { display: flex; gap: 8px; }
+  .btn { height: 38px; padding: 0 16px; border-radius: 9px; font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-2); color: var(--white); }
+  .btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .hero { display: grid; grid-template-columns: 1.7fr 1fr 1fr; gap: 14px; height: 222px; }
+  .card { background: var(--s1); border: 1px solid var(--line); border-radius: 14px; padding: 20px; position: relative; overflow: hidden; }
+  .label { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; color: var(--t3); display: flex; align-items: center; gap: 8px; }
+
+  .auto { background: var(--violet); border: 0; padding: 22px 24px; display: flex; flex-direction: column; }
+  .auto .facets { position: absolute; right: 0; top: 0; height: 100%; width: 300px; -webkit-mask-image: linear-gradient(90deg, transparent, #000 55%); }
+  .auto .label { color: rgba(255,255,255,.75); position: relative; }
+  .auto h2 { font-size: 24px; font-weight: 800; letter-spacing: -.03em; margin-top: 10px; position: relative; max-width: 520px; line-height: 1.15; }
+  .steps { display: flex; gap: 6px; margin-top: 16px; white-space: nowrap; position: relative; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.88); }
+  .steps span { display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,.18); border-radius: 6px; padding: 5px 9px; }
+  .steps b { font-size: 11px; font-weight: 800; color: var(--lime); }
+  .auto .cta { margin-top: auto; display: flex; align-items: center; gap: 16px; position: relative; }
+  .go { height: 42px; padding: 0 20px; border-radius: 10px; background: var(--lime); color: var(--black); font-weight: 800; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  .go svg { width: 14px; height: 14px; fill: var(--black); }
+  .auto .alt { color: var(--white); font-weight: 700; font-size: 13px; border-bottom: 1.5px solid rgba(255,255,255,.5); padding-bottom: 1px; }
+
+  .stat { display: flex; flex-direction: column; }
+  .stat .big { font-size: 52px; font-weight: 700; margin-top: 14px; line-height: 1; }
+  .stat .big small { font-size: 20px; color: var(--t3); font-weight: 600; margin-left: 6px; letter-spacing: 0; }
+  .stat p { color: var(--t2); font-size: 12.5px; margin-top: 8px; }
+  .stat .foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 6px; font-size: 11.5px; font-weight: 800; }
+  .chip.lime { background: var(--lime); color: var(--black); }
+  .chip.vio { background: var(--violet); color: var(--white); }
+  .chip.out { border: 1px solid var(--line-2); color: var(--t2); font-weight: 700; }
+  .chip svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 3; fill: none; }
+  .link { color: var(--white); font-weight: 700; font-size: 12.5px; display: flex; gap: 6px; align-items: center; }
+  .link svg { width: 12px; height: 12px; stroke: var(--lime); stroke-width: 2.4; fill: none; }
+  .segs { display: flex; gap: 3px; margin-top: 12px; }
+  .segs i { flex: 1; height: 6px; border-radius: 2px; background: var(--s3); }
+  .segs i.on { background: var(--lime); }
+
+  .sec { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .sec h3 { font-size: 15px; font-weight: 800; letter-spacing: -.02em; }
+  .sec span { color: var(--t3); font-size: 12px; font-weight: 600; }
+
+  .pc { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .tile { background: var(--s1); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; height: 122px; display: flex; flex-direction: column; }
+  .tile .top { display: flex; justify-content: space-between; align-items: center; }
+  .tile .v { font-size: 24px; font-weight: 700; letter-spacing: -.03em; margin-top: 12px; }
+  .tile .v small { font-size: 13px; color: var(--t3); font-weight: 600; margin-left: 4px; letter-spacing: 0; }
+  .tile p { color: var(--t2); font-size: 12px; margin-top: auto; }
+  .meter { height: 4px; border-radius: 2px; background: var(--s3); margin-top: auto; position: relative; }
+  .meter i { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--white); }
+  .meter u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--violet-2); right: 0; }
+  .tile.flag { border-color: rgba(126,59,237,.55); }
+  .tile.flag .meter-cap { display: flex; justify-content: space-between; color: var(--t3); font-size: 11px; margin-top: 7px; }
+
+  .bottom { display: grid; grid-template-columns: 1.7fr 1fr; gap: 14px; flex: 1; min-height: 0; }
+  .list { background: var(--s1); border: 1px solid var(--line); border-radius: 14px; }
+  .item { display: grid; grid-template-columns: 36px 1fr auto 18px; gap: 14px; align-items: center; padding: 0 18px; height: 80px; border-top: 1px solid var(--line); }
+  .item:first-child { border-top: 0; }
+  .ico { width: 36px; height: 36px; border-radius: 9px; background: var(--s3); display: grid; place-items: center; }
+  .ico svg { width: 17px; height: 17px; stroke: var(--white); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .item b { font-weight: 700; font-size: 13.5px; }
+  .item p { color: var(--t3); font-size: 12px; margin-top: 3px; }
+  .item .arr { stroke: var(--t3); width: 16px; height: 16px; fill: none; stroke-width: 2; }
+
+  .games { background: var(--s1); border: 1px solid var(--line); border-radius: 14px; padding: 6px 0; }
+  .game { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; padding: 16px 18px; }
+  .game + .game { border-top: 1px solid var(--line); }
+  .art { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; font-family: "Exo 2", sans-serif; font-weight: 800; font-size: 19px; }
+  .art.a { background: var(--violet); color: var(--white); }
+  .art.b { background: var(--white); color: var(--black); }
+  .game b { font-weight: 700; font-size: 13.5px; }
+  .game p { color: var(--t3); font-size: 12px; margin-top: 3px; display: flex; gap: 6px; align-items: center; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lime); }
+  .dot.v { background: var(--violet-2); }
+  .add { margin: 8px 18px 6px; height: 40px; border: 1px dashed var(--line-2); border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--t2); font-weight: 700; font-size: 12.5px; }
+
+  .tag { position: absolute; right: 34px; bottom: 6px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--t3); font-weight: 700; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="mark" viewBox="0 0 32 32">
+      <polygon points="16,3 30.5,28 23.2,28 16,15.6 8.8,28 1.5,28" fill="#7e3bed" />
+      <polygon points="16,20.6 20.3,28 11.7,28" fill="#c6ff34" />
+    </symbol>
+    <symbol id="arr" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" /></symbol>
+  </defs>
+</svg>
+
+<div class="title">
+  <span>PeakTweaks</span>
+  <div class="win">
+    <span><svg width="10" height="10"><path d="M0 5h10" /></svg></span>
+    <span><svg width="10" height="10" fill="none"><rect x=".5" y=".5" width="9" height="9" /></svg></span>
+    <span><svg width="10" height="10"><path d="M0 0l10 10M10 0L0 10" /></svg></span>
+  </div>
+</div>
+
+<div class="app">
+<aside>
+  <div class="brand"><svg width="30" height="30"><use href="#mark" /></svg><div class="word">PEAK<span>TWEAKS</span></div></div>
+
+  <div class="group">
+    <h6>Overview</h6>
+    <div class="nav on"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard<span class="n">3</span></div>
+    <div class="nav"><svg viewBox="0 0 24 24"><path d="M6 9h4M8 7v4M15 10h.01M18 8h.01"/><path d="M7 4h10a5 5 0 0 1 5 5v4a4 4 0 0 1-7 2.6L14 15h-4l-1 .6A4 4 0 0 1 2 13V9a5 5 0 0 1 5-5z"/></svg>Games<span class="n">2</span></div>
+  </div>
+  <div class="group">
+    <h6>Optimise</h6>
+    <div class="nav"><svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Tweaks</div>
+    <div class="nav"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Proof</div>
+    <div class="nav"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Backups<span class="n">2</span></div>
+    <div class="nav"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>Settings</div>
+  </div>
+
+  <div class="side-foot">
+    <div class="safe lines">
+      <div class="row"><span class="tick"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.3 2.3 4.7-5" /></svg></span>Protected</div>
+      <p>Restore point checked. Every change is recorded first and can be undone.</p>
+    </div>
+    <div class="plan"><div><b>Starter</b><small>Free &middot; collects no data</small></div><span class="up">Plans</span></div>
+  </div>
+</aside>
+
+<main>
+  <header>
+    <div>
+      <small>Monday 6 October <i></i> Last check 18:04</small>
+      <h1>Good evening, Kegan. <em>3 things</em> worth a look.</h1>
+    </div>
+    <div class="btns">
+      <span class="btn"><svg viewBox="0 0 24 24"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/></svg>Print scan</span>
+      <span class="btn"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg>Check again</span>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="card auto">
+      <svg class="facets" viewBox="0 0 300 200" preserveAspectRatio="xMaxYMid slice">
+        <g stroke="none">
+          <polygon points="150,0 200,50 150,100 100,50" fill="#8a4cf0"/>
+          <polygon points="250,0 300,50 250,100 200,50" fill="#7234dd"/>
+          <polygon points="200,50 250,100 200,150 150,100" fill="#9257f3"/>
+          <polygon points="300,50 300,150 250,100" fill="#8a4cf0"/>
+          <polygon points="100,50 150,100 100,150 50,100" fill="#7234dd"/>
+          <polygon points="150,100 200,150 150,200 100,150" fill="#8a4cf0"/>
+          <polygon points="250,100 300,150 250,200 200,150" fill="#6c2fd6"/>
+          <polygon points="200,0 250,0 200,50 150,0" fill="#6c2fd6"/>
+          <polygon points="50,100 100,150 50,200 0,150" fill="#8a4cf0"/>
+          <polygon points="100,150 150,200 50,200" fill="#9257f3"/>
+          <polygon points="200,150 250,200 150,200" fill="#7234dd"/>
+        </g>
+        <g fill="none" stroke="rgba(0,0,0,.14)" stroke-width="1">
+          <path d="M0 50L50 0M0 150L150 0M50 200L250 0M150 200L300 50M250 200L300 150"/>
+          <path d="M100 0L300 200M0 0L200 200M0 100L100 200M200 0L300 100"/>
+        </g>
+      </svg>
+      <div class="label">Auto &middot; Mid rig</div>
+      <h2>Apply the safe set for this PC<br />in one go.</h2>
+      <div class="steps">
+        <span><b>01</b>Restore point</span>
+        <span><b>02</b>Safe changes</span>
+        <span><b>03</b>Check again</span>
+        <span><b>04</b>Undo any time</span>
+      </div>
+      <div class="cta">
+        <span class="go"><svg viewBox="0 0 14 14"><path d="M3 1.5l9 5.5-9 5.5z"/></svg>Run Auto</span>
+        <span class="alt">Review the list first</span>
+      </div>
+    </div>
+
+    <div class="card stat lines">
+      <div class="label">Restore point</div>
+      <div class="big mono">#142</div>
+      <p>Made by Windows today at 18:04</p>
+      <div class="foot"><span class="chip lime"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.3 2.3 4.7-5" /></svg>Verified</span><span class="link">Details<svg viewBox="0 0 16 16"><use href="#arr" /></svg></span></div>
+    </div>
+
+    <div class="card stat">
+      <div class="label">Changes applied</div>
+      <div class="big mono">2<small>/ 14</small></div>
+      <div class="segs"><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="foot"><span class="chip out">Recorded first</span><span class="link">Undo all<svg viewBox="0 0 16 16"><use href="#arr" /></svg></span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec"><h3>Your PC</h3><span>Windows 11 Pro 24H2 &middot; Mid rig</span></div>
+    <div class="pc">
+      <div class="tile"><div class="top"><span class="label">Processor</span><span class="chip lime"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.3 2.3 4.7-5" /></svg></span></div><div class="v">Ryzen 7 7800X3D</div><p>8 cores &middot; 16 threads</p></div>
+      <div class="tile"><div class="top"><span class="label">Graphics</span><span class="chip lime"><svg viewBox="0 0 12 12"><path d="M2.5 6.2l2.3 2.3 4.7-5" /></svg></span></div><div class="v">RTX 4070</div><p>12 GB &middot; driver 566.36</p></div>
+      <div class="tile flag"><div class="top"><span class="label">Memory</span><span class="chip vio">Below rated</span></div><div class="v mono">4800 <small>/ 6000 MT/s</small></div><div class="meter"><i style="width:80%"></i><u></u></div></div>
+      <div class="tile flag"><div class="top"><span class="label">Display</span><span class="chip vio">60 of 165 Hz</span></div><div class="v mono">60 <small>/ 165 Hz</small></div><div class="meter"><i style="width:36.4%"></i><u></u></div></div>
+    </div>
+  </section>
+
+  <section class="bottom">
+    <div>
+      <div class="sec"><h3>Worth a look</h3><span>3 of 11 checks</span></div>
+      <div class="list">
+        <div class="item"><span class="ico"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><div><b>The display runs at 60 Hz. It offers 165 Hz.</b><p>Windows Settings &rsaquo; Display &rsaquo; Advanced display</p></div><span class="chip lime">You can fix</span><svg class="arr"><use href="#arr" /></svg></div>
+        <div class="item"><span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 7v10M11 7v10M15 7v10M3 20h18"/></svg></span><div><b>Memory runs below its rated speed</b><p>XMP or EXPO is a BIOS setting. PeakTweaks never writes to the BIOS.</p></div><span class="chip out">In the BIOS</span><svg class="arr"><use href="#arr" /></svg></div>
+        <div class="item"><span class="ico"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 14h.01M10 14h8"/></svg></span><div><b>Fortnite is on a hard drive</b><p>D: &middot; the Windows drive is an NVMe SSD with 412 GB free</p></div><span class="chip out">Move the game</span><svg class="arr"><use href="#arr" /></svg></div>
+      </div>
+    </div>
+    <div>
+      <div class="sec"><h3>Your games</h3><span>2 found</span></div>
+      <div class="games">
+        <div class="game"><span class="art a">F</span><div><b>Fortnite</b><p><span class="dot v"></span>D: hard drive &middot; RTX 4070</p></div><span class="chip out">1 note</span></div>
+        <div class="game"><span class="art b">R</span><div><b>Roblox</b><p><span class="dot"></span>C: NVMe &middot; RTX 4070</p></div><span class="chip lime">Ready</span></div>
+        <div class="add">+ Add a game</div>
+      </div>
+    </div>
+  </section>
+  <div class="tag">Mockup &middot; sample data</div>
+</main>
+</div>
+</body>
+</html>

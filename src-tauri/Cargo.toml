@@ -1,0 +1,27 @@
+[package]
+name = "peaktweaks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+peaktweaks-engine = { path = "../crates/engine" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Embed the pinned PresentMon so the app stays one portable executable. Needs
+# vendor/presentmon/PresentMon-x64.exe (scripts/fetch-presentmon.ps1).
+default = ["bundle-presentmon"]
+bundle-presentmon = ["peaktweaks-engine/bundle-presentmon"]
+# Opens the restore gate and the paid tier so the engine can be driven by hand.
+# Never enabled in CI or release builds.
+dev-stubs = ["peaktweaks-engine/dev-stubs"]
+# The tester build for a real PC (docs/TEST-ON-YOUR-PC.md): real probes and the
+# real restore gate, every plan unlocked, labelled in the UI. Not a release.
+tester = ["peaktweaks-engine/tester"]

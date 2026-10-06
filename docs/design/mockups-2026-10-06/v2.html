@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PeakTweaks mockup v2</title>
+<link rel="stylesheet" href="fonts/local.css" />
+<style>
+  /* ---- palettes: one layout, three colour schemes (?p=aurora|ember|volt) ---- */
+  :root, [data-p="aurora"] {
+    --bg: #060a10; --bg2: #08101a; --side: #070c14; --card: #0c141f; --card2: #101a27; --line: #18263a; --line2: #22344d;
+    --ink: #eef5fb; --muted: #8ea2b8; --faint: #5b6e84;
+    --a1: #22d3ee; --a2: #34f5c5; --a-ink: #03141a;
+    --glow1: rgba(34,211,238,.22); --glow2: rgba(52,245,197,.12);
+    --warn: #fbbf24; --ok: #34f5c5; --hw: #93c5fd;
+  }
+  [data-p="ember"] {
+    --bg: #0b0a09; --bg2: #110f0d; --side: #0d0c0b; --card: #151311; --card2: #1b1815; --line: #26221e; --line2: #342e28;
+    --ink: #f7f2ec; --muted: #ab9f92; --faint: #73685d;
+    --a1: #ff5f2e; --a2: #ffb648; --a-ink: #1f0a02;
+    --glow1: rgba(255,95,46,.22); --glow2: rgba(255,182,72,.12);
+    --warn: #facc15; --ok: #4ade80; --hw: #93c5fd;
+  }
+  [data-p="volt"] {
+    --bg: #070807; --bg2: #0b0d0a; --side: #090a08; --card: #10120f; --card2: #151813; --line: #1f241c; --line2: #2b3227;
+    --ink: #f1f7ea; --muted: #9aa894; --faint: #66725f;
+    --a1: #b6ff3b; --a2: #3dffa2; --a-ink: #0b1602;
+    --glow1: rgba(182,255,59,.18); --glow2: rgba(61,255,162,.10);
+    --warn: #ffc53d; --ok: #3dffa2; --hw: #8ec5ff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden; color: var(--ink);
+    font-family: "Plus Jakarta Sans", sans-serif; font-size: 14px;
+    background: var(--bg);
+  }
+  .win { position: absolute; inset: 0; display: grid; grid-template-columns: 252px 1fr; grid-template-rows: 40px 1fr;
+    background: radial-gradient(60% 50% at 70% 0%, var(--glow2), transparent 70%), radial-gradient(40% 40% at 38% 30%, var(--glow1), transparent 70%), var(--bg); }
+  /* title bar */
+  .titlebar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 14px 0 20px; border-bottom: 1px solid var(--line); background: rgba(0,0,0,.25); }
+  .titlebar .tb-left { display: flex; gap: 10px; align-items: center; color: var(--faint); font-size: 12px; }
+  .ctrls { display: flex; gap: 18px; color: var(--faint); }
+  .ctrls svg { width: 14px; height: 14px; }
+  /* sidebar */
+  aside { background: linear-gradient(180deg, var(--side), var(--bg)); border-right: 1px solid var(--line); padding: 22px 16px; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 24px; }
+  .mark { width: 38px; height: 38px; border-radius: 11px; background: linear-gradient(135deg, var(--a1), var(--a2)); display: grid; place-items: center; box-shadow: 0 6px 24px -6px var(--a1); }
+  .mark svg { width: 20px; height: 20px; }
+  .brand b { font-weight: 800; font-size: 17px; letter-spacing: .02em; display: block; line-height: 1.1; }
+  .brand span { font-size: 11px; color: var(--faint); font-weight: 600; letter-spacing: .14em; }
+  .group { font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .16em; margin: 16px 12px 8px; font-weight: 700; }
+  nav a { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; color: var(--muted); font-weight: 600; font-size: 13.5px; position: relative; }
+  nav a svg { width: 18px; height: 18px; }
+  nav a .count { margin-left: auto; font-size: 11px; color: var(--faint); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
+  nav a.on { color: var(--ink); background: linear-gradient(90deg, color-mix(in srgb, var(--a1) 16%, transparent), transparent 85%); }
+  nav a.on::before { content: ""; position: absolute; left: -16px; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: linear-gradient(var(--a1), var(--a2)); box-shadow: 0 0 12px var(--a1); }
+  nav a.on svg { color: var(--a1); }
+  .safety { margin-top: auto; border-radius: 14px; padding: 14px; background: linear-gradient(160deg, var(--card2), var(--card)); border: 1px solid var(--line); }
+  .safety .t { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; }
+  .safety .t i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+  .safety p { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.5; }
+  .plan { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .plan b { color: var(--a1); }
+  /* main */
+  main { padding: 26px 34px; display: grid; grid-template-rows: auto auto auto 1fr; gap: 20px; overflow: hidden; position: relative; }
+  .head { display: flex; justify-content: space-between; align-items: flex-end; }
+  .head h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+  .head h1 span { background: linear-gradient(90deg, var(--a1), var(--a2)); -webkit-background-clip: text; color: transparent; }
+  .head p { color: var(--muted); margin-top: 6px; }
+  .head .actions { display: flex; gap: 10px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 11px; font-weight: 700; font-size: 13px; border: 1px solid var(--line2); background: var(--card); color: var(--ink); }
+  .btn svg { width: 15px; height: 15px; }
+  .card { background: linear-gradient(180deg, var(--card2), var(--card)); border: 1px solid var(--line); border-radius: 18px; position: relative; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,.035); }
+  .hero-row { display: grid; grid-template-columns: 1.55fr 1fr; gap: 18px; }
+  .hero { padding: 24px; display: grid; grid-template-columns: 200px 1fr; gap: 28px; align-items: center;
+    background: radial-gradient(70% 120% at 0% 50%, var(--glow1), transparent 60%), linear-gradient(180deg, var(--card2), var(--card)); border-color: var(--line2); }
+  .grid-bg { position: absolute; inset: 0; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 28px 28px; opacity: .35; mask-image: radial-gradient(60% 90% at 15% 50%, #000, transparent 75%); }
+  .orb { position: relative; width: 200px; height: 200px; display: grid; place-items: center; }
+  .orb .ring { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 200deg, var(--a1), var(--a2), transparent 70%, var(--a1)); -webkit-mask: radial-gradient(circle, transparent 84px, #000 86px, #000 92px, transparent 94px); filter: drop-shadow(0 0 10px var(--a1)); }
+  .orb .ring2 { position: absolute; inset: 14px; border-radius: 50%; border: 1px dashed var(--line2); }
+  .orb .core { width: 132px; height: 132px; border-radius: 50%; display: grid; place-items: center; text-align: center;
+    background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--a2) 85%, white), var(--a1) 55%, color-mix(in srgb, var(--a1) 55%, black));
+    box-shadow: 0 0 50px -6px var(--a1), inset 0 -10px 24px rgba(0,0,0,.25); color: var(--a-ink); }
+  .orb .core b { display: block; font-size: 19px; font-weight: 800; }
+  .orb .core span { font-size: 11px; font-weight: 700; letter-spacing: .08em; opacity: .75; }
+  .hero h2 { font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
+  .hero p { color: var(--muted); margin-top: 8px; line-height: 1.55; }
+  .steps { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .step { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--muted); background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; }
+  .step i { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 800; background: var(--line2); color: var(--ink); }
+  .step.done i { background: var(--ok); color: var(--a-ink); }
+  .side-stack { display: grid; grid-template-rows: 1fr 1fr; gap: 18px; }
+  .mini { padding: 18px 20px; display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; }
+  .ic { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: color-mix(in srgb, var(--a1) 10%, var(--card)); border: 1px solid var(--line2); color: var(--a1); }
+  .ic svg { width: 20px; height: 20px; }
+  .mini b { font-size: 15px; display: block; }
+  .mini span { color: var(--muted); font-size: 12.5px; }
+  .chip { font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line2); background: var(--card); white-space: nowrap; }
+  .chip.acc { color: var(--a1); border-color: color-mix(in srgb, var(--a1) 40%, transparent); background: color-mix(in srgb, var(--a1) 8%, transparent); }
+  .sec { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .sec h3 { font-size: 15px; font-weight: 800; }
+  .sec span { color: var(--faint); font-size: 12.5px; font-weight: 600; }
+  .hwgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .tile { padding: 16px; }
+  .tile .top { display: flex; justify-content: space-between; align-items: center; }
+  .tile .lab { font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--faint); text-transform: uppercase; }
+  .tile .ic { width: 34px; height: 34px; border-radius: 10px; }
+  .tile .ic svg { width: 17px; height: 17px; }
+  .tile b { display: block; font-size: 16px; font-weight: 700; margin-top: 12px; white-space: nowrap; }
+  .tile .val { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .meter { height: 6px; border-radius: 3px; background: var(--line); margin-top: 12px; overflow: hidden; }
+  .meter div { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--a1), var(--a2)); }
+  .meter.warn div { background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 70%, black), var(--warn)); }
+  .st { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; margin-top: 10px; }
+  .st i { width: 6px; height: 6px; border-radius: 50%; }
+  .st.ok { color: var(--ok); } .st.ok i { background: var(--ok); }
+  .st.warn { color: var(--warn); } .st.warn i { background: var(--warn); }
+  .bottom { display: grid; grid-template-columns: 1.55fr 1fr; gap: 18px; min-height: 0; }
+  .list { padding: 6px 18px; }
+  .f { display: grid; grid-template-columns: 36px 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+  .f:first-child { border-top: 0; }
+  .f .ic { width: 36px; height: 36px; border-radius: 10px; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--card)); border-color: color-mix(in srgb, var(--warn) 25%, transparent); }
+  .f .ic.hw { color: var(--hw); background: color-mix(in srgb, var(--hw) 10%, var(--card)); border-color: color-mix(in srgb, var(--hw) 25%, transparent); }
+  .f .ic svg { width: 17px; height: 17px; }
+  .f b { font-weight: 700; font-size: 13.5px; }
+  .f p { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .who { font-size: 11.5px; font-weight: 700; padding: 5px 10px; border-radius: 999px; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  .who.hw { color: var(--hw); background: color-mix(in srgb, var(--hw) 10%, transparent); }
+  .games { display: grid; grid-template-rows: 1fr 1fr; gap: 12px; }
+  .game { display: grid; grid-template-columns: 92px 1fr; overflow: hidden; }
+  .art { position: relative; }
+  .art.fn { background: linear-gradient(135deg, #2563eb, #7c3aed 55%, #db2777); }
+  .art.rb { background: linear-gradient(135deg, #e11d48, #f97316); }
+  .art em { position: absolute; inset: 0; display: grid; place-items: center; font-style: normal; font-weight: 800; font-size: 28px; color: rgba(255,255,255,.9); text-shadow: 0 4px 18px rgba(0,0,0,.35); }
+  .gbody { padding: 12px 16px; }
+  .gbody b { font-size: 14.5px; }
+  .gbody p { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .tags { display: flex; gap: 6px; margin-top: 8px; }
+  .tags span { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: rgba(255,255,255,.04); border: 1px solid var(--line); color: var(--muted); }
+  .tags span.okk { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .tags span.wr { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .tag { position: absolute; right: 34px; bottom: 8px; font-size: 10.5px; color: var(--faint); letter-spacing: .1em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="win" id="win">
+  <div class="titlebar">
+    <div class="tb-left">PeakTweaks &middot; v0.1</div>
+    <div class="ctrls">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </div>
+  </div>
+
+  <aside>
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="var(--a-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div>
+      <div><b>PeakTweaks</b><span>FOR GAMERS</span></div>
+    </div>
+    <div class="group">Overview</div>
+    <nav>
+      <a class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard<span class="count">3</span></a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M16 12h.01M18 13.5h.01"/></svg>Games</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Proof</a>
+    </nav>
+    <div class="group">Optimise</div>
+    <nav>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>Auto</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Tweaks</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>Backups<span class="count">2</span></a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Settings</a>
+    </nav>
+    <div class="safety">
+      <div class="t"><i></i>Protected</div>
+      <p>Restore point #142 from today. Every change is recorded first and can be undone.</p>
+    </div>
+    <div class="plan"><span>Starter plan</span><b>Upgrade</b></div>
+  </aside>
+
+  <main>
+    <div class="head">
+      <div>
+        <h1>Good evening, <span>Kegan</span></h1>
+        <p>Windows 11 Pro &middot; Mid rig &middot; checked 2 minutes ago</p>
+      </div>
+      <div class="actions">
+        <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Check again</span>
+        <span class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>Print scan</span>
+      </div>
+    </div>
+
+    <div class="hero-row">
+      <div class="card hero">
+        <div class="grid-bg"></div>
+        <div class="orb"><div class="ring"></div><div class="ring2"></div><div class="core"><div><b>Run Auto</b><span>4 SAFE CHANGES</span></div></div></div>
+        <div style="position: relative">
+          <h2>Ready to tune this PC</h2>
+          <p>Auto applies the safe changes for a Mid rig, then checks again and shows you what changed. Each one can be undone from Backups.</p>
+          <div class="steps">
+            <span class="step done"><i>&#10003;</i>Restore point</span>
+            <span class="step"><i>2</i>Apply 4 changes</span>
+            <span class="step"><i>3</i>Check again</span>
+          </div>
+        </div>
+      </div>
+      <div class="side-stack">
+        <div class="card mini">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
+          <div><b>Restore point #142</b><span>Made today at 18:04</span></div>
+          <span class="chip">Details</span>
+        </div>
+        <div class="card mini">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg></div>
+          <div><b>2 changes applied</b><span>Recorded first, undo any time</span></div>
+          <span class="chip acc">Undo all</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec"><h3>Your PC</h3><span>AMD Ryzen 7 7800X3D &middot; NVIDIA RTX 4070</span></div>
+      <div class="hwgrid">
+        <div class="card tile">
+          <div class="top"><span class="lab">Processor</span><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></div></div>
+          <b>Ryzen 7 7800X3D</b><div class="val">8 cores &middot; 16 threads</div>
+          <div class="st ok"><i></i>Fine</div>
+        </div>
+        <div class="card tile">
+          <div class="top"><span class="lab">Graphics</span><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="9" cy="12" r="3"/><path d="M16 10h3M16 14h3"/></svg></div></div>
+          <b>RTX 4070</b><div class="val">12 GB &middot; current driver</div>
+          <div class="st ok"><i></i>Fine</div>
+        </div>
+        <div class="card tile">
+          <div class="top"><span class="lab">Memory</span><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="1"/><path d="M7 7V4M11 7V4M15 7V4M19 7V4"/></svg></div></div>
+          <b>32 GB &middot; dual channel</b><div class="val">4800 of 6000 MT/s rated</div>
+          <div class="meter warn"><div style="width: 80%"></div></div>
+        </div>
+        <div class="card tile">
+          <div class="top"><span class="lab">Display</span><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div></div>
+          <b>60 Hz</b><div class="val">of 165 Hz available &middot; 1920&times;1080</div>
+          <div class="meter warn"><div style="width: 36%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div>
+        <div class="sec"><h3>Worth a look</h3><span>3 of 11 checks</span></div>
+        <div class="card list">
+          <div class="f"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><div><b>The display runs at 60 Hz; it offers 165 Hz</b><p>Windows Settings &gt; Display &gt; Advanced display</p></div><span class="who">You can fix</span></div>
+          <div class="f"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="1"/><path d="M7 7V4M11 7V4M15 7V4M19 7V4"/></svg></div><div><b>Memory runs below its rated speed</b><p>XMP / EXPO is a BIOS setting. PeakTweaks never writes to the BIOS.</p></div><span class="who">You can fix</span></div>
+          <div class="f"><div class="ic hw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg></div><div><b>Fortnite is on a hard drive</b><p>D: &middot; the Windows drive is an SSD with room</p></div><span class="who hw">Move the game</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec"><h3>Your games</h3><span>2 found</span></div>
+        <div class="games">
+          <div class="card game"><div class="art fn"><em>F</em></div><div class="gbody"><b>Fortnite</b><p>Epic Games &middot; D: (hard drive)</p><div class="tags"><span class="okk">Anti-cheat ready</span><span class="wr">On HDD</span></div></div></div>
+          <div class="card game"><div class="art rb"><em>R</em></div><div class="gbody"><b>Roblox</b><p>C: (SSD) &middot; graphics setting guide</p><div class="tags"><span class="okk">On SSD</span><span>Guide</span></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="tag">Mockup &middot; sample data</div>
+  </main>
+</div>
+<script>
+  const p = new URLSearchParams(location.search).get("p") || "aurora";
+  document.documentElement.setAttribute("data-p", p);
+</script>
+</body>
+</html>

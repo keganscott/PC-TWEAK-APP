@@ -83,7 +83,7 @@ try {
 
   await step("Apply writes 0/0/0 through the journal, with backups", async () => {
     await (await card()).findElement(By.xpath(".//button[normalize-space()='Apply']")).click();
-    await driver.wait(async () => (await (await card()).getText()).includes("Applied"), 30_000);
+    await driver.wait(async () => (await (await card()).getText()).includes("Optimized"), 30_000);
     const after = snapshot();
     console.log(`\n  registry after Apply: ${JSON.stringify(after)}`);
     for (const v of VALUES) assert.equal(after[v], "REG_SZ 0", v);

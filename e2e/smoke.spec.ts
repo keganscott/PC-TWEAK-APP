@@ -48,7 +48,7 @@ test("changes stay locked until a restore point exists, then apply and undo", as
   await expect(page.getByText("Restore point ready")).toBeVisible();
   await expect(page.getByText("Changes are locked until there is a restore point.")).toBeHidden();
   await card.getByRole("button", { name: "Apply" }).click();
-  await expect(card.getByText("Applied", { exact: true })).toBeVisible();
+  await expect(card.getByText("Optimized", { exact: true })).toBeVisible();
 
   await nav(page, "Backups");
   await page.getByRole("button", { name: "Undo all" }).click();

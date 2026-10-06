@@ -24,7 +24,7 @@ The top bar says **Tester build** on every screen. Tools lists 12 Windows
 settings: five in the main view (Pointer precision, Game Mode, Background game
 recording, Sticky Keys pop-ups, Transparency effects) and seven more under
 Tools > Advanced. Settings this PC already has are listed as
-**Already done on this PC**, not hidden. Fortnite process priority stays "Not
+**Already optimized**, not hidden. Fortnite process priority stays "Not
 available" until it has been tested against Fortnite's anti-cheat.
 
 ## 1. Get the two programs

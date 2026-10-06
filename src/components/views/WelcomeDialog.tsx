@@ -24,7 +24,7 @@ const STEPS: { title: string; body: string[] }[] = [
   {
     title: "Your scan",
     body: [
-      "Home lists what PeakTweaks found on this PC, grouped by who can act on it: PeakTweaks, you, or new hardware. Things that are already fine are listed too.",
+      "Home lists what PeakTweaks found on this PC, grouped by who can act on it: PeakTweaks, you, or new hardware. Things that are already good are listed too.",
       "Games shows what your games need from this PC, and Proof can measure a game before and after a change.",
     ],
   },

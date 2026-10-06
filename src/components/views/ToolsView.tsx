@@ -9,8 +9,8 @@ import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, StatusBad
 
 const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }> = {
   default: { tone: "neutral", label: "Not applied" },
-  applied: { tone: "ok", label: "Applied" },
-  foreign: { tone: "ok", label: "Already done on this PC" },
+  applied: { tone: "ok", label: "Optimized" },
+  foreign: { tone: "ok", label: "Already optimized" },
   drifted: { tone: "warn", label: "Changed outside PeakTweaks since it was applied" },
   blocked: { tone: "bad", label: "Not available" },
   unknown: { tone: "warn", label: "Could not read its current state" },
@@ -72,7 +72,7 @@ export function ToolsView() {
         )}
         {tweaks.length > 0 && (
           <p className="text-sm text-ink-muted">
-            {doneCount} of {tweaks.length} already done on this PC.
+            {doneCount} of {tweaks.length} already optimized on this PC.
           </p>
         )}
         {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}

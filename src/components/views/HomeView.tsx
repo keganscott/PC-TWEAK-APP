@@ -130,7 +130,7 @@ function StateSentence({ audit }: { audit: SystemAudit }) {
   const rig = audit.effectiveRigClass ? `${RIG_LABEL[audit.effectiveRigClass]} rig` : "PC class not known";
   return (
     <>
-      {os ? os.caption.replace(/^Microsoft /, "") : "Windows"} · {rig} · {fine} of {findings.length} checks fine
+      {os ? os.caption.replace(/^Microsoft /, "") : "Windows"} · {rig} · {fine} of {findings.length} checks look good
     </>
   );
 }
@@ -435,7 +435,7 @@ function Tile({
           <Eyebrow>{label}</Eyebrow>
         </span>
         {status === "warn" && <StatusBadge tone="warn">Worth a look</StatusBadge>}
-        {status === "ok" && <StatusBadge tone="ok">Fine</StatusBadge>}
+        {status === "ok" && <StatusBadge tone="ok">Good</StatusBadge>}
       </div>
       <p className="mt-3 truncate text-xl font-bold tracking-tight">{value}</p>
       <div className="mt-auto pt-2 text-xs text-ink-muted">{children}</div>
@@ -603,7 +603,7 @@ function LastChange() {
 const STATUS: Record<Finding["status"], { tone: Tone; label: string }> = {
   attention: { tone: "warn", label: "Worth a look" },
   unknown: { tone: "neutral", label: "Could not tell" },
-  fine: { tone: "ok", label: "Fine" },
+  fine: { tone: "ok", label: "Good" },
 };
 
 /** Who can act on a finding (plan 6.4: "fixed by us / fixable by you / needs
@@ -637,7 +637,7 @@ function Findings({ findings }: { findings: Finding[] }) {
   const attention = findings.filter((f) => f.status === "attention");
   // The top bar, which labels demo data, does not print; the printout says it.
   const sample = useStore((s) => s.sample);
-  // "What is already right" is folded on screen, but a printed scan must show
+  // "Already good" is folded on screen, but a printed scan must show
   // all of it: open it for printing, whether from the button or Ctrl+P.
   const [fineOpen, setFineOpen] = useState(false);
   useEffect(() => {
@@ -705,7 +705,7 @@ function Findings({ findings }: { findings: Finding[] }) {
             <span aria-hidden className="grid size-[18px] place-items-center rounded-[5px] bg-lime">
               <Check className="size-3 text-black" strokeWidth={3.5} />
             </span>
-            What is already right ({fine.length})
+            Already good ({fine.length})
           </summary>
           <ul className="divide-y divide-line border-t border-line">
             {fine.map((f) => (

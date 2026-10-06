@@ -74,9 +74,9 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
     const card = screen.getByText("Sample setting C").closest("li") as HTMLElement;
-    expect(within(card).getByText("Already done on this PC")).toBeTruthy();
+    expect(within(card).getByText("Already optimized")).toBeTruthy();
     expect(within(card).queryByRole("button", { name: "Apply" })).toBeNull();
-    expect(screen.getByText(/of \d+ already done on this PC\./)).toBeTruthy();
+    expect(screen.getByText(/of \d+ already optimized on this PC\./)).toBeTruthy();
   });
 
   it("a change with a trade-off cannot be applied until it is acknowledged", async () => {
@@ -194,7 +194,7 @@ describe("Starter scan (plan 6.4)", () => {
     const print = vi.spyOn(window, "print").mockImplementation(() => {});
     renderApp();
     const button = await screen.findByRole("button", { name: "Print this scan" });
-    const folded = screen.getByText(/What is already right/).closest("details")!;
+    const folded = screen.getByText(/Already good/).closest("details")!;
     expect(folded.open).toBe(false);
     await userEvent.click(button);
     expect(print).toHaveBeenCalledOnce();

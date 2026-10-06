@@ -20,3 +20,19 @@ Notes for whichever is chosen:
 - **Volt** (`v2-volt.png`): electric lime to green on near-black; a modern nod to the original Xbox green.
 
 Each palette is a set of CSS variables, so the chosen one maps directly onto the app's existing theme tokens (`src/index.css`).
+
+## Round 3 (after Kegan's feedback: "the big circle looks dumb; cleaner colours, not glowy; a better logo; use my palette")
+
+Kegan's palette: Black `#000000`, Violet `#7E3BED`, White `#FFFFFF`, Lime `#C6FF34`.
+
+- `v3.png` / `v3.html`: the dashboard. Pure black base, near-black cards with hairline borders, no glows or gradients on text. How the colours are used:
+  - **Violet** carries actions and selection: the Auto card, the active nav bar, count badges, and "worth a look" flags on hardware tiles.
+  - **Lime** marks "ready / done / you can fix" with black text on it, plus the one key number in the headline. It is used sparingly so it stays sharp.
+  - **White** is the type; secondary text is white at reduced opacity.
+  - Two textures from the palette sheet appear once each, flat: fine diagonal lines (Protected card, restore point card) and violet diamond facets (Auto card).
+  - The orb is gone. Auto is a plain card with its four steps and a lime "Run Auto" button.
+- `v3-logo.png` / `v3-logo.html`: logo sheet. Three marks, with A as the recommendation:
+  - **A, Summit:** a violet peak with a lime summit inside.
+  - **B, Rank:** two stacked chevrons.
+  - **C, Play P:** a P made from a play button.
+  - Mark A is shown as an app icon, on each palette colour, at 16–48 px, and with the PEAKTWEAKS wordmark (Exo 2).

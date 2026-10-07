@@ -21,8 +21,12 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  # The real gate: the app only ever runs on Windows.
+  # The real gate: the app only ever runs on Windows. Windows runners are billed
+  # at twice the Linux rate and this job is long, so it runs only when started by
+  # hand from the Actions tab. Day to day, scripts/check-windows.ps1 runs the same
+  # checks on a Windows PC for free.
   windows:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

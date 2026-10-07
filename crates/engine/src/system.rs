@@ -1,4 +1,4 @@
-//! Changes that are not registry values: power plans, services, scheduled
+﻿//! Changes that are not registry values: power plans, services, scheduled
 //! tasks, DNS servers, `netsh` TCP settings, NVIDIA profile settings and whole
 //! files (a game's settings file).
 //!
@@ -188,8 +188,25 @@ impl SideEffect {
     }
 }
 
+/// A physical network adapter, as Windows lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct NetAdapter {
+    /// Lower-case interface GUID without braces; the name of its
+    /// `Tcpip\Parameters\Interfaces\{guid}` key.
+    pub guid: String,
+    /// The name Windows shows ("Ethernet", "Wi-Fi").
+    pub name: String,
+    /// Connected now.
+    pub up: bool,
+    pub wireless: bool,
+}
+
 /// The operations on Windows for non-registry changes, and no more.
 pub trait SystemBackend: Send + Sync {
+    /// Physical network adapters (no virtual switches or VPNs).
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>>;
     /// The current state of `item`. File items are read with `read_file`.
     fn read(&self, item: &SysItem) -> Result<SysState>;
     /// Make `item` be `state`. File items are written with `write_file`.
@@ -216,6 +233,9 @@ impl Unavailable {
 }
 
 impl SystemBackend for Unavailable {
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
+        Err(Self::refuse("network adapters".into()))
+    }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Err(Self::refuse(item.describe()))
     }
@@ -246,6 +266,7 @@ struct FakeInner {
     states: BTreeMap<String, SysState>,
     files: BTreeMap<String, Vec<u8>>,
     effects: Vec<SideEffect>,
+    adapters: Vec<NetAdapter>,
     fail_writes: bool,
     fail_effects: bool,
 }
@@ -287,6 +308,9 @@ impl FakeSystem {
     pub fn effects(&self) -> Vec<SideEffect> {
         self.inner.lock().unwrap().effects.clone()
     }
+    pub fn set_adapters(&self, adapters: Vec<NetAdapter>) {
+        self.inner.lock().unwrap().adapters = adapters;
+    }
     pub fn fail_writes(&self, fail: bool) {
         self.inner.lock().unwrap().fail_writes = fail;
     }
@@ -297,6 +321,9 @@ impl FakeSystem {
 
 #[cfg(any(test, feature = "test-support"))]
 impl SystemBackend for FakeSystem {
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
+        Ok(self.inner.lock().unwrap().adapters.clone())
+    }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Ok(self.get(item))
     }

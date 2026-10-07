@@ -1,4 +1,4 @@
-//! Interactive-user context and registry root routing.
+﻿//! Interactive-user context and registry root routing.
 //!
 //! `ContextResolver` is pure routing: it knows which user we are acting for and
 //! maps a `RegRoot` plus a path to a concrete hive and path. Reads and writes
@@ -81,6 +81,11 @@ impl ContextResolver {
         self.system.read(item)
     }
 
+    /// Physical network adapters (safe for tweaks).
+    pub fn network_adapters(&self) -> Result<Vec<super::system::NetAdapter>> {
+        self.system.network_adapters()
+    }
+
     /// A file's bytes, `None` when absent (safe for tweaks).
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         self.system.read_file(path)
@@ -97,7 +102,7 @@ impl ContextResolver {
         if !user.is_self && !backend.key_exists(Hive::Users, &user.sid)? {
             return Err(EngineError::UserHiveNotLoaded { sid: user.sid });
         }
-        Ok(Self::new(user, elevated, backend).with_system(Arc::new(super::system_win::WinSystem)))
+        Ok(Self::new(user, elevated, backend).with_system(Arc::new(super::system_win::WinSystem::new())))
     }
 
     pub fn user(&self) -> &UserContext {

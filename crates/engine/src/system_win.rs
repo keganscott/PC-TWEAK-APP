@@ -1,4 +1,4 @@
-//! The real `SystemBackend` on Windows.
+﻿//! The real `SystemBackend` on Windows.
 //!
 //! Nothing here goes through a shell command line. Windows' own tools
 //! (`powercfg.exe`, `gpupdate.exe`) are started by absolute path under
@@ -18,12 +18,51 @@ use std::time::Duration;
 
 use super::error::{EngineError, Result};
 use super::proc::run_limited;
-use super::system::{guid, guids_in, setting_indexes, SideEffect, SysItem, SysState, SystemBackend};
+use super::system::{guid, guids_in, setting_indexes, NetAdapter, SideEffect, SysItem, SysState, SystemBackend};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const LIMIT: Duration = Duration::from_secs(60);
 
-pub struct WinSystem;
+/// The real backend. The adapter list is cached for a short while: the tool
+/// list asks for it on every refresh, and each listing starts PowerShell.
+pub struct WinSystem {
+    adapters: std::sync::Mutex<Option<(std::time::Instant, Vec<NetAdapter>)>>,
+}
+
+impl WinSystem {
+    pub fn new() -> Self {
+        Self {
+            adapters: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl Default for WinSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const ADAPTER_CACHE: Duration = Duration::from_secs(30);
+
+/// `guid|Status|PhysicalMediaType|Name` lines from `Get-NetAdapter -Physical`.
+pub(crate) fn parse_adapters(out: &str) -> Vec<NetAdapter> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.trim().splitn(4, '|');
+            let g = guid(parts.next()?)?;
+            let status = parts.next()?;
+            let media = parts.next()?;
+            let name = parts.next()?.to_owned();
+            Some(NetAdapter {
+                guid: g,
+                name,
+                up: status.eq_ignore_ascii_case("Up"),
+                wireless: media.contains("802.11"),
+            })
+        })
+        .collect()
+}
 
 fn fail(what: &str, detail: impl Into<String>) -> EngineError {
     EngineError::Command {
@@ -115,6 +154,24 @@ fn wrong_state(item: &SysItem, state: &SysState) -> EngineError {
 }
 
 impl SystemBackend for WinSystem {
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
+        let mut cache = self.adapters.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, list)) = cache.as_ref() {
+            if at.elapsed() < ADAPTER_CACHE {
+                return Ok(list.clone());
+            }
+        }
+        let out = powershell(
+            "network adapters",
+            "Get-NetAdapter -Physical | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.InterfaceGuid, $_.Status, \
+             $_.PhysicalMediaType, $_.Name }",
+            &[],
+        )?;
+        let list = parse_adapters(&out);
+        *cache = Some((std::time::Instant::now(), list.clone()));
+        Ok(list)
+    }
+
     fn read(&self, item: &SysItem) -> Result<SysState> {
         match item {
             SysItem::ActivePowerScheme => {
@@ -516,10 +573,22 @@ mod tests {
         assert!(need_ip("1.1.1.1; rm").is_err());
     }
 
+    /// Real output from Kegan's PC (2026-10-07).
+    #[test]
+    fn adapters_are_parsed_from_the_listing() {
+        let out = "{4D86B570-2994-4EB0-A004-914EF65FF05A}|Disconnected|Native 802.11|Wi-Fi\r\n\
+                   {3F504232-CECB-4118-B4D8-5A5E72D677C3}|Up|802.3|Ethernet\r\n";
+        let a = parse_adapters(out);
+        assert_eq!(a.len(), 2);
+        assert_eq!(a[0].guid, "4d86b570-2994-4eb0-a004-914ef65ff05a");
+        assert!(a[0].wireless && !a[0].up);
+        assert!(!a[1].wireless && a[1].up && a[1].name == "Ethernet");
+    }
+
     /// Read-only, against this PC: the active plan and a service everyone has.
     #[test]
     fn reads_the_active_power_plan_and_a_service_on_this_pc() {
-        let s = WinSystem;
+        let s = WinSystem::new();
         match s.read(&SysItem::ActivePowerScheme).unwrap() {
             SysState::Text { text } => assert!(guid(&text).is_some(), "{text}"),
             other => panic!("{other:?}"),
@@ -529,5 +598,6 @@ mod tests {
             SysState::Service { .. }
         ));
         assert!(matches!(s.read(&SysItem::Hibernation).unwrap(), SysState::Bool { .. }));
+        assert!(s.network_adapters().is_ok());
     }
 }

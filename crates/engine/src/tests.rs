@@ -1,4 +1,4 @@
-﻿//! Engine-level scenarios against the in-memory registry: journal semantics,
+//! Engine-level scenarios against the in-memory registry: journal semantics,
 //! revert correctness, rollback, allowlist, gates.
 
 use std::sync::Arc;
@@ -1779,5 +1779,99 @@ fn every_value_tweak_applies_and_undoes_to_an_identical_registry() {
         engine.revert(&id).unwrap();
         assert!(fake.snapshot().is_empty(), "{id} left values behind");
         assert_eq!(fake.key_paths(), before_keys, "{id} left keys behind");
+    }
+}
+
+mod nagle {
+    use super::*;
+    use crate::system::NetAdapter;
+    use crate::tweaks::nagle::{Nagle, ID};
+
+    const ETH: &str = "3f504232-cecb-4118-b4d8-5a5e72d677c3";
+    const WIFI: &str = "4d86b570-2994-4eb0-a004-914ef65ff05a";
+
+    fn key(g: &str) -> String {
+        format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{g}}}")
+    }
+
+    fn adapters(eth_up: bool) -> Vec<NetAdapter> {
+        vec![
+            NetAdapter {
+                guid: ETH.into(),
+                name: "Ethernet".into(),
+                up: eth_up,
+                wireless: false,
+            },
+            NetAdapter {
+                guid: WIFI.into(),
+                name: "Wi-Fi".into(),
+                up: false,
+                wireless: true,
+            },
+        ]
+    }
+
+    fn state(h: &Harness) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == ID)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn sets_both_values_on_connected_adapters_only_and_undo_restores_them() {
+        let mut h = Harness::new(vec![Box::new(Nagle)]);
+        h.sys.set_adapters(adapters(true));
+        h.fake.set_external(
+            Hive::LocalMachine,
+            &key(ETH),
+            "DhcpIPAddress",
+            RawValue::sz("192.168.1.68"),
+        );
+        h.fake
+            .set_external(Hive::LocalMachine, &key(ETH), "TcpAckFrequency", dword(2));
+        assert_eq!(state(&h), TweakState::Default);
+
+        h.engine.apply(ID).unwrap();
+        assert_eq!(hklm_dword(&h.fake, &key(ETH), "TcpAckFrequency"), Some(1));
+        assert_eq!(hklm_dword(&h.fake, &key(ETH), "TCPNoDelay"), Some(1));
+        assert_eq!(
+            hklm_dword(&h.fake, &key(WIFI), "TCPNoDelay"),
+            None,
+            "a disconnected adapter is left alone"
+        );
+        assert_eq!(state(&h), TweakState::Applied);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(hklm_dword(&h.fake, &key(ETH), "TcpAckFrequency"), Some(2));
+        assert_eq!(hklm_dword(&h.fake, &key(ETH), "TCPNoDelay"), None);
+        assert!(
+            h.fake.key_exists_for_test(Hive::LocalMachine, &key(ETH)),
+            "the adapter key stays"
+        );
+    }
+
+    #[test]
+    fn values_already_set_read_as_already_optimized() {
+        let mut h = Harness::new(vec![Box::new(Nagle)]);
+        h.sys.set_adapters(adapters(true));
+        h.fake
+            .set_external(Hive::LocalMachine, &key(ETH), "TcpAckFrequency", dword(1));
+        h.fake
+            .set_external(Hive::LocalMachine, &key(ETH), "TCPNoDelay", dword(1));
+        assert_eq!(state(&h), TweakState::Foreign);
+    }
+
+    #[test]
+    fn with_no_connected_adapter_it_is_blocked_and_apply_writes_nothing() {
+        let mut h = Harness::new(vec![Box::new(Nagle)]);
+        h.sys.set_adapters(adapters(false));
+        assert!(matches!(state(&h), TweakState::Blocked { .. }));
+        let before = h.fake.snapshot();
+        assert!(h.engine.apply(ID).is_err());
+        assert_eq!(h.fake.snapshot(), before);
     }
 }

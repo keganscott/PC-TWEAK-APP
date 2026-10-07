@@ -5,6 +5,11 @@
 //! holds the vulnerable-driver blocklist) or the TPM service. Every write is
 //! limited to `touches()` (R1), so checking the declarations covers the writes.
 //!
+//! Non-registry targets (`system_targets()`) are held to the same list: a
+//! service's start type lives in its registry key, so a service under a
+//! forbidden key is forbidden too, and no declared file may be the blocklist,
+//! a driver or a boot file.
+//!
 //! Source: no code for game memory access or injection, CPU affinity, Roblox
 //! fast flags, loading drivers, boot configuration or clearing the TPM.
 
@@ -12,6 +17,7 @@ use std::path::PathBuf;
 
 use crate::network_audit::{hits, walk, workspace_root};
 use crate::registry::pattern_is_ancestor_or_equal;
+use crate::system::SysItem;
 use crate::types::{RegRoot, Tweak};
 
 /// `HKLM` keys no tweak may touch, nor anything below them.
@@ -41,6 +47,50 @@ fn forbidden_targets(tweaks: &[Box<dyn Tweak>]) -> Vec<String> {
                     found.push(format!("{}: {} ({what})", t.id(), target.key));
                 }
             }
+        }
+        found.extend(forbidden_system_targets(t.id(), &t.system_targets()));
+    }
+    found
+}
+
+/// Folders no declared file may be in, matched without the drive and ignoring
+/// case: code-integrity policy (the vulnerable-driver blocklist is a file
+/// there), kernel drivers, and the boot files on the EFI partition.
+const FORBIDDEN_DIRS: &[(&str, &str)] = &[
+    (
+        r"\windows\system32\codeintegrity\",
+        "code integrity and the vulnerable-driver blocklist",
+    ),
+    (r"\windows\system32\drivers\", "kernel drivers"),
+    (r"\efi\", "boot files"),
+];
+
+/// Every declared non-registry item that reaches a never-do. A `*` service
+/// name counts as a match, as a `*` segment does in a registry target.
+fn forbidden_system_targets(id: &str, items: &[SysItem]) -> Vec<String> {
+    let mut found = Vec::new();
+    for item in items {
+        match item {
+            SysItem::Service { name } => {
+                let key = format!(r"SYSTEM\CurrentControlSet\Services\{name}");
+                for (forbidden, what) in FORBIDDEN_HKLM {
+                    if pattern_is_ancestor_or_equal(forbidden, &key) {
+                        found.push(format!("{id}: service {name} ({what})"));
+                    }
+                }
+            }
+            SysItem::File { path } => {
+                let p = path.replace('/', "\\").to_ascii_lowercase();
+                let why = FORBIDDEN_DIRS
+                    .iter()
+                    .find(|(dir, _)| p.contains(dir))
+                    .map(|(_, what)| *what)
+                    .or_else(|| (p.ends_with(".sys") || p.ends_with(".efi")).then_some("a driver or boot file"));
+                if let Some(what) = why {
+                    found.push(format!("{id}: file {path} ({what})"));
+                }
+            }
+            _ => {}
         }
     }
     found
@@ -92,6 +142,35 @@ fn a_wildcard_target_that_could_reach_a_security_key_is_caught() {
         3,
         "DeviceGuard, SecureBoot and CI sit under Control"
     );
+}
+
+/// A service's start type is its registry key, and a file can be the
+/// blocklist, a driver or a boot file, so non-registry targets are caught too.
+#[test]
+fn a_service_or_file_target_that_reaches_a_never_do_is_caught() {
+    let service = |n: &str| SysItem::Service { name: n.into() };
+    let file = |p: &str| SysItem::File { path: p.into() };
+    let found = forbidden_system_targets(
+        "planted",
+        &[
+            service("tpm"),
+            service("*"),
+            service("WSearch"),
+            file(r"C:\Windows\System32\CodeIntegrity\driversipolicy.p7b"),
+            file("c:/windows/system32/drivers/x.sys"),
+            file(r"D:\Tools\WinRing0x64.sys"),
+            file(r"S:\EFI\Microsoft\Boot\bootmgfw.efi"),
+            file(r"C:\Users\KFS\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini"),
+        ],
+    );
+    assert_eq!(found.len(), 6, "{found:#?}");
+    assert!(
+        found[0].contains("service tpm") && found[1].contains("service *"),
+        "{found:#?}"
+    );
+    assert!(!found
+        .iter()
+        .any(|f| f.contains("WSearch") || f.contains("GameUserSettings")));
 }
 
 /// Win32 calls and strings that only the forbidden features need.

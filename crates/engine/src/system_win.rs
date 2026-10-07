@@ -295,7 +295,10 @@ impl SystemBackend for WinSystem {
                     return Ok(());
                 }
                 let src = need_guid(source, "power plan")?;
-                tool("powercfg.exe", &["/duplicatescheme", &src, &g]).map(drop)
+                tool("powercfg.exe", &["/duplicatescheme", &src, &g])?;
+                // Every plan this backend makes is PeakTweaks' own; without a
+                // name of its own it would show as a second "Balanced".
+                tool("powercfg.exe", &["/changename", &g, "PeakTweaks"]).map(drop)
             }
             (SysItem::PowerScheme { guid: g }, SysState::Absent) => {
                 let g = need_guid(g, "power plan")?;
@@ -620,5 +623,158 @@ mod tests {
         ));
         assert!(matches!(s.read(&SysItem::Hibernation).unwrap(), SysState::Bool { .. }));
         assert!(s.network_adapters().is_ok());
+    }
+
+    /// Evidence for CATALOGUE step 3 (NOTES N76, N77): the power plan,
+    /// hibernation and telemetry service tools applied and undone through the
+    /// real engine, and this PC read back the same as before each undo. It
+    /// changes real settings, so it runs only where
+    /// `PEAKTWEAKS_REAL_SYSTEM_CHANGES=1` (the CI runner sets it); anywhere
+    /// else, Kegan's PC included, it prints SKIPPED and changes nothing.
+    #[test]
+    fn power_and_service_tools_apply_and_undo_on_this_pc() {
+        use std::sync::Arc;
+
+        use crate::context::{ContextResolver, UserContext, UserResolution};
+        use crate::engine::Engine;
+        use crate::env::{License, StubProbe};
+        use crate::journal::Journal;
+        use crate::power::PEAKTWEAKS;
+        use crate::secure_dir::TrustedDir;
+        use crate::tweaks::power::{self, PLAN_ID, PLAN_SETTINGS};
+        use crate::tweaks::services::TELEMETRY_SERVICE;
+        use crate::types::{Tier, TweakState};
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!(
+                "SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change this PC's power plan, hibernation and \
+                 DiagTrack service for real"
+            );
+            return;
+        }
+
+        let sys = Arc::new(WinSystem::new());
+        let original = match sys.read(&SysItem::ActivePowerScheme).unwrap() {
+            SysState::Text { text } => text,
+            other => panic!("active plan read as {other:?}"),
+        };
+        let on = |scheme: &str, sub: &str, set: &str| SysItem::PowerSetting {
+            scheme: scheme.to_owned(),
+            subgroup: sub.to_owned(),
+            setting: set.to_owned(),
+            ac: true,
+        };
+        let mut watched = vec![
+            SysItem::ActivePowerScheme,
+            SysItem::PowerScheme {
+                guid: PEAKTWEAKS.to_owned(),
+            },
+            SysItem::Hibernation,
+            SysItem::Service {
+                name: "DiagTrack".into(),
+            },
+        ];
+        watched.extend(PLAN_SETTINGS.iter().map(|(sub, set, _, _)| on(&original, sub, set)));
+        let snapshot = |s: &WinSystem| -> Vec<(String, String)> {
+            watched
+                .iter()
+                .map(|i| {
+                    let state = match s.read(i) {
+                        Ok(v) => format!("{v:?}"),
+                        Err(e) => format!("error: {e}"),
+                    };
+                    (i.describe(), state)
+                })
+                .collect()
+        };
+        let before = snapshot(&sys);
+        println!("before:");
+        for (what, state) in &before {
+            println!("  {what}: {state}");
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserContext {
+            sid: crate::identity::current_process_sid().unwrap(),
+            resolution: UserResolution::OwnToken,
+            is_self: true,
+        };
+        let resolver = ContextResolver::new(user, crate::identity::is_elevated(), Arc::new(WinRegistry::new()))
+            .with_system(sys.clone());
+        let mut tweaks = power::all();
+        tweaks.push(Box::new(TELEMETRY_SERVICE));
+        let ids: Vec<String> = tweaks.iter().map(|t| t.id().to_owned()).collect();
+        let mut engine = Engine::new(
+            resolver,
+            Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+            tweaks,
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        );
+        let state_of = |e: &Engine, id: &str| {
+            let v = e.list().unwrap().into_iter().find(|v| v.metadata.id == id).unwrap();
+            (v.state, v.blocked)
+        };
+        let reg_files = |p: &std::path::Path| -> usize {
+            fn walk(p: &std::path::Path, n: &mut usize) {
+                for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+                    let path = e.path();
+                    if path.is_dir() {
+                        walk(&path, n);
+                    } else if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("reg")) {
+                        *n += 1;
+                    }
+                }
+            }
+            let mut n = 0;
+            walk(p, &mut n);
+            n
+        };
+
+        let mut done = 0;
+        for id in &ids {
+            let (state, blocked) = state_of(&engine, id);
+            if let Some(reason) = blocked {
+                println!("{id}: SKIPPED, not offered here: {}", reason.message);
+                continue;
+            }
+            if state != TweakState::Default {
+                println!("{id}: SKIPPED, already {state:?} on this PC, so there is nothing to change");
+                continue;
+            }
+            let reg_before = reg_files(dir.path());
+            engine.apply(id).unwrap_or_else(|e| panic!("{id}: apply failed: {e}"));
+            let (after, _) = state_of(&engine, id);
+            println!(
+                "{id}: applied, now {after:?}; {} .reg backup files written",
+                reg_files(dir.path()) - reg_before
+            );
+            assert_eq!(after, TweakState::Applied, "{id}");
+            for (what, state) in snapshot(&sys) {
+                println!("  {what}: {state}");
+            }
+            if id == PLAN_ID {
+                for (sub, set, want, label) in PLAN_SETTINGS {
+                    let got = sys.read(&on(PEAKTWEAKS, sub, set)).unwrap();
+                    println!("  PeakTweaks plan, plugged in, {label}: {got:?} (wanted {want})");
+                }
+                let list = tool("powercfg.exe", &["/list"]).unwrap();
+                let ours = list.lines().find(|l| l.to_ascii_lowercase().contains(PEAKTWEAKS));
+                println!(
+                    "  powercfg /list: {}",
+                    ours.unwrap_or("(PeakTweaks plan not listed)").trim()
+                );
+            }
+            engine.revert(id).unwrap_or_else(|e| panic!("{id}: undo failed: {e}"));
+            let (reverted, _) = state_of(&engine, id);
+            let now = snapshot(&sys);
+            println!("{id}: undone, now {reverted:?}");
+            assert_eq!(now, before, "{id}: this PC reads back differently after undo");
+            done += 1;
+        }
+        println!(
+            "{done} of {} tools applied and undone; this PC read back the same after each undo",
+            ids.len()
+        );
     }
 }

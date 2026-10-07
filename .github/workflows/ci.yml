@@ -215,6 +215,15 @@ jobs:
       - name: One-time actions on this runner
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 the_standby_list_empties_on_this_pc measures_the_real_areas_on_this_pc defrag_runs_from_system32_on_this_pc windows_and_system32_are_real_folders
 
+      # The power plan, hibernation and telemetry service tools (catalogue H7,
+      # H10, H14) applied and undone for real through the engine, printing this
+      # runner's settings before, during and after. The test changes nothing
+      # unless PEAKTWEAKS_REAL_SYSTEM_CHANGES is 1, which only this step sets.
+      - name: Power and service tools on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine power_and_service_tools_apply_and_undo_on_this_pc -- --nocapture --test-threads=1
+
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the
       # .reg backups (scratch keys under HKCU only).

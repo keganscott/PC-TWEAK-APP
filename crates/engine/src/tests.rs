@@ -2425,3 +2425,135 @@ mod service_tools {
         }
     }
 }
+
+/// CATALOGUE H7 and H10 (tweaks/power.rs).
+mod power_tools {
+    use crate::power::PEAKTWEAKS;
+    use crate::registry::Hive;
+    use crate::system::{SysItem, SysState};
+    use crate::testutil::Harness;
+    use crate::tweaks::power::*;
+    use crate::types::{RawValue, TweakState};
+
+    const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
+    const SETTINGS_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Power\PowerSettings";
+
+    fn text(t: &str) -> SysState {
+        SysState::Text { text: t.into() }
+    }
+
+    fn ours() -> SysItem {
+        SysItem::PowerScheme {
+            guid: PEAKTWEAKS.into(),
+        }
+    }
+
+    fn setting(sub: &str, set: &str) -> SysItem {
+        SysItem::PowerSetting {
+            scheme: PEAKTWEAKS.into(),
+            subgroup: sub.into(),
+            setting: set.into(),
+            ac: true,
+        }
+    }
+
+    /// A PC on Balanced whose Windows defines the settings in `defined`.
+    fn pc(defined: usize) -> Harness {
+        let h = Harness::new(all());
+        h.sys.set(&SysItem::ActivePowerScheme, text(BALANCED));
+        for (sub, set, _, _) in &PLAN_SETTINGS[..defined] {
+            h.fake.set_external(
+                Hive::LocalMachine,
+                &format!(r"{SETTINGS_KEY}\{sub}\{set}"),
+                "Attributes",
+                RawValue::dword(1),
+            );
+        }
+        h
+    }
+
+    fn status(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn the_plan_is_a_copy_of_the_active_one_and_undo_switches_back_and_deletes_it() {
+        let mut h = pc(PLAN_SETTINGS.len());
+        assert_eq!(status(&h, PLAN_ID), TweakState::Default);
+
+        h.engine.apply(PLAN_ID).unwrap();
+        assert_eq!(h.sys.get(&SysItem::ActivePowerScheme), text(PEAKTWEAKS));
+        assert_eq!(
+            h.sys.get(&ours()),
+            SysState::Scheme {
+                source: BALANCED.into()
+            }
+        );
+        for (sub, set, value, _) in PLAN_SETTINGS {
+            assert_eq!(h.sys.get(&setting(sub, set)), SysState::Dword { value: *value });
+        }
+        assert_eq!(status(&h, PLAN_ID), TweakState::Applied);
+
+        h.engine.revert(PLAN_ID).unwrap();
+        assert_eq!(h.sys.get(&SysItem::ActivePowerScheme), text(BALANCED));
+        assert_eq!(h.sys.get(&ours()), SysState::Absent, "the copy is deleted");
+        assert_eq!(status(&h, PLAN_ID), TweakState::Default);
+    }
+
+    #[test]
+    fn a_setting_windows_does_not_define_is_skipped() {
+        let mut h = pc(PLAN_SETTINGS.len() - 1);
+        h.engine.apply(PLAN_ID).unwrap();
+        let (sub, set, _, _) = PLAN_SETTINGS[PLAN_SETTINGS.len() - 1];
+        assert_eq!(h.sys.get(&setting(sub, set)), SysState::Absent);
+        assert_eq!(h.sys.get(&SysItem::ActivePowerScheme), text(PEAKTWEAKS));
+    }
+
+    #[test]
+    fn switching_plans_by_hand_shows_as_changed_and_apply_again_reuses_the_copy() {
+        let mut h = pc(PLAN_SETTINGS.len());
+        h.engine.apply(PLAN_ID).unwrap();
+        h.sys.set(&SysItem::ActivePowerScheme, text(BALANCED));
+        assert_eq!(status(&h, PLAN_ID), TweakState::Drifted);
+
+        h.engine.apply(PLAN_ID).unwrap();
+        assert_eq!(h.sys.get(&SysItem::ActivePowerScheme), text(PEAKTWEAKS));
+        let schemes = h
+            .engine
+            .journal_view()
+            .records
+            .iter()
+            .filter(|r| matches!(r, crate::journal::Record::Change(c) if c.item == ours()))
+            .count();
+        assert_eq!(schemes, 1, "the copy is made once");
+
+        h.engine.revert(PLAN_ID).unwrap();
+        assert_eq!(h.sys.get(&SysItem::ActivePowerScheme), text(BALANCED));
+        assert_eq!(h.sys.get(&ours()), SysState::Absent);
+    }
+
+    #[test]
+    fn hibernation_is_turned_off_and_undo_turns_it_back_on() {
+        let mut h = pc(0);
+        h.sys.set(&SysItem::Hibernation, SysState::Bool { on: true });
+        assert_eq!(status(&h, HIBERNATION_ID), TweakState::Default);
+        h.engine.apply(HIBERNATION_ID).unwrap();
+        assert_eq!(h.sys.get(&SysItem::Hibernation), SysState::Bool { on: false });
+        assert_eq!(status(&h, HIBERNATION_ID), TweakState::Applied);
+        h.engine.revert(HIBERNATION_ID).unwrap();
+        assert_eq!(h.sys.get(&SysItem::Hibernation), SysState::Bool { on: true });
+    }
+
+    #[test]
+    fn hibernation_already_off_is_listed_as_done() {
+        let h = pc(0);
+        h.sys.set(&SysItem::Hibernation, SysState::Bool { on: false });
+        assert_eq!(status(&h, HIBERNATION_ID), TweakState::Foreign);
+    }
+}

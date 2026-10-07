@@ -697,6 +697,16 @@ fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
                 None,
                 false,
             ),
+            PowerPlanKind::PeakTweaks => finding(
+                ID,
+                Status::Fine,
+                "The PeakTweaks power plan is active",
+                "The active power plan is the one PeakTweaks made from your previous plan. Undo in Backups \
+                 switches back."
+                    .to_owned(),
+                None,
+                false,
+            ),
             PowerPlanKind::Custom => finding(
                 ID,
                 Status::Fine,
@@ -1006,6 +1016,7 @@ mod tests {
             (PowerPlanKind::HighPerformance, Status::Fine),
             (PowerPlanKind::UltimatePerformance, Status::Fine),
             (PowerPlanKind::Custom, Status::Fine),
+            (PowerPlanKind::PeakTweaks, Status::Fine),
         ] {
             let r = scan(&env_with_plan(plan(kind), false));
             let f = get(&r, "power.plan");

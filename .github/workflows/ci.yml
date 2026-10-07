@@ -1,11 +1,16 @@
 name: ci
 
+# A branch with a pull request is tested once, by the pull_request event; a
+# push trigger on the same branch ran every job twice per push, and the
+# Windows job is billed at twice the Linux rate (NOTES N74). Other branches
+# can be run by hand from the Actions tab.
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
     paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
     paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

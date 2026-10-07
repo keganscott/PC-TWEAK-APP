@@ -346,6 +346,8 @@ impl SystemBackend for FakeSystem {
 // ---------------------------------------------------------------------------
 
 /// A lower-case GUID without braces, if `s` is one.
+// Used by system_win.rs and the tests; dead on other OS builds.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 pub(crate) fn guid(s: &str) -> Option<String> {
     let g = s.trim().trim_matches(|c| c == '{' || c == '}').to_ascii_lowercase();
     let parts: Vec<&str> = g.split('-').collect();
@@ -359,6 +361,8 @@ pub(crate) fn guid(s: &str) -> Option<String> {
 
 /// Every GUID that `powercfg /list` or `/getactivescheme` prints, in order.
 /// Labels are translated on other Windows languages; the GUIDs are not.
+// Used by system_win.rs and the tests; dead on other OS builds.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 pub(crate) fn guids_in(output: &str) -> Vec<String> {
     output
         .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
@@ -369,6 +373,8 @@ pub(crate) fn guids_in(output: &str) -> Vec<String> {
 /// The AC and DC indexes from `powercfg /query <scheme> <sub> <setting>`: the
 /// last two lines ending in a `0x` number. Labels are translated; the layout
 /// is not. `None` when the setting printed nothing (hidden settings).
+// Used by system_win.rs and the tests; dead on other OS builds.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 pub(crate) fn setting_indexes(output: &str) -> Option<(u32, u32)> {
     let hex: Vec<u32> = output
         .lines()

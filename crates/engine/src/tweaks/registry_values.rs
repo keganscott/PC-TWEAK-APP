@@ -214,6 +214,20 @@ const MMCSS: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\Sy
 /// SKF_HOTKEYACTIVE, FKF_HOTKEYACTIVE and TKF_HOTKEYACTIVE share this bit.
 const HOTKEY_ACTIVE: u32 = 0x4;
 const MMCSS_GAMES: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games";
+const ADVERTISING: &str = r"Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo";
+const CONTENT_DELIVERY: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
+const PRIVACY: &str = r"Software\Microsoft\Windows\CurrentVersion\Privacy";
+const SYSTEM_POLICY: &str = r"SOFTWARE\Policies\Microsoft\Windows\System";
+const DATA_COLLECTION: &str = r"SOFTWARE\Policies\Microsoft\Windows\DataCollection";
+const EXPLORER_ADVANCED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+const EXPLORER_POLICY: &str = r"Software\Policies\Microsoft\Windows\Explorer";
+const SEARCH: &str = r"Software\Microsoft\Windows\CurrentVersion\Search";
+const DESKTOP: &str = r"Control Panel\Desktop";
+const WINDOW_METRICS: &str = r"Control Panel\Desktop\WindowMetrics";
+const MOUSE_CLASS: &str = r"SYSTEM\CurrentControlSet\Services\mouclass\Parameters";
+const KEYBOARD_CLASS: &str = r"SYSTEM\CurrentControlSet\Services\kbdclass\Parameters";
+const SESSION_POWER: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\Power";
+const KERNEL: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\kernel";
 
 /// Settings > Gaming > Game Mode. On by default since Windows 10 1903, so an
 /// absent value counts as on and most PCs show this as already done.
@@ -389,6 +403,206 @@ pub const GAMES_TASK: ValueTweak = ValueTweak {
     ],
 };
 
+// ---- Privacy (catalogue H14, registry half) --------------------------------
+
+/// Settings > Privacy & security > General > "Let apps show me personalized
+/// ads by using my advertising ID".
+pub const ADVERTISING_ID: ValueTweak = ValueTweak {
+    id: "privacy.advertisingid",
+    name: "Advertising ID",
+    summary: "Turns off the advertising ID Windows gives apps to show personalised ads.",
+    category: "privacy",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[dword(ADVERTISING, "Enabled", 0)],
+};
+
+/// Settings > Personalization > Start and Settings > System > Notifications:
+/// suggestions, tips and the "welcome experience". Four switches in one key.
+pub const TIPS: ValueTweak = ValueTweak {
+    id: "privacy.tips",
+    name: "Tips and suggestions",
+    summary: "Turns off Windows tips, suggested apps in Start and the suggestions shown after updates.",
+    category: "privacy",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[
+        dword(CONTENT_DELIVERY, "SubscribedContent-338389Enabled", 0),
+        dword(CONTENT_DELIVERY, "SubscribedContent-338388Enabled", 0),
+        dword(CONTENT_DELIVERY, "SystemPaneSuggestionsEnabled", 0),
+        dword(CONTENT_DELIVERY, "SoftLandingEnabled", 0),
+    ],
+};
+
+/// Settings > Privacy & security > Diagnostics & feedback > Tailored experiences.
+pub const TAILORED: ValueTweak = ValueTweak {
+    id: "privacy.tailored",
+    name: "Tailored experiences",
+    summary: "Stops Microsoft using your diagnostic data to pick tips, ads and recommendations for you.",
+    category: "privacy",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[dword(PRIVACY, "TailoredExperiencesWithDiagnosticDataEnabled", 0)],
+};
+
+/// Group Policy "Allow publishing of User Activities" and "Allow upload of User
+/// Activities" (Computer Configuration > Administrative Templates > System >
+/// OS Policies).
+pub const ACTIVITY_HISTORY: ValueTweak = ValueTweak {
+    id: "privacy.activityhistory",
+    name: "Activity history",
+    summary: "Stops Windows keeping and uploading a history of the apps, files and websites you open.",
+    category: "privacy",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[
+        dword(SYSTEM_POLICY, "PublishUserActivities", 0),
+        dword(SYSTEM_POLICY, "UploadUserActivities", 0),
+    ],
+};
+
+/// Group Policy "Allow Diagnostic Data" (AllowTelemetry). 1 = Required, the
+/// lowest level Home and Pro accept (0 is treated as 1 there).
+pub const TELEMETRY: ValueTweak = ValueTweak {
+    id: "privacy.telemetry",
+    name: "Diagnostic data",
+    summary: "Sets Windows diagnostic data to Required, the lowest level Windows Home and Pro send.",
+    category: "privacy",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Safe,
+    tradeoff: Some("Settings shows \"Some settings are managed by your organization\" while this is on."),
+    requires_reboot: false,
+    settings: &[dword(DATA_COLLECTION, "AllowTelemetry", 1)],
+};
+
+// ---- Explorer and quality of life (catalogue H27) --------------------------
+
+/// File Explorer > View > Show > File name extensions.
+pub const FILE_EXTENSIONS: ValueTweak = ValueTweak {
+    id: "explorer.fileextensions",
+    name: "File name extensions",
+    summary: "Shows file name extensions such as .exe and .txt in File Explorer.",
+    category: "explorer",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[dword(EXPLORER_ADVANCED, "HideFileExt", 0)],
+};
+
+/// Group Policy "Turn off display of recent search entries in the File
+/// Explorer search box" (DisableSearchBoxSuggestions) plus the per-user Bing
+/// switch: Start and the taskbar search show local results only.
+pub const WEB_SEARCH: ValueTweak = ValueTweak {
+    id: "explorer.websearch",
+    name: "Web results in Start search",
+    summary: "Makes Start and taskbar search show results from this PC only, without Bing web results.",
+    category: "explorer",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: true,
+    settings: &[
+        dword(EXPLORER_POLICY, "DisableSearchBoxSuggestions", 1),
+        dword(SEARCH, "BingSearchEnabled", 0),
+    ],
+};
+
+/// Windows re-compresses JPEG wallpapers to about 85 quality unless this says
+/// otherwise. Takes effect the next time a wallpaper is set.
+pub const WALLPAPER_QUALITY: ValueTweak = ValueTweak {
+    id: "display.wallpaperquality",
+    name: "Full-quality wallpaper",
+    summary: "Stops Windows re-compressing JPEG wallpapers, from the next time a wallpaper is set.",
+    category: "display",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[dword(DESKTOP, "JPEGImportQuality", 100)],
+};
+
+// ---- Visual effects (catalogue H11) ----------------------------------------
+
+/// System > Advanced system settings > Performance: "Animate windows when
+/// minimizing and maximizing" and "Animations in the taskbar".
+pub const ANIMATIONS: ValueTweak = ValueTweak {
+    id: "display.animations",
+    name: "Window and taskbar animations",
+    summary: "Turns off the animations when windows open, minimise and maximise, and in the taskbar.",
+    category: "display",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: true,
+    settings: &[
+        string(WINDOW_METRICS, "MinAnimate", "0"),
+        dword(EXPLORER_ADVANCED, "TaskbarAnimations", 0),
+    ],
+};
+
+// ---- Input (catalogue H4) --------------------------------------------------
+
+/// The mouse and keyboard class drivers' input buffers. Windows' default is
+/// 100 events each. VERIFY: 50 is our choice (Hone does not publish its
+/// value); smaller buffers can drop input on very high polling rates.
+pub const INPUT_QUEUE: ValueTweak = ValueTweak {
+    id: "input.queuesize",
+    name: "Mouse and keyboard buffer size",
+    summary: "Lowers the number of mouse and keyboard events Windows' input drivers hold in their buffers from 100 \
+              to 50.",
+    category: "input",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Moderate,
+    tradeoff: Some("Needs a restart."),
+    requires_reboot: true,
+    settings: &[
+        dword(MOUSE_CLASS, "MouseDataQueueSize", 50),
+        dword(KEYBOARD_CLASS, "KeyboardDataQueueSize", 50),
+    ],
+};
+
+// ---- Power (catalogue H10, registry half) -----------------------------------
+
+/// Control Panel > Power Options > "Turn on fast startup". Hibernation itself
+/// (powercfg /h) is a separate tool with its own undo type.
+pub const FAST_STARTUP: ValueTweak = ValueTweak {
+    id: "system.faststartup",
+    name: "Fast startup",
+    summary: "Turns off fast startup, so shutting down fully closes Windows instead of saving it to disk.",
+    category: "system",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Safe,
+    tradeoff: Some("Starting the PC from shut down takes a little longer."),
+    requires_reboot: false,
+    settings: &[dword(SESSION_POWER, "HiberbootEnabled", 0)],
+};
+
+// ---- Timer (catalogue H2, registry half) ------------------------------------
+
+/// Windows 11 limits a program's timer-resolution request to that program.
+/// This value restores the system-wide behaviour of Windows 10; earlier
+/// versions ignore it. The timer itself is held by the timer-resolution tool.
+pub const TIMER_REQUESTS: ValueTweak = ValueTweak {
+    id: "scheduling.timerrequests",
+    name: "System-wide timer requests",
+    summary: "Lets a program's timer-resolution request apply to the whole system again, as before Windows 11.",
+    category: "scheduling",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Moderate,
+    tradeoff: Some("Needs a restart."),
+    requires_reboot: true,
+    settings: &[dword(KERNEL, "GlobalTimerResolutionRequests", 1)],
+};
+
 /// Every value tweak, in display order within the catalogue.
 pub fn all() -> Vec<Box<dyn Tweak>> {
     vec![
@@ -402,5 +616,17 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
         Box::new(SYSTEM_RESPONSIVENESS),
         Box::new(GAMES_TASK),
         Box::new(NETWORK_THROTTLING),
+        Box::new(TIMER_REQUESTS),
+        Box::new(INPUT_QUEUE),
+        Box::new(FAST_STARTUP),
+        Box::new(ANIMATIONS),
+        Box::new(WALLPAPER_QUALITY),
+        Box::new(FILE_EXTENSIONS),
+        Box::new(WEB_SEARCH),
+        Box::new(ADVERTISING_ID),
+        Box::new(TIPS),
+        Box::new(TAILORED),
+        Box::new(ACTIVITY_HISTORY),
+        Box::new(TELEMETRY),
     ]
 }

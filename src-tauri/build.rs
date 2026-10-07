@@ -21,6 +21,8 @@ const COMMANDS: &[&str] = &[
     "revert_all",
     "list_journal",
     "purge_standby_memory",
+    "cleanup_measure",
+    "cleanup_run",
 ];
 
 fn main() {

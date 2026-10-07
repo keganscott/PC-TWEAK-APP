@@ -9,6 +9,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { AreaSize } from "./generated/AreaSize";
+import type { CleanupArea } from "./generated/CleanupArea";
+import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
 import type { EngineError } from "./generated/EngineError";
@@ -95,6 +98,10 @@ export const engine = {
   listJournal: () => call<JournalView>("list_journal"),
   /** Empty Windows' standby list (catalogue E6). Changes no setting; nothing to undo. */
   purgeStandbyMemory: () => call<StandbyPurge>("purge_standby_memory"),
+  /** What each junk-file area holds that a cleanup would delete now (catalogue H28). Reads only. */
+  cleanupMeasure: () => call<AreaSize[]>("cleanup_measure"),
+  /** Delete the junk files in these areas. Cannot be undone: ask the user first. */
+  cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

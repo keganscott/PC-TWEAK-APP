@@ -107,6 +107,30 @@ describe("App", () => {
     expect(await within(card).findByText(/6\.0 GB before, 1\.0 GB after/)).toBeTruthy();
   });
 
+  it("Tools shows junk sizes first, asks once, then says what it deleted and what was left", async () => {
+    const backend = createMockBackend();
+    const run = vi.spyOn(backend, "cleanupRun");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = await screen.findByRole("region", { name: "Clear out junk files" });
+    expect(within(card).getByText("SAMPLE")).toBeTruthy();
+    expect(await within(card).findByText("2.3 GB")).toBeTruthy();
+    // Clearing shader caches has a cost, so they start unselected.
+    expect((within(card).getByRole("checkbox", { name: /Shader caches/ }) as HTMLInputElement).checked).toBe(false);
+    expect(within(card).getByText("Selected: 6.1 GB")).toBeTruthy();
+
+    await userEvent.click(within(card).getByRole("button", { name: "Delete selected files" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete these files?" });
+    expect(within(dialog).getByText(/cannot be undone/)).toBeTruthy();
+    expect(run).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete 6.1 GB" }));
+
+    expect(await within(card).findByText(/Deleted 6\.0 GB in 5,036 files/)).toBeTruthy();
+    expect(within(card).getByText(/22 files were left/)).toBeTruthy();
+    expect(run).toHaveBeenCalledWith(["user_temp", "windows_temp", "thumbnails", "crash_dumps"]);
+  });
+
   it("a safe change with a cost shows one line and needs no confirmation", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({

@@ -9,9 +9,11 @@
 //! builds those itself. `tests::no_command_takes_system_env` enforces that.
 
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use tauri::{AppHandle, Emitter, State};
 
+use peaktweaks_engine::cleanup::{self, AreaSize, CleanupArea, CleanupReport};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
 use peaktweaks_engine::journal::{now_ms, JournalEntry};
@@ -369,17 +371,35 @@ pub async fn list_journal(engine: State<'_, EngineHandle>) -> Result<JournalView
     blocking_recovering(&engine, |e| Ok(e.journal_view())).await
 }
 
+/// One-time actions read or delete a lot at once, which would disturb a Proof
+/// recording, so they wait for it.
+fn refuse_while_recording(shared: &SharedEngine, what: &str) -> Result<()> {
+    if proof_service(shared).is_ok_and(|svc| svc.is_capturing()) {
+        return Err(EngineError::Internal {
+            detail: format!("a Proof recording is running; {what} after it finishes"),
+        });
+    }
+    Ok(())
+}
+
+/// The interactive user's SID, as the engine resolved it at start: whose
+/// folders the junk cleaner looks in.
+fn user_sid(shared: &SharedEngine) -> Result<String> {
+    Ok(shared
+        .lock()
+        .map_err(|_| EngineError::Internal {
+            detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+        })?
+        .context_info()
+        .sid)
+}
+
 /// Empty Windows' standby list (catalogue E6). It changes no setting, so it
 /// needs no restore point and leaves nothing to undo. Refused while a Proof
 /// capture records, because it would disturb the measurement.
 #[tauri::command]
 pub async fn purge_standby_memory(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<StandbyPurge> {
-    let shared = engine.get()?;
-    if proof_service(&shared).is_ok_and(|svc| svc.is_capturing()) {
-        return Err(EngineError::Internal {
-            detail: "a Proof recording is running; empty the standby list after it finishes".into(),
-        });
-    }
+    refuse_while_recording(&engine.get()?, "empty the standby list")?;
     progress(&app, "standby", None, "Emptying the standby list");
     let out = tauri::async_runtime::spawn_blocking(|| memory::purge_standby(memory::system().as_ref(), now_ms()))
         .await
@@ -389,6 +409,52 @@ pub async fn purge_standby_memory(app: AppHandle, engine: State<'_, EngineHandle
     progress(
         &app,
         if out.is_ok() { "standby_done" } else { "standby_failed" },
+        None,
+        "",
+    );
+    out
+}
+
+/// What each junk-file area holds that a cleanup would delete now (catalogue
+/// H28). Reads only.
+#[tauri::command]
+pub async fn cleanup_measure(engine: State<'_, EngineHandle>) -> Result<Vec<AreaSize>> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "look for junk files")?;
+    let sid = user_sid(&shared)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        cleanup::measure(&cleanup::places(&sid), &CleanupArea::ALL, SystemTime::now())
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("cleanup worker failed: {e}"),
+    })
+}
+
+/// Delete the junk files in the chosen areas. Cannot be undone; the screen
+/// shows the sizes and asks first. Changes no setting, so no restore point.
+#[tauri::command]
+pub async fn cleanup_run(
+    app: AppHandle,
+    engine: State<'_, EngineHandle>,
+    areas: Vec<CleanupArea>,
+) -> Result<CleanupReport> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "clear junk files")?;
+    let sid = user_sid(&shared)?;
+    let worker_app = app.clone();
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        cleanup::clean(&cleanup::places(&sid), &areas, SystemTime::now(), now_ms(), &|area| {
+            progress(&worker_app, "cleanup", None, format!("Clearing {}", area.label()))
+        })
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("cleanup worker failed: {e}"),
+    });
+    progress(
+        &app,
+        if out.is_ok() { "cleanup_done" } else { "cleanup_failed" },
         None,
         "",
     );

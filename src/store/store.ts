@@ -12,6 +12,9 @@
 // - Nothing here decides what the engine allows. The store asks; the engine
 //   answers, including "blocked".
 
+import type { AreaSize } from "../generated/AreaSize";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
 import type { EngineError } from "../generated/EngineError";
@@ -90,6 +93,10 @@ export interface State {
   applyManyOp: Op<null>;
   /** "Empty the standby list" (catalogue E6); keeps the last result for its card. */
   standbyOp: Op<StandbyPurge>;
+  /** "Clear out junk files" (catalogue H28): what each area holds now. */
+  cleanupSizesOp: Op<AreaSize[]>;
+  /** The last cleanup, for its card. */
+  cleanupOp: Op<CleanupReport>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   bus: BusEntry[];
@@ -118,6 +125,8 @@ export function initialState(sample: boolean): State {
     revertAllOp: IDLE,
     applyManyOp: IDLE,
     standbyOp: IDLE,
+    cleanupSizesOp: IDLE,
+    cleanupOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     bus: [],
@@ -217,6 +226,18 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       }
     } catch (e) {
       if (current()) refreshFailed(e);
+    }
+  }
+
+  /** What each junk-file area holds now. The newest answer wins. */
+  async function refreshCleanupSizes() {
+    const current = tag("cleanup_sizes");
+    set((s) => ({ ...s, cleanupSizesOp: RUNNING }));
+    try {
+      const sizes = await backend.cleanupMeasure();
+      if (current()) set((s) => ({ ...s, cleanupSizesOp: { status: "done", value: sizes } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, cleanupSizesOp: failed(e) }));
     }
   }
 
@@ -347,6 +368,24 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       } catch (e) {
         set((s) => ({ ...s, standbyOp: failed(e) }));
       }
+    },
+
+    /** Look at what each junk-file area holds. Reads only. */
+    async measureCleanup() {
+      await refreshCleanupSizes();
+    },
+
+    /** Delete the junk in `areas`, then look again. Cannot be undone; the card asks first. */
+    async runCleanup(areas: readonly CleanupArea[]) {
+      if (areas.length === 0 || state.cleanupOp.status === "running") return;
+      set((s) => ({ ...s, cleanupOp: RUNNING }));
+      try {
+        const report = await backend.cleanupRun([...areas]);
+        set((s) => ({ ...s, cleanupOp: { status: "done", value: report } }));
+      } catch (e) {
+        set((s) => ({ ...s, cleanupOp: failed(e) }));
+      }
+      await refreshCleanupSizes();
     },
 
     async revertAll() {

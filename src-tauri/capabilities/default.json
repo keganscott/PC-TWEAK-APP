@@ -25,6 +25,8 @@
     "allow-proof-compare",
     "allow-proof-list-sessions",
     "allow-proof-runs",
-    "allow-purge-standby-memory"
+    "allow-purge-standby-memory",
+    "allow-cleanup-measure",
+    "allow-cleanup-run"
   ]
 }

@@ -1,13 +1,14 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
+import type { CleanupArea } from "../../generated/CleanupArea";
 import type { TweakView } from "../../generated/TweakView";
 import { blockedHint } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
-import { formatDateTime, formatNumber } from "../../lib/format";
+import { formatBytes, formatDateTime, formatNumber } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { recommendedIds } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
-import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
+import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
 const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }> = {
   default: { tone: "neutral", label: "Not applied" },
@@ -115,6 +116,9 @@ function OneTimeActions() {
         <li>
           <StandbyCard />
         </li>
+        <li>
+          <CleanupCard />
+        </li>
       </ul>
     </section>
   );
@@ -163,6 +167,201 @@ function StandbyCard() {
           <ErrorCallout text={explain(op.error)} technical={technical} />
         </div>
       )}
+    </Card>
+  );
+}
+
+/** Catalogue H28, in the engine's order. */
+const AREAS: { area: CleanupArea; name: string; note: string }[] = [
+  {
+    area: "user_temp",
+    name: "Your temporary files",
+    note: "Anything created or changed in the last 7 days is kept, in case a program or an installer still needs it.",
+  },
+  { area: "windows_temp", name: "Windows temporary files", note: "The same 7-day rule applies." },
+  { area: "thumbnails", name: "Thumbnail cache", note: "File Explorer makes these previews again when you open a folder." },
+  {
+    area: "shader_caches",
+    name: "Shader caches",
+    note: "Games and the graphics driver build these again, so a game can stutter for a while the first time it runs afterwards.",
+  },
+  {
+    area: "crash_dumps",
+    name: "Crash reports and memory dumps",
+    note: "What Windows saves when a program or the PC crashes. Keep them if someone is looking into a crash.",
+  },
+];
+
+/** Shader caches start unselected: clearing them has a cost the next time a game runs. */
+const START_SELECTED: ReadonlySet<CleanupArea> = new Set(["user_temp", "windows_temp", "thumbnails", "crash_dumps"]);
+
+/** Catalogue H28: sizes first, one confirmation, cannot be undone. Refused by
+ * the engine while a Proof recording runs. */
+function CleanupCard() {
+  const sizesOp = useStore((s) => s.cleanupSizesOp);
+  const op = useStore((s) => s.cleanupOp);
+  const capturing = useStore((s) => s.proof.capturingSession !== null);
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { measureCleanup, runCleanup } = useActions();
+  const headingId = useId();
+  const [selected, setSelected] = useState<ReadonlySet<CleanupArea>>(START_SELECTED);
+  const [confirming, setConfirming] = useState(false);
+
+  // Look once when the card first shows; "Check again" looks again.
+  useEffect(() => {
+    if (sizesOp.status === "idle" && !capturing) void measureCleanup();
+  }, [sizesOp.status, capturing, measureCleanup]);
+
+  const sizes = sizesOp.status === "done" ? sizesOp.value : null;
+  const checking = sizesOp.status === "running";
+  const running = op.status === "running";
+  const chosen = AREAS.filter((a) => selected.has(a.area));
+  const total = (sizes ?? []).filter((s) => selected.has(s.area)).reduce((sum, s) => sum + s.bytes, 0);
+  const report = op.status === "done" ? op.value : null;
+  const removed = report?.areas.reduce((sum, a) => sum + a.removedBytes, 0) ?? 0;
+  const removedFiles = report?.areas.reduce((sum, a) => sum + a.removedFiles, 0) ?? 0;
+  const leftFiles = report?.areas.reduce((sum, a) => sum + a.leftFiles, 0) ?? 0;
+  const examples = report?.areas.flatMap((a) => a.leftExamples) ?? [];
+
+  const toggle = (area: CleanupArea, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(area);
+      else next.delete(area);
+      return next;
+    });
+
+  return (
+    <Card className="p-4" aria-labelledby={headingId}>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 id={headingId} className="font-bold">
+          Clear out junk files
+        </h3>
+        {sample && <SampleBadge />}
+      </div>
+      <p className="mt-1 text-sm text-ink-muted">
+        Temporary files, caches and crash reports that Windows and programs leave behind. Deleting them cannot be undone.
+        Files a program has open are left where they are.
+      </p>
+      {capturing && <p className="mt-2 text-sm text-ink-muted">Available again when the Proof recording finishes.</p>}
+
+      <fieldset className="mt-3" disabled={running}>
+        <legend className="sr-only">What to clear</legend>
+        <ul className="flex flex-col gap-3">
+          {AREAS.map(({ area, name, note }) => {
+            const size = sizes?.find((s) => s.area === area);
+            return (
+              <li key={area}>
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(area)}
+                    onChange={(e) => toggle(area, e.target.checked)}
+                    className="mt-0.5 size-4 shrink-0 accent-accent"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap justify-between gap-x-3">
+                      <span className="font-bold">{name}</span>
+                      <span className="text-ink-muted">
+                        {size ? (size.files === 0 ? "Nothing to clear" : formatBytes(size.bytes)) : checking ? "Checking…" : ""}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block text-xs text-ink-faint">{note}</span>
+                    {size && size.skipped.length > 0 && (
+                      <span className="mt-0.5 block break-all text-xs text-warn">
+                        {technical ? size.skipped.join(" ") : "PeakTweaks could not look in every folder here, so those were left alone."}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </fieldset>
+
+      {report && (
+        <div className="mt-3 text-sm" role="status">
+          <p>
+            Cleared {formatDateTime(report.unixMs)}. Deleted {formatBytes(removed)} in {removedFiles.toLocaleString()}{" "}
+            {removedFiles === 1 ? "file" : "files"}.
+          </p>
+          {leftFiles > 0 && (
+            <p className="mt-1 text-ink-muted">
+              {leftFiles.toLocaleString()} {leftFiles === 1 ? "file was" : "files were"} left: a program has them open, or
+              Windows would not allow it.
+            </p>
+          )}
+          {technical && examples.length > 0 && (
+            <ul className="mt-1 break-all font-mono text-xs text-ink-faint">
+              {examples.map((x) => (
+                <li key={x}>{x}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-muted">{sizes ? `Selected: ${formatBytes(total)}` : ""}</p>
+        <div className="flex gap-2">
+          <Button variant="ghost" busy={checking} disabled={capturing || running} onClick={() => void measureCleanup()}>
+            Check again
+          </Button>
+          <Button
+            variant="danger"
+            busy={running}
+            disabled={capturing || checking || !sizes || total === 0}
+            onClick={() => setConfirming(true)}
+          >
+            Delete selected files
+          </Button>
+        </div>
+      </div>
+      {sizesOp.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(sizesOp.error)} technical={technical} />
+        </div>
+      )}
+      {op.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
+
+      <Dialog
+        open={confirming}
+        title="Delete these files?"
+        onClose={() => setConfirming(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              Keep them
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setConfirming(false);
+                void runCleanup(chosen.map((a) => a.area));
+              }}
+            >
+              Delete {formatBytes(total)}
+            </Button>
+          </>
+        }
+      >
+        <p>PeakTweaks deletes {formatBytes(total)} from:</p>
+        <ul className="mt-1 list-disc pl-5">
+          {chosen.map((a) => (
+            <li key={a.area}>{a.name}</li>
+          ))}
+        </ul>
+        <p className="mt-2">
+          This cannot be undone, and a restore point does not bring these files back. Files a program has open are left where
+          they are.
+        </p>
+      </Dialog>
     </Card>
   );
 }

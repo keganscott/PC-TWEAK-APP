@@ -6,6 +6,9 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import { engine, onProgress, proof } from "../ipc";
 
+import type { AreaSize } from "../generated/AreaSize";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
 import type { GameInfo } from "../generated/GameInfo";
@@ -40,6 +43,8 @@ export interface Backend {
   revertAll(): Promise<RevertResult[]>;
   listJournal(): Promise<JournalView>;
   purgeStandbyMemory(): Promise<StandbyPurge>;
+  cleanupMeasure(): Promise<AreaSize[]>;
+  cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

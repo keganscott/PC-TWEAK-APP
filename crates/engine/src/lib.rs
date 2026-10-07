@@ -5,6 +5,7 @@
 //! ACL code) sit behind `cfg(windows)`.
 
 pub mod background;
+pub mod cleanup;
 pub mod context;
 pub mod engine;
 pub mod env;

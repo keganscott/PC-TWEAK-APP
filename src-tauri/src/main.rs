@@ -111,6 +111,8 @@ fn main() {
             commands::revert_all,
             commands::list_journal,
             commands::purge_standby_memory,
+            commands::cleanup_measure,
+            commands::cleanup_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PeakTweaks");

@@ -291,4 +291,29 @@ describe("one-time actions", () => {
     await store.actions.purgeStandby();
     expect(store.getState().standbyOp).toMatchObject({ status: "failed", error: { kind: "internal", detail: "no privilege" } });
   });
+
+  it("clears only the chosen junk areas, then looks again", async () => {
+    const { store } = await booted();
+    await store.actions.measureCleanup();
+    const before = store.getState().cleanupSizesOp;
+    expect(before.status).toBe("done");
+    await store.actions.runCleanup(["windows_temp", "user_temp"]);
+    const op = store.getState().cleanupOp;
+    if (op.status !== "done") throw new Error(`cleanup ${op.status}`);
+    expect(op.value.areas.map((a) => a.area)).toEqual(["user_temp", "windows_temp"]);
+    const after = store.getState().cleanupSizesOp;
+    if (after.status !== "done" || before.status !== "done") throw new Error("sizes not read");
+    const files = (sizes: typeof after.value, area: string) => sizes.find((s) => s.area === area)?.files;
+    expect(files(after.value, "windows_temp")).toBe(0);
+    expect(files(after.value, "user_temp")).toBe(op.value.areas[0]!.leftFiles);
+    expect(files(after.value, "crash_dumps")).toBe(files(before.value, "crash_dumps"));
+  });
+
+  it("a refused cleanup is reported with the engine's reason, and nothing chosen does nothing", async () => {
+    const { store } = await booted({ failures: { cleanupRun: { kind: "internal", detail: "a Proof recording is running" } } });
+    await store.actions.runCleanup([]);
+    expect(store.getState().cleanupOp.status).toBe("idle");
+    await store.actions.runCleanup(["user_temp"]);
+    expect(store.getState().cleanupOp).toMatchObject({ status: "failed", error: { detail: "a Proof recording is running" } });
+  });
 });

@@ -12,6 +12,10 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import * as fx from "../generated/fixtures";
 import type { AppliedChange } from "../generated/AppliedChange";
+import type { AreaCleanup } from "../generated/AreaCleanup";
+import type { AreaSize } from "../generated/AreaSize";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { BlockedReason } from "../generated/BlockedReason";
 import type { EngineError } from "../generated/EngineError";
 import type { JournalEntry } from "../generated/JournalEntry";
@@ -88,6 +92,21 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       })),
     );
   }
+
+  // Junk cleaner (H28): what an area still holds after the SAMPLE cleanup ran
+  // there (the files "in use"). A second run deletes nothing more.
+  const remaining = new Map<CleanupArea, { bytes: number; files: number }>();
+  const cleanupSizes = (): AreaSize[] =>
+    clone(fx.cleanupSizes as AreaSize[]).map((s) => ({ ...s, ...remaining.get(s.area) }));
+  const nothingDone = (area: CleanupArea): AreaCleanup => ({
+    area,
+    removedBytes: 0,
+    removedFiles: 0,
+    leftBytes: 0,
+    leftFiles: 0,
+    leftExamples: [],
+    skipped: [],
+  });
 
   const emit = (stage: string, message: string, tweakId: string | null = null) => {
     for (const l of listeners) l({ stage, message, tweakId });
@@ -245,6 +264,26 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       reply("purgeStandbyMemory", [], () => {
         emit("standby", "Emptying the standby list");
         return { ...clone(fx.standbyPurge), unixMs: Date.now() };
+      }),
+    cleanupMeasure: () => reply("cleanupMeasure", [], cleanupSizes),
+    cleanupRun: (areas) =>
+      reply("cleanupRun", [areas], () => {
+        emit("cleanup", "Clearing junk files");
+        const report: CleanupReport = { areas: [], unixMs: Date.now() };
+        for (const size of cleanupSizes()) {
+          if (!areas.includes(size.area)) continue;
+          const sample = (fx.cleanupReport.areas as AreaCleanup[]).find((a) => a.area === size.area);
+          const again = remaining.has(size.area);
+          const done: AreaCleanup =
+            sample && !again
+              ? clone(sample)
+              : again
+                ? { ...nothingDone(size.area), leftBytes: size.bytes, leftFiles: size.files, skipped: size.skipped }
+                : { ...nothingDone(size.area), removedBytes: size.bytes, removedFiles: size.files, skipped: size.skipped };
+          remaining.set(size.area, { bytes: done.leftBytes, files: done.leftFiles });
+          report.areas.push(done);
+        }
+        return report;
       }),
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {

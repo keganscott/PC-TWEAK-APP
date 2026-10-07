@@ -97,7 +97,7 @@ impl ContextResolver {
         if !user.is_self && !backend.key_exists(Hive::Users, &user.sid)? {
             return Err(EngineError::UserHiveNotLoaded { sid: user.sid });
         }
-        Ok(Self::new(user, elevated, backend))
+        Ok(Self::new(user, elevated, backend).with_system(Arc::new(super::system_win::WinSystem)))
     }
 
     pub fn user(&self) -> &UserContext {

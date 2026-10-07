@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "peaktweaks-engine"
 version.workspace = true
 edition.workspace = true
@@ -45,6 +45,7 @@ features = [
   "Win32_System_Registry",
   "Win32_System_RemoteDesktop",
   "Win32_System_Restore",
+  "Win32_System_Services",
   "Win32_System_Threading",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",

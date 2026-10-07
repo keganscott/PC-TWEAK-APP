@@ -341,9 +341,83 @@ impl SystemBackend for FakeSystem {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Parsing tool output (pure, so tested on any OS)
+// ---------------------------------------------------------------------------
+
+/// A lower-case GUID without braces, if `s` is one.
+pub(crate) fn guid(s: &str) -> Option<String> {
+    let g = s.trim().trim_matches(|c| c == '{' || c == '}').to_ascii_lowercase();
+    let parts: Vec<&str> = g.split('-').collect();
+    let ok = parts.len() == 5
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(&parts)
+            .all(|(n, p)| p.len() == *n && p.bytes().all(|b| b.is_ascii_hexdigit()));
+    ok.then_some(g)
+}
+
+/// Every GUID that `powercfg /list` or `/getactivescheme` prints, in order.
+/// Labels are translated on other Windows languages; the GUIDs are not.
+pub(crate) fn guids_in(output: &str) -> Vec<String> {
+    output
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+        .filter_map(guid)
+        .collect()
+}
+
+/// The AC and DC indexes from `powercfg /query <scheme> <sub> <setting>`: the
+/// last two lines ending in a `0x` number. Labels are translated; the layout
+/// is not. `None` when the setting printed nothing (hidden settings).
+pub(crate) fn setting_indexes(output: &str) -> Option<(u32, u32)> {
+    let hex: Vec<u32> = output
+        .lines()
+        .filter_map(|l| l.trim().rsplit(' ').next())
+        .filter_map(|w| w.strip_prefix("0x"))
+        .filter_map(|h| u32::from_str_radix(h, 16).ok())
+        .collect();
+    // Possible-value lines come first; the current AC and DC are the last two.
+    (hex.len() >= 2).then(|| (hex[hex.len() - 2], hex[hex.len() - 1]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn power_scheme_guids_are_read_whatever_the_language() {
+        let active = "Power Scheme GUID: a42b1691-948d-4dd6-8212-9523b6693a8d  (Ultimate Performance (ExitLag))";
+        assert_eq!(guids_in(active), vec!["a42b1691-948d-4dd6-8212-9523b6693a8d"]);
+        let german = "GUID des Energieschemas: 381B4222-F694-41F0-9685-FF5BB260DF2E  (Ausbalanciert) *";
+        assert_eq!(guids_in(german), vec!["381b4222-f694-41f0-9685-ff5bb260df2e"]);
+        assert!(guids_in("no guid here").is_empty());
+        assert_eq!(
+            guid("{8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C}").as_deref(),
+            Some("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
+        );
+        assert_eq!(guid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635"), None);
+    }
+
+    /// Real output from Kegan's PC (2026-10-07), `powercfg /q SCHEME_CURRENT
+    /// SUB_PROCESSOR PROCTHROTTLEMIN`.
+    #[test]
+    fn setting_indexes_are_the_last_two_hex_lines() {
+        let out = "Power Scheme GUID: a42b1691-948d-4dd6-8212-9523b6693a8d  (Ultimate Performance (ExitLag))
+  Subgroup GUID: 54533251-82be-4824-96c1-47b60b740d00  (Processor power management)
+    GUID Alias: SUB_PROCESSOR
+    Power Setting GUID: 893dee8e-2bef-41e0-89c6-b55d0929964c  (Minimum processor state)
+      GUID Alias: PROCTHROTTLEMIN
+      Minimum Possible Setting: 0x00000000
+      Maximum Possible Setting: 0x00000064
+      Possible Settings increment: 0x00000001
+      Possible Settings units: %
+    Current AC Power Setting Index: 0x00000000
+    Current DC Power Setting Index: 0x00000005
+";
+        assert_eq!(setting_indexes(out), Some((0, 5)));
+        let hidden = "Power Scheme GUID: a42b1691-948d-4dd6-8212-9523b6693a8d  (x)\n";
+        assert_eq!(setting_indexes(hidden), None);
+    }
 
     fn dns(i: &str) -> SysItem {
         SysItem::DnsServers { interface: i.into() }

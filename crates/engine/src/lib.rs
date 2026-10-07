@@ -46,6 +46,8 @@ pub mod osfacts;
 pub mod restore_win;
 #[cfg(windows)]
 pub mod shell;
+#[cfg(windows)]
+pub mod system_win;
 
 #[cfg(test)]
 mod contract;

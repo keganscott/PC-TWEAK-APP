@@ -293,7 +293,7 @@ pub const TRANSPARENCY: ValueTweak = ValueTweak {
     name: "Transparency effects",
     summary: "Turns off the see-through effect on the taskbar, Start and window frames, so Windows draws them as \
               solid colours.",
-    category: "display",
+    category: "appearance",
     root: RegRoot::InteractiveUser,
     safety: SafetyTier::Safe,
     tradeoff: None,
@@ -435,6 +435,8 @@ pub const TIPS: ValueTweak = ValueTweak {
         dword(CONTENT_DELIVERY, "SubscribedContent-338388Enabled", 0),
         dword(CONTENT_DELIVERY, "SystemPaneSuggestionsEnabled", 0),
         dword(CONTENT_DELIVERY, "SoftLandingEnabled", 0),
+        // "Show me the Windows welcome experience after updates". VERIFY.
+        dword(CONTENT_DELIVERY, "SubscribedContent-310093Enabled", 0),
     ],
 };
 
@@ -461,7 +463,7 @@ pub const ACTIVITY_HISTORY: ValueTweak = ValueTweak {
     category: "privacy",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Safe,
-    tradeoff: None,
+    tradeoff: Some("Settings shows \"Some settings are managed by your organization\" while this is on."),
     requires_reboot: false,
     settings: &[
         dword(SYSTEM_POLICY, "PublishUserActivities", 0),
@@ -478,7 +480,10 @@ pub const TELEMETRY: ValueTweak = ValueTweak {
     category: "privacy",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Safe,
-    tradeoff: Some("Settings shows \"Some settings are managed by your organization\" while this is on."),
+    tradeoff: Some(
+        "Settings shows \"Some settings are managed by your organization\" while this is on, and Windows Insider \
+         builds stop arriving.",
+    ),
     requires_reboot: false,
     settings: &[dword(DATA_COLLECTION, "AllowTelemetry", 1)],
 };
@@ -490,7 +495,7 @@ pub const FILE_EXTENSIONS: ValueTweak = ValueTweak {
     id: "explorer.fileextensions",
     name: "File name extensions",
     summary: "Shows file name extensions such as .exe and .txt in File Explorer.",
-    category: "explorer",
+    category: "appearance",
     root: RegRoot::InteractiveUser,
     safety: SafetyTier::Safe,
     tradeoff: None,
@@ -505,7 +510,7 @@ pub const WEB_SEARCH: ValueTweak = ValueTweak {
     id: "explorer.websearch",
     name: "Web results in Start search",
     summary: "Makes Start and taskbar search show results from this PC only, without Bing web results.",
-    category: "explorer",
+    category: "appearance",
     root: RegRoot::InteractiveUser,
     safety: SafetyTier::Safe,
     tradeoff: None,
@@ -522,7 +527,7 @@ pub const WALLPAPER_QUALITY: ValueTweak = ValueTweak {
     id: "display.wallpaperquality",
     name: "Full-quality wallpaper",
     summary: "Stops Windows re-compressing JPEG wallpapers, from the next time a wallpaper is set.",
-    category: "display",
+    category: "appearance",
     root: RegRoot::InteractiveUser,
     safety: SafetyTier::Safe,
     tradeoff: None,
@@ -538,7 +543,7 @@ pub const ANIMATIONS: ValueTweak = ValueTweak {
     id: "display.animations",
     name: "Window and taskbar animations",
     summary: "Turns off the animations when windows open, minimise and maximise, and in the taskbar.",
-    category: "display",
+    category: "appearance",
     root: RegRoot::InteractiveUser,
     safety: SafetyTier::Safe,
     tradeoff: None,

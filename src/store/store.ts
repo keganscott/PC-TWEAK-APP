@@ -125,11 +125,17 @@ export function initialState(sample: boolean): State {
  * not yet in effect, not refused by the engine. A setting the PC already has
  * (foreign) or one changed after we applied it (drifted) is left alone.
  * DECISIONS 15.22: "recommended" stands in for evidence grades A and B until
- * the tweak dictionary gives grades (N2).
+ * the tweak dictionary gives grades (N2). Look-and-feel changes are left out.
  */
 export function recommendedIds(tweaks: readonly TweakView[]): string[] {
-  return tweaks.filter((t) => t.safety === "safe" && !t.blocked && t.state.status === "default").map((t) => t.id);
+  return tweaks
+    .filter((t) => t.safety === "safe" && t.category !== APPEARANCE && !t.blocked && t.state.status === "default")
+    .map((t) => t.id);
 }
+
+/** Look-and-feel changes: one click each in Tools, never part of a one-click
+ * set, so the safe set never changes how someone's desktop looks. */
+export const APPEARANCE = "appearance";
 
 export type AppStore = ReturnType<typeof createAppStore>;
 

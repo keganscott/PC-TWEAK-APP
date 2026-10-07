@@ -1856,7 +1856,7 @@ mod nagle {
 
     #[test]
     fn values_already_set_read_as_already_optimized() {
-        let mut h = Harness::new(vec![Box::new(Nagle)]);
+        let h = Harness::new(vec![Box::new(Nagle)]);
         h.sys.set_adapters(adapters(true));
         h.fake
             .set_external(Hive::LocalMachine, &key(ETH), "TcpAckFrequency", dword(1));

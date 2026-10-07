@@ -79,18 +79,52 @@ describe("App", () => {
     expect(screen.getByText(/of \d+ already optimized on this PC\./)).toBeTruthy();
   });
 
-  it("a change with a trade-off cannot be applied until it is acknowledged", async () => {
+  it("Home applies the safe set in one click and the result card undoes it", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await userEvent.click(await screen.findByRole("button", { name: "Apply the safe set (1)" }));
+    expect(await screen.findByText("Applied: Sample setting A")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Undo these" }));
+    expect(await screen.findByText("Undid: Sample setting A")).toBeTruthy();
+  });
+
+  it("each Tools category has Apply recommended", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    await userEvent.click(await screen.findByRole("button", { name: "Apply recommended (1)" }));
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    await waitFor(() => expect(within(card).getByText("Optimized")).toBeTruthy());
+  });
+
+  it("a safe change with a cost shows one line and needs no confirmation", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({
+      ...base,
+      listTweaks: async () =>
+        (await base.listTweaks()).map((t) => (t.id === "fixture.default" ? { ...t, tradeoff: "Needs a restart." } : t)),
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(card).getByText("Needs a restart.")).toBeTruthy();
+    expect(within(card).queryByLabelText("I have read this")).toBeNull();
+    await waitFor(() => expect(within(card).getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(false));
+  });
+
+  it("an Advanced change cannot be applied until it is acknowledged", async () => {
     const base = createMockBackend({ gateOpen: true });
     const withTradeoff: Backend = {
       ...base,
       listTweaks: async () =>
         (await base.listTweaks()).map((t) =>
-          t.id === "fixture.default" ? { ...t, tradeoff: "Sample trade-off text.", safety: "safe" as const } : t,
+          t.id === "fixture.default" ? { ...t, tradeoff: "Sample trade-off text.", safety: "moderate" as const } : t,
         ),
     };
     renderApp(withTradeoff);
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
+    await userEvent.click(screen.getByRole("switch"));
     const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
     const apply = within(card).getByRole("button", { name: "Apply" });
     await waitFor(() => expect(screen.queryByText("Changes are locked until there is a restore point.")).toBeNull());

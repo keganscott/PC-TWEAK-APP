@@ -27,7 +27,7 @@ import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
-import { toEngineError } from "../lib/errors";
+import { explain, toEngineError } from "../lib/errors";
 import type { Backend } from "../services/backend";
 
 export type Op<T = null> =
@@ -85,6 +85,8 @@ export interface State {
   refreshError: EngineError | null;
   tweakOps: Readonly<Record<string, Op<"apply" | "revert">>>;
   revertAllOp: Op<RevertResult[]>;
+  /** "Apply the safe set", "Apply recommended" and the result card's Undo. */
+  applyManyOp: Op<null>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   bus: BusEntry[];
@@ -111,10 +113,22 @@ export function initialState(sample: boolean): State {
     refreshError: null,
     tweakOps: {},
     revertAllOp: IDLE,
+    applyManyOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     bus: [],
   };
+}
+
+/**
+ * The changes "Apply the safe set" and "Apply recommended" make: safe-tier,
+ * not yet in effect, not refused by the engine. A setting the PC already has
+ * (foreign) or one changed after we applied it (drifted) is left alone.
+ * DECISIONS 15.22: "recommended" stands in for evidence grades A and B until
+ * the tweak dictionary gives grades (N2).
+ */
+export function recommendedIds(tweaks: readonly TweakView[]): string[] {
+  return tweaks.filter((t) => t.safety === "safe" && !t.blocked && t.state.status === "default").map((t) => t.id);
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
@@ -303,6 +317,16 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       await change(id, "revert");
     },
 
+    /** Apply each in turn; one failure does not stop the rest. */
+    async applyMany(ids: readonly string[]) {
+      await many(ids, "apply");
+    },
+
+    /** Undo each in turn (the result card's "Undo these"). */
+    async revertMany(ids: readonly string[]) {
+      await many(ids, "revert");
+    },
+
     async revertAll() {
       if (state.revertAllOp.status === "running") return;
       set((s) => ({ ...s, revertAllOp: RUNNING }));
@@ -416,6 +440,31 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
   function setComparison(sessionId: string, op: Op<Comparison>) {
     set((s) => ({ ...s, proof: { ...s.proof, comparisons: { ...s.proof.comparisons, [sessionId]: op } } }));
+  }
+
+  async function many(ids: readonly string[], kind: "apply" | "revert") {
+    if (state.applyManyOp.status === "running" || ids.length === 0) return;
+    set((s) => ({ ...s, applyManyOp: RUNNING }));
+    const done: string[] = [];
+    const failures: RevertResult[] = [];
+    for (const id of ids) {
+      set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: RUNNING } }));
+      try {
+        await (kind === "apply" ? backend.applyTweak(id) : backend.revertTweak(id));
+        done.push(id);
+        set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: { status: "done", value: kind } } }));
+      } catch (e) {
+        const op = failed(e);
+        failures.push({ tweakId: id, ok: false, error: explain(op.error).title });
+        set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: op } }));
+      }
+    }
+    set((s) => ({
+      ...s,
+      applyManyOp: { status: "done", value: null },
+      lastChange: { kind, at: now(), tweakIds: done, failed: failures },
+    }));
+    await refreshAfterChange();
   }
 
   async function change(id: string, kind: "apply" | "revert") {

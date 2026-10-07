@@ -4,6 +4,7 @@ import type { TweakView } from "../../generated/TweakView";
 import { blockedHint } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { recommendedIds } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
@@ -78,9 +79,12 @@ export function ToolsView() {
         {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}
         {groups.map(([category, list]) => (
           <section key={category} aria-labelledby={`cat-${category}`}>
-            <h2 id={`cat-${category}`} className="mb-3 text-base font-extrabold tracking-tight">
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 id={`cat-${category}`} className="text-base font-extrabold tracking-tight">
+                {category.charAt(0).toUpperCase() + category.slice(1)}
+              </h2>
+              <ApplyRecommended ids={recommendedIds(list)} gateOpen={gateOpen} />
+            </div>
             <ul className="flex flex-col gap-3">
               {list.map((t) => (
                 <li key={t.id}>
@@ -92,6 +96,18 @@ export function ToolsView() {
         ))}
       </div>
     </>
+  );
+}
+
+/** One click for a category's recommended changes (DECISIONS 15.22). */
+function ApplyRecommended({ ids, gateOpen }: { ids: string[]; gateOpen: boolean | null }) {
+  const busy = useStore((s) => s.applyManyOp.status === "running");
+  const { applyMany } = useActions();
+  if (ids.length === 0) return null;
+  return (
+    <Button busy={busy} disabled={gateOpen === false} onClick={() => void applyMany(ids)}>
+      Apply recommended ({ids.length})
+    </Button>
   );
 }
 
@@ -109,11 +125,14 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
   // Already set on this PC by Windows, the user or another program: nothing to
   // apply and nothing of ours to undo.
   const foreign = tweak.state.status === "foreign";
+  // DECISIONS 15.22: a safe change's cost is one line; only Advanced changes
+  // ask for a confirmation.
+  const needsConfirm = !!tweak.tradeoff && tweak.safety !== "safe";
   // Our apply is still on record but Windows has another value now: both
   // directions stay open (set ours again, or put back what was there before).
   const drifted = tweak.state.status === "drifted";
   const canApply =
-    !applied && !tweak.blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!tweak.tradeoff || acknowledged);
+    !applied && !tweak.blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
 
   return (
@@ -168,7 +187,8 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
         </div>
       </div>
 
-      {tweak.tradeoff && !applied && !foreign && (
+      {tweak.tradeoff && !needsConfirm && !foreign && <p className="mt-2 text-sm text-ink-muted">{tweak.tradeoff}</p>}
+      {needsConfirm && !applied && !foreign && (
         <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 p-3 text-sm">
           <p className="font-bold text-warn">Before you apply</p>
           <p className="mt-1 text-ink">{tweak.tradeoff}</p>

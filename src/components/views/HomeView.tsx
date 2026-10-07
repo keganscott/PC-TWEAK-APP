@@ -23,6 +23,7 @@ import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
@@ -156,7 +157,11 @@ function NextStep() {
   const audit = useStore((s) => s.audit);
   const restoreOp = useStore((s) => s.restoreOp);
   const targetGame = useStore((s) => s.targetGame);
+  const tweaks = useStore((s) => s.tweaks);
+  const applyingMany = useStore((s) => s.applyManyOp.status === "running");
+  const { applyMany } = useActions();
   const navigate = useNavigate();
+  const safeSet = recommendedIds(tweaks);
 
   const auditFailed = useStore((s) => s.auditOp.status === "failed");
   const restore = audit?.env.restore;
@@ -211,7 +216,12 @@ function NextStep() {
           ))}
         </ol>
         <div className="mt-auto flex flex-wrap items-center gap-4 pt-5">
-          <Button variant="go" onClick={() => navigate("tools")}>
+          {safeSet.length > 0 && (
+            <Button variant="go" busy={applyingMany} onClick={() => void applyMany(safeSet)}>
+              Apply the safe set ({safeSet.length})
+            </Button>
+          )}
+          <Button variant={safeSet.length > 0 ? "secondary" : "go"} onClick={() => navigate("tools")}>
             Open Tools
           </Button>
           {!targetGame && (
@@ -562,7 +572,8 @@ function DisplayTile({ probe, status }: { probe: SystemAuditDisplay; status: Ton
 function LastChange() {
   const change = useStore((s) => s.lastChange);
   const tweaks = useStore((s) => s.tweaks);
-  const { dismissChange } = useActions();
+  const undoing = useStore((s) => s.applyManyOp.status === "running");
+  const { dismissChange, revertMany } = useActions();
   const navigate = useNavigate();
   if (!change) return null;
 
@@ -575,7 +586,12 @@ function LastChange() {
       title={`${verb}: ${what}`}
       action={
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => navigate("backups")}>Undo or review in Backups</Button>
+          {change.kind === "apply" && change.tweakIds.length > 0 && (
+            <Button busy={undoing} onClick={() => void revertMany(change.tweakIds)}>
+              Undo these
+            </Button>
+          )}
+          <Button onClick={() => navigate("backups")}>Review in Backups</Button>
           {change.kind === "apply" && <Button onClick={() => navigate("proof")}>Check the effect in Proof</Button>}
           <Button variant="ghost" onClick={dismissChange}>
             Dismiss
@@ -587,7 +603,7 @@ function LastChange() {
         <ul className="list-disc pl-5">
           {change.failed.map((f) => (
             <li key={f.tweakId}>
-              {name(f.tweakId)} could not be undone: {f.error ?? "no reason given"}
+              {name(f.tweakId)} could not be {change.kind === "apply" ? "applied" : "undone"}: {f.error ?? "no reason given"}
             </li>
           ))}
         </ul>

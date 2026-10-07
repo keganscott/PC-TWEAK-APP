@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
-import { BUS_LIMIT, createAppStore, type State } from "./store";
+import { BUS_LIMIT, createAppStore, recommendedIds, type State } from "./store";
 
 async function booted(options: MockOptions = {}) {
   const backend = createMockBackend(options);
@@ -234,5 +234,36 @@ describe("review regressions", () => {
     const second = store.actions.createRestorePoint();
     expect(store.getState().restoreSinceBusId).toBe(firstAttemptEnd);
     await second;
+  });
+});
+
+describe("apply the safe set", () => {
+  it("applies every recommended change not yet applied, lists them, and undoes them together", async () => {
+    const { store } = await booted({ gateOpen: true });
+    const ids = recommendedIds(store.getState().tweaks);
+    expect(ids).toEqual(["fixture.default"]);
+
+    await store.actions.applyMany(ids);
+    await settle(store);
+    let s = store.getState();
+    expect(s.applyManyOp.status).toBe("done");
+    expect(s.lastChange).toMatchObject({ kind: "apply", tweakIds: ["fixture.default"], failed: [] });
+    expect(s.tweaks.find((t) => t.id === "fixture.default")?.state.status).toBe("applied");
+    expect(recommendedIds(s.tweaks)).toEqual([]);
+
+    await store.actions.revertMany(["fixture.default"]);
+    await settle(store);
+    s = store.getState();
+    expect(s.lastChange).toMatchObject({ kind: "revert", tweakIds: ["fixture.default"], failed: [] });
+    expect(s.tweaks.find((t) => t.id === "fixture.default")?.state.status).toBe("default");
+  });
+
+  it("keeps going past a change that fails and reports it", async () => {
+    const { store } = await booted({ gateOpen: true });
+    await store.actions.applyMany(["fixture.blocked", "fixture.default"]);
+    await settle(store);
+    const change = store.getState().lastChange!;
+    expect(change.tweakIds).toEqual(["fixture.default"]);
+    expect(change.failed.map((f) => f.tweakId)).toEqual(["fixture.blocked"]);
   });
 });

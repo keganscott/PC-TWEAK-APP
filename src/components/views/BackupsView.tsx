@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { Undo2 } from "lucide-react";
 
 import type { AppliedChange } from "../../generated/AppliedChange";
@@ -6,6 +6,7 @@ import type { ChangeKind } from "../../generated/ChangeKind";
 import type { Record as JournalRecord } from "../../generated/Record";
 import { explain } from "../../lib/errors";
 import { formatDateTime } from "../../lib/format";
+import { describeEffect, describeItem, describeState } from "../../lib/systemItems";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge } from "../ui/primitives";
 
@@ -104,7 +105,7 @@ export function BackupsView() {
             </ul>
           )}
           <p className="mt-3 text-xs text-ink-faint">
-            To roll the whole PC back, open Windows' System Restore (search for “Create a restore point”, then System
+            To roll the whole PC back, open Windows' System Restore (search for â€œCreate a restore pointâ€, then System
             Restore) and pick one of these.
           </p>
         </Card>
@@ -253,6 +254,31 @@ function JournalRow({ record, name, technical }: { record: JournalRecord; name: 
     );
   }
   if (!technical) return null;
+  if (record.record === "change") {
+    return (
+      <li className="py-2 font-mono text-xs text-ink-muted">
+        <div className="flex justify-between gap-3">
+          <span className="break-all">
+            {record.action} {describeItem(record.item)}
+          </span>
+          <span className="shrink-0 text-ink-faint">{when}</span>
+        </div>
+        <div className="text-ink-faint">before: {describeState(record.previous)}</div>
+      </li>
+    );
+  }
+  if (record.record === "effect") {
+    return (
+      <li className="py-2 font-mono text-xs text-ink-muted">
+        <div className="flex justify-between gap-3">
+          <span className="break-all">
+            {describeEffect(record.effect)}: {record.error ? `failed (${record.error})` : "done"}
+          </span>
+          <span className="shrink-0 text-ink-faint">{when}</span>
+        </div>
+      </li>
+    );
+  }
   return (
     <li className="py-2 font-mono text-xs text-ink-muted">
       <div className="flex justify-between gap-3">

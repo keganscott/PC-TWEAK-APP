@@ -392,6 +392,14 @@ pub trait Tweak: Send + Sync {
     /// makes that user's revert fail with `ContextViolation`.
     fn touches(&self) -> Vec<RegTarget>;
 
+    /// Every non-registry item (`system.rs`) this tweak may change: power plans,
+    /// services, DNS servers, files. `Transaction` refuses anything else, on
+    /// apply and on replay. Same rule as `touches` for old records. Most tweaks
+    /// change only the registry and declare none.
+    fn system_targets(&self) -> Vec<crate::system::SysItem> {
+        Vec::new()
+    }
+
     /// Cheap, pure, no I/O. Called on every refresh.
     fn evaluate_predicate(&self, env: &SystemEnv) -> PredicateOutcome {
         let _ = env;

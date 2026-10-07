@@ -44,6 +44,7 @@ use ts_rs::TS;
 use super::error::{EngineError, Result};
 use super::fsutil;
 use super::secure_dir::TrustedDir;
+use super::system::{SideEffect, SysItem, SysState};
 use super::types::{ExecutionContext, RawValue, RegRoot};
 
 pub const JOURNAL_FILE: &str = "journal.jsonl";
@@ -146,6 +147,38 @@ pub struct RestorePointRecord {
     pub protection_enabled_by_us: Option<bool>,
 }
 
+/// One change that is not a registry value (`system.rs`): what it was before,
+/// written durably before the change is made, like a registry `write`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeEntry {
+    pub seq: u64,
+    pub tx_id: u64,
+    pub unix_ms: u64,
+    pub tweak_id: String,
+    pub action: JournalAction,
+    pub item: SysItem,
+    /// What revert puts back.
+    pub previous: SysState,
+    pub written: SysState,
+}
+
+/// A side effect run after a change committed, and how it went. Nothing to
+/// undo; kept so the history says what was done.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectRecord {
+    pub seq: u64,
+    pub tx_id: u64,
+    pub unix_ms: u64,
+    pub tweak_id: String,
+    pub effect: SideEffect,
+    /// `None` when it worked; otherwise why not.
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(tag = "record", rename_all = "snake_case")]
@@ -153,6 +186,8 @@ pub enum Record {
     Write(JournalEntry),
     Commit(CommitRecord),
     RestorePoint(RestorePointRecord),
+    Change(ChangeEntry),
+    Effect(EffectRecord),
 }
 
 impl Record {
@@ -161,6 +196,8 @@ impl Record {
             Self::Write(e) => e.seq,
             Self::Commit(c) => c.seq,
             Self::RestorePoint(r) => r.seq,
+            Self::Change(c) => c.seq,
+            Self::Effect(e) => e.seq,
         }
     }
 }
@@ -267,6 +304,8 @@ pub(crate) fn parse_journal(bytes: &[u8]) -> Parsed {
 struct TweakIndex {
     /// Apply writes not yet undone, oldest first.
     outstanding: Vec<JournalEntry>,
+    /// Apply changes (not registry) not yet undone, oldest first.
+    changes: Vec<ChangeEntry>,
     last_committed: Option<CommitAction>,
 }
 
@@ -274,17 +313,30 @@ impl TweakIndex {
     fn observe(&mut self, rec: &Record) {
         match rec {
             Record::Write(e) if e.action == JournalAction::Apply => self.outstanding.push(e.clone()),
-            Record::Write(_) => {}
+            Record::Change(c) if c.action == JournalAction::Apply => self.changes.push(c.clone()),
             Record::Commit(c) => match c.action {
                 CommitAction::Apply => self.last_committed = Some(CommitAction::Apply),
                 CommitAction::Revert => {
                     self.outstanding.retain(|e| e.seq > c.tx_id);
+                    self.changes.retain(|e| e.seq > c.tx_id);
                     self.last_committed = Some(CommitAction::Revert);
                 }
-                CommitAction::Rollback => self.outstanding.retain(|e| e.tx_id != c.tx_id),
+                CommitAction::Rollback => {
+                    self.outstanding.retain(|e| e.tx_id != c.tx_id);
+                    self.changes.retain(|e| e.tx_id != c.tx_id);
+                }
             },
-            Record::RestorePoint(_) => {}
+            Record::Write(_) | Record::Change(_) | Record::Effect(_) | Record::RestorePoint(_) => {}
         }
+    }
+
+    /// The newest outstanding seq of either kind.
+    fn newest(&self) -> Option<u64> {
+        self.outstanding
+            .iter()
+            .map(|e| e.seq)
+            .chain(self.changes.iter().map(|c| c.seq))
+            .max()
     }
 }
 
@@ -414,7 +466,13 @@ impl Journal {
     /// True when the tweak has an apply that has not since been reverted. This
     /// is what separates `Applied` from `Foreign` in `read_state`.
     pub fn is_applied(&self, tweak_id: &str) -> bool {
-        !self.outstanding(tweak_id).is_empty()
+        self.index.get(tweak_id).is_some_and(|i| i.newest().is_some())
+    }
+
+    /// Apply changes (not registry) for this tweak that have not been undone,
+    /// oldest first.
+    pub fn outstanding_changes(&self, tweak_id: &str) -> &[ChangeEntry] {
+        self.index.get(tweak_id).map_or(&[], |i| i.changes.as_slice())
     }
 
     pub fn last_committed(&self, tweak_id: &str) -> Option<CommitAction> {
@@ -428,7 +486,7 @@ impl Journal {
         let mut v: Vec<(u64, String)> = self
             .index
             .iter()
-            .filter_map(|(id, i)| i.outstanding.iter().map(|e| e.seq).max().map(|s| (s, id.clone())))
+            .filter_map(|(id, i)| i.newest().map(|s| (s, id.clone())))
             .collect();
         v.sort_by_key(|a| std::cmp::Reverse(a.0));
         v.into_iter().map(|(_, id)| id).collect()
@@ -444,6 +502,14 @@ impl Journal {
 
     pub fn append_restore_point(&mut self, rec: RestorePointRecord) -> Result<()> {
         self.append(Record::RestorePoint(rec))
+    }
+
+    pub fn append_change(&mut self, entry: ChangeEntry) -> Result<()> {
+        self.append(Record::Change(entry))
+    }
+
+    pub fn append_effect(&mut self, rec: EffectRecord) -> Result<()> {
+        self.append(Record::Effect(rec))
     }
 
     /// Append one record on a fresh line and flush it to disk before returning.
@@ -501,6 +567,8 @@ fn record_tweak(rec: &Record) -> Option<&str> {
     match rec {
         Record::Write(e) => Some(&e.tweak_id),
         Record::Commit(c) => Some(&c.tweak_id),
+        Record::Change(c) => Some(&c.tweak_id),
+        Record::Effect(e) => Some(&e.tweak_id),
         Record::RestorePoint(_) => None,
     }
 }

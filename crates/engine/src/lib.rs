@@ -1,4 +1,4 @@
-//! PeakTweaks engine: journalled, reversible system changes.
+﻿//! PeakTweaks engine: journalled, reversible system changes.
 //!
 //! Deliberately free of Tauri types so the logic runs and is tested on any OS.
 //! The Windows-only pieces (`identity`, `registry::windows`, the ProgramData
@@ -31,6 +31,7 @@ pub mod secure_dir;
 pub mod security;
 pub mod settings;
 pub mod sysprobe;
+pub mod system;
 pub mod timeutil;
 pub mod transaction;
 pub mod tweaks;

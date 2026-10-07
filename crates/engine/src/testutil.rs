@@ -1,4 +1,4 @@
-//! Shared test scaffolding: a configurable tweak and a harness that wires an
+﻿//! Shared test scaffolding: a configurable tweak and a harness that wires an
 //! engine to the in-memory registry and a temp journal directory.
 
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use crate::journal::Journal;
 use crate::registry::fake::FakeRegistry;
 use crate::registry::Hive;
 use crate::secure_dir::TrustedDir;
+use crate::system::FakeSystem;
 use crate::transaction::Transaction;
 use crate::types::{
     ExecutionContext, Impact, PredicateOutcome, RawValue, RegRoot, RegTarget, SafetyTier, SystemEnv, Tier, Tweak,
@@ -136,6 +137,8 @@ pub fn user(is_self: bool) -> UserContext {
 
 pub struct Harness {
     pub fake: Arc<FakeRegistry>,
+    /// Non-registry state (power plans, services, files, side effects).
+    pub sys: Arc<FakeSystem>,
     pub dir: tempfile::TempDir,
     pub engine: Engine,
 }
@@ -151,14 +154,15 @@ impl Harness {
     }
 
     pub fn with(tweaks: Vec<Box<dyn Tweak>>, fake: Arc<FakeRegistry>, dir: tempfile::TempDir, gate_open: bool) -> Self {
-        let engine = build_engine(&fake, dir.path(), tweaks, gate_open, Tier::Ultimate);
-        Self { fake, dir, engine }
+        let sys = Arc::new(FakeSystem::new());
+        let engine = build_engine_with_system(&fake, &sys, dir.path(), tweaks, gate_open, Tier::Ultimate);
+        Self { fake, sys, dir, engine }
     }
 
     /// A new engine over the same registry and journal directory, as after an
     /// app restart.
     pub fn restart(&mut self, tweaks: Vec<Box<dyn Tweak>>) {
-        self.engine = build_engine(&self.fake, self.dir.path(), tweaks, true, Tier::Ultimate);
+        self.engine = build_engine_with_system(&self.fake, &self.sys, self.dir.path(), tweaks, true, Tier::Ultimate);
     }
 }
 
@@ -170,6 +174,25 @@ pub fn build_engine(
     tier: Tier,
 ) -> Engine {
     let resolver = ContextResolver::new(user(true), true, fake.clone());
+    let journal = Journal::open(&TrustedDir::insecure_for_tests(dir)).unwrap();
+    let probe = if gate_open {
+        StubProbe::open_for_dev()
+    } else {
+        StubProbe::closed()
+    };
+    Engine::new(resolver, journal, tweaks, Box::new(probe), License::dev(tier))
+}
+
+/// `build_engine` with a fake for non-registry changes.
+pub fn build_engine_with_system(
+    fake: &Arc<FakeRegistry>,
+    sys: &Arc<FakeSystem>,
+    dir: &std::path::Path,
+    tweaks: Vec<Box<dyn Tweak>>,
+    gate_open: bool,
+    tier: Tier,
+) -> Engine {
+    let resolver = ContextResolver::new(user(true), true, fake.clone()).with_system(sys.clone());
     let journal = Journal::open(&TrustedDir::insecure_for_tests(dir)).unwrap();
     let probe = if gate_open {
         StubProbe::open_for_dev()

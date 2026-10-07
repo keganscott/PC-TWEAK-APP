@@ -19,6 +19,7 @@ use ts_rs::TS;
 
 use super::error::{EngineError, Result};
 use super::registry::{Hive, RegistryBackend};
+use super::system::{SysItem, SysState, SystemBackend, Unavailable};
 use super::types::{RawValue, RegRoot};
 
 /// How we found the interactive user. Surfaced to the UI, because "which hive
@@ -49,6 +50,8 @@ pub struct ContextResolver {
     user: UserContext,
     elevated: bool,
     backend: Arc<dyn RegistryBackend>,
+    /// Non-registry changes (`system.rs`). `Unavailable` unless one is given.
+    system: Arc<dyn SystemBackend>,
 }
 
 impl ContextResolver {
@@ -57,7 +60,30 @@ impl ContextResolver {
             user,
             elevated,
             backend,
+            system: Arc::new(Unavailable),
         }
+    }
+
+    /// Use `system` for changes that are not registry values.
+    pub fn with_system(mut self, system: Arc<dyn SystemBackend>) -> Self {
+        self.system = system;
+        self
+    }
+
+    /// The non-registry backend, for `Transaction`. Tweaks read through
+    /// `read_system` / `read_file` below.
+    pub(crate) fn system(&self) -> &dyn SystemBackend {
+        self.system.as_ref()
+    }
+
+    /// The current state of a non-registry item (safe for tweaks).
+    pub fn read_system(&self, item: &SysItem) -> Result<SysState> {
+        self.system.read(item)
+    }
+
+    /// A file's bytes, `None` when absent (safe for tweaks).
+    pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.system.read_file(path)
     }
 
     /// Resolve the interactive user with Win32 and bind the real registry.

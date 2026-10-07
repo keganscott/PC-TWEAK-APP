@@ -1447,3 +1447,297 @@ fn the_sticky_keys_tool_clears_only_the_shortcut_and_keeps_the_users_own_setting
     assert_eq!(flags(r"Control Panel\Accessibility\ToggleKeys"), None);
     assert!(matches!(state(&mut engine), TweakState::Default));
 }
+
+// ---------------------------------------------------------------------------
+// Changes that are not registry values (system.rs)
+// ---------------------------------------------------------------------------
+
+mod system_changes {
+    use super::*;
+    use crate::system::{ServiceStart, SideEffect, SysItem, SysState};
+
+    /// Sets non-registry items, writes files and queues side effects, all
+    /// declared unless `undeclared` names one it must not be allowed.
+    struct SysTweak {
+        sets: Vec<(SysItem, SysState)>,
+        files: Vec<(String, Vec<u8>)>,
+        effects: Vec<SideEffect>,
+        declared: Vec<SysItem>,
+        fail_after: bool,
+    }
+
+    impl SysTweak {
+        fn new(sets: Vec<(SysItem, SysState)>) -> Self {
+            let declared = sets.iter().map(|(i, _)| i.clone()).collect();
+            Self {
+                sets,
+                files: vec![],
+                effects: vec![],
+                declared,
+                fail_after: false,
+            }
+        }
+    }
+
+    impl Tweak for SysTweak {
+        fn id(&self) -> &str {
+            "sys"
+        }
+        fn metadata(&self) -> crate::types::TweakMetadata {
+            TestTweak::new("sys", KEY, &[]).metadata()
+        }
+        fn execution_context(&self) -> ExecutionContext {
+            ExecutionContext::Service
+        }
+        fn touches(&self) -> Vec<crate::types::RegTarget> {
+            vec![]
+        }
+        fn system_targets(&self) -> Vec<SysItem> {
+            self.declared.clone()
+        }
+        fn read_state(&self, _: &crate::context::ContextResolver, j: bool) -> crate::error::Result<TweakState> {
+            Ok(if j { TweakState::Applied } else { TweakState::Default })
+        }
+        fn apply(&self, tx: &mut Transaction) -> crate::error::Result<()> {
+            for (i, s) in &self.sets {
+                tx.set_system(i.clone(), s.clone())?;
+            }
+            for (p, b) in &self.files {
+                tx.write_file(p, b)?;
+            }
+            for e in &self.effects {
+                tx.after_commit(e.clone());
+            }
+            if self.fail_after {
+                return Err(EngineError::Internal {
+                    detail: "test failure".into(),
+                });
+            }
+            Ok(())
+        }
+        fn revert(&self, tx: &mut Transaction) -> crate::error::Result<()> {
+            tx.restore_journalled()?;
+            for e in &self.effects {
+                tx.after_commit(e.clone());
+            }
+            Ok(())
+        }
+    }
+
+    fn svc() -> SysItem {
+        SysItem::Service { name: "WSearch".into() }
+    }
+
+    fn running(start: ServiceStart, running: bool) -> SysState {
+        SysState::Service { start, running }
+    }
+
+    #[test]
+    fn a_service_change_is_journalled_before_it_is_made_and_undo_puts_it_back() {
+        let t = SysTweak::new(vec![(svc(), running(ServiceStart::Disabled, false))]);
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set(&svc(), running(ServiceStart::DelayedAutomatic, true));
+
+        h.engine.apply("sys").unwrap();
+        assert_eq!(h.sys.get(&svc()), running(ServiceStart::Disabled, false));
+        let change = h
+            .engine
+            .journal_view()
+            .records
+            .into_iter()
+            .find_map(|r| match r {
+                Record::Change(c) => Some(c),
+                _ => None,
+            })
+            .expect("a change record");
+        assert_eq!(change.previous, running(ServiceStart::DelayedAutomatic, true));
+        assert_eq!(h.engine.applied_tweak_ids(), vec!["sys"]);
+
+        h.engine.revert("sys").unwrap();
+        assert_eq!(h.sys.get(&svc()), running(ServiceStart::DelayedAutomatic, true));
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn a_change_outside_the_declared_items_is_refused_and_nothing_changes() {
+        let mut t = SysTweak::new(vec![(svc(), running(ServiceStart::Disabled, false))]);
+        t.declared = vec![SysItem::Service { name: "SysMain".into() }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set(&svc(), running(ServiceStart::Automatic, true));
+        let err = h.engine.apply("sys").unwrap_err();
+        assert!(matches!(err, EngineError::ContextViolation { .. }), "{err:?}");
+        assert_eq!(h.sys.get(&svc()), running(ServiceStart::Automatic, true));
+    }
+
+    #[test]
+    fn a_per_pc_item_can_be_declared_with_a_star() {
+        let dns = SysItem::DnsServers {
+            interface: "{9F2-AA}".into(),
+        };
+        let mut t = SysTweak::new(vec![(
+            dns.clone(),
+            SysState::List {
+                items: vec!["1.1.1.1".into()],
+            },
+        )]);
+        t.declared = vec![SysItem::DnsServers { interface: "*".into() }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.engine.apply("sys").unwrap();
+        h.engine.revert("sys").unwrap();
+        assert_eq!(h.sys.get(&dns), SysState::Absent);
+    }
+
+    #[test]
+    fn a_failed_apply_puts_back_both_registry_and_other_changes() {
+        let plan = SysItem::ActivePowerScheme;
+        let mut t = SysTweak::new(vec![
+            (plan.clone(), SysState::Text { text: "ours".into() }),
+            (svc(), running(ServiceStart::Disabled, false)),
+        ]);
+        t.fail_after = true;
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set(
+            &plan,
+            SysState::Text {
+                text: "balanced".into(),
+            },
+        );
+        h.sys.set(&svc(), running(ServiceStart::Manual, false));
+        assert!(h.engine.apply("sys").is_err());
+        assert_eq!(
+            h.sys.get(&plan),
+            SysState::Text {
+                text: "balanced".into()
+            }
+        );
+        assert_eq!(h.sys.get(&svc()), running(ServiceStart::Manual, false));
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn a_file_is_kept_whole_and_undo_restores_it_byte_for_byte() {
+        let path = r"C:\Users\x\AppData\Local\Game\Saved\GameUserSettings.ini";
+        let mut t = SysTweak::new(vec![]);
+        t.files = vec![(path.into(), b"[S]\nFrameRateLimit=0\n".to_vec())];
+        t.declared = vec![SysItem::File { path: path.into() }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        let original = b"[S]\r\nFrameRateLimit=60\r\n\xEF\xBB\xBF".to_vec();
+        h.sys.set_file(path, &original);
+
+        h.engine.apply("sys").unwrap();
+        assert_eq!(h.sys.file(path).unwrap(), b"[S]\nFrameRateLimit=0\n");
+        h.engine.revert("sys").unwrap();
+        assert_eq!(h.sys.file(path).unwrap(), original);
+    }
+
+    #[test]
+    fn a_file_that_did_not_exist_is_removed_again_on_undo() {
+        let path = r"C:\Games\new.cfg";
+        let mut t = SysTweak::new(vec![]);
+        t.files = vec![(path.into(), b"x=1".to_vec())];
+        t.declared = vec![SysItem::File { path: path.into() }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.engine.apply("sys").unwrap();
+        assert!(h.sys.file(path).is_some());
+        h.engine.revert("sys").unwrap();
+        assert!(h.sys.file(path).is_none());
+    }
+
+    #[test]
+    fn a_tampered_file_copy_is_refused_rather_than_restored() {
+        let path = r"C:\Games\x.ini";
+        let mut t = SysTweak::new(vec![]);
+        t.files = vec![(path.into(), b"new".to_vec())];
+        t.declared = vec![SysItem::File { path: path.into() }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set_file(path, b"old");
+        h.engine.apply("sys").unwrap();
+        let backup = h
+            .engine
+            .journal_view()
+            .records
+            .into_iter()
+            .find_map(|r| match r {
+                Record::Change(crate::journal::ChangeEntry {
+                    previous: SysState::File { backup, .. },
+                    ..
+                }) => Some(backup),
+                _ => None,
+            })
+            .unwrap();
+        std::fs::write(h.dir.path().join(backup), b"evil").unwrap();
+        assert!(h.engine.revert("sys").is_err());
+        assert_eq!(h.sys.file(path).unwrap(), b"new", "nothing written from a bad copy");
+    }
+
+    #[test]
+    fn side_effects_run_after_apply_and_after_revert_and_are_journalled() {
+        let mut t = SysTweak::new(vec![(svc(), running(ServiceStart::Manual, false))]);
+        t.effects = vec![SideEffect::RestartAdapter {
+            interface: "{AA}".into(),
+        }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.engine.apply("sys").unwrap();
+        assert_eq!(h.sys.effects().len(), 1);
+        h.engine.revert("sys").unwrap();
+        assert_eq!(h.sys.effects().len(), 2);
+        let effects = h
+            .engine
+            .journal_view()
+            .records
+            .into_iter()
+            .filter(|r| matches!(r, Record::Effect(e) if e.error.is_none()))
+            .count();
+        assert_eq!(effects, 2);
+    }
+
+    #[test]
+    fn a_failed_side_effect_is_recorded_but_does_not_undo_the_committed_change() {
+        let mut t = SysTweak::new(vec![(svc(), running(ServiceStart::Manual, false))]);
+        t.effects = vec![SideEffect::RefreshPolicy];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.fail_effects(true);
+        h.engine.apply("sys").unwrap();
+        assert_eq!(h.sys.get(&svc()), running(ServiceStart::Manual, false));
+        assert_eq!(h.engine.applied_tweak_ids(), vec!["sys"]);
+        assert!(h
+            .engine
+            .journal_view()
+            .records
+            .iter()
+            .any(|r| matches!(r, Record::Effect(e) if e.error.is_some())));
+    }
+
+    #[test]
+    fn no_effect_runs_when_an_apply_is_rolled_back() {
+        let mut t = SysTweak::new(vec![(svc(), running(ServiceStart::Manual, false))]);
+        t.effects = vec![SideEffect::RefreshPolicy];
+        t.fail_after = true;
+        let mut h = Harness::new(vec![Box::new(t)]);
+        assert!(h.engine.apply("sys").is_err());
+        assert!(h.sys.effects().is_empty());
+    }
+
+    #[test]
+    fn change_records_survive_a_restart_and_undo_all_reverts_them() {
+        let t = || SysTweak::new(vec![(SysItem::Hibernation, SysState::Bool { on: false })]);
+        let mut h = Harness::new(vec![Box::new(t())]);
+        h.sys.set(&SysItem::Hibernation, SysState::Bool { on: true });
+        h.engine.apply("sys").unwrap();
+        h.restart(vec![Box::new(t())]);
+        assert_eq!(h.engine.applied_tweak_ids(), vec!["sys"]);
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert_eq!(h.sys.get(&SysItem::Hibernation), SysState::Bool { on: true });
+    }
+
+    #[test]
+    fn an_engine_without_a_system_backend_refuses_before_changing_anything() {
+        let fake = Arc::new(FakeRegistry::new());
+        let dir = tempfile::tempdir().unwrap();
+        let t = SysTweak::new(vec![(svc(), running(ServiceStart::Disabled, false))]);
+        let mut engine = build_engine(&fake, dir.path(), vec![Box::new(t)], true, Tier::Ultimate);
+        assert!(engine.apply("sys").is_err());
+        assert!(engine.applied_tweak_ids().is_empty());
+    }
+}

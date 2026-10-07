@@ -16,10 +16,13 @@ use std::path::PathBuf;
 
 use super::context::ContextResolver;
 use super::error::{EngineError, Result};
-use super::journal::{now_ms, CommitAction, CommitRecord, Journal, JournalAction, JournalEntry};
+use super::journal::{
+    now_ms, ChangeEntry, CommitAction, CommitRecord, EffectRecord, Journal, JournalAction, JournalEntry,
+};
 use super::offline;
 use super::reg_export::{write_reg_backup, write_session_backup};
 use super::registry::{components, pattern_eq, pattern_is_ancestor_or_equal};
+use super::system::{SideEffect, SysItem, SysState};
 use super::types::{ExecutionContext, RawValue, RegRoot, RegTarget, Tweak};
 
 #[must_use = "a transaction must be committed or rolled back"]
@@ -33,6 +36,12 @@ pub struct Transaction<'a> {
     action: JournalAction,
     tx_id: u64,
     written: Vec<JournalEntry>,
+    /// Declared non-registry items (`Tweak::system_targets`).
+    sys_allowlist: Vec<SysItem>,
+    /// Non-registry changes made by this transaction so far.
+    changes: Vec<ChangeEntry>,
+    /// Run after the commit, in order, each once.
+    effects: Vec<SideEffect>,
 }
 
 impl<'a> Transaction<'a> {
@@ -57,7 +66,58 @@ impl<'a> Transaction<'a> {
             action,
             tx_id,
             written: Vec::new(),
+            sys_allowlist: tweak.system_targets(),
+            changes: Vec::new(),
+            effects: Vec::new(),
         })
+    }
+
+    /// Non-registry changes made by this transaction so far.
+    pub fn changes(&self) -> &[ChangeEntry] {
+        &self.changes
+    }
+
+    /// Change a non-registry item (`system.rs`): check it is declared, read and
+    /// journal what it is now, then change it. Files go through `write_file`.
+    pub fn set_system(&mut self, item: SysItem, state: SysState) -> Result<()> {
+        if matches!(item, SysItem::File { .. }) || matches!(state, SysState::File { .. }) {
+            return Err(EngineError::Internal {
+                detail: "files are changed with write_file".into(),
+            });
+        }
+        self.check_sys_allowed(&item)?;
+        let previous = self.resolver.system().read(&item)?;
+        if previous == state {
+            return Ok(());
+        }
+        self.record_change(item.clone(), previous, state.clone())?;
+        self.resolver.system().write(&item, &state)
+    }
+
+    /// Replace a whole file. A copy of what it held (or that it did not exist)
+    /// is kept with the backups and journalled first; revert puts it back.
+    pub fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<()> {
+        let item = SysItem::File { path: path.to_owned() };
+        self.check_sys_allowed(&item)?;
+        let before = self.resolver.system().read_file(path)?;
+        if before.as_deref() == Some(bytes) {
+            return Ok(());
+        }
+        let previous = match &before {
+            Some(b) => self.keep_file_copy(b, "before")?,
+            None => SysState::Absent,
+        };
+        let written = self.keep_file_copy(bytes, "after")?;
+        self.record_change(item, previous, written)?;
+        self.resolver.system().write_file(path, Some(bytes))
+    }
+
+    /// Run `effect` once this transaction commits (after apply or revert).
+    /// Journalled with its outcome; a failure does not undo the change.
+    pub fn after_commit(&mut self, effect: SideEffect) {
+        if !self.effects.contains(&effect) {
+            self.effects.push(effect);
+        }
     }
 
     pub fn tweak_id(&self) -> &str {
@@ -142,13 +202,13 @@ impl<'a> Transaction<'a> {
     /// write, so a tampered or stale journal line cannot cause a partial
     /// restore followed by a refusal.
     pub fn restore_journalled(&mut self) -> Result<()> {
-        let mut entries: Vec<JournalEntry> = self.journal.outstanding(&self.tweak_id).to_vec();
-        if entries.is_empty() {
+        let entries: Vec<JournalEntry> = self.journal.outstanding(&self.tweak_id).to_vec();
+        let changes: Vec<ChangeEntry> = self.journal.outstanding_changes(&self.tweak_id).to_vec();
+        if entries.is_empty() && changes.is_empty() {
             return Err(EngineError::NoJournalEntry {
                 tweak_id: self.tweak_id.clone(),
             });
         }
-        entries.sort_by_key(|e| std::cmp::Reverse(e.seq));
 
         for e in &entries {
             self.check_same_account(e)?;
@@ -157,19 +217,96 @@ impl<'a> Transaction<'a> {
                 self.check_key_removable(e.root, k)?;
             }
         }
+        for c in &changes {
+            self.check_sys_allowed(&c.item)?;
+        }
 
-        for e in entries {
-            match e.previous.clone() {
-                Some(prev) => self.set_raw(e.root, &e.key_path, &e.value_name, prev)?,
-                None => self.delete_value(e.root, &e.key_path, &e.value_name)?,
+        // Registry writes and other changes, newest first across both.
+        enum Step {
+            Reg(JournalEntry),
+            Sys(ChangeEntry),
+        }
+        let mut steps: Vec<(u64, Step)> = entries
+            .into_iter()
+            .map(|e| (e.seq, Step::Reg(e)))
+            .chain(changes.into_iter().map(|c| (c.seq, Step::Sys(c))))
+            .collect();
+        steps.sort_by_key(|(seq, _)| std::cmp::Reverse(*seq));
+
+        for (_, step) in steps {
+            match step {
+                Step::Reg(e) => {
+                    match e.previous.clone() {
+                        Some(prev) => self.set_raw(e.root, &e.key_path, &e.value_name, prev)?,
+                        None => self.delete_value(e.root, &e.key_path, &e.value_name)?,
+                    }
+                    self.remove_created_keys(e.root, &e.created_keys)?;
+                }
+                Step::Sys(c) => self.change_back(&c.item, &c.previous)?,
             }
-            self.remove_created_keys(e.root, &e.created_keys)?;
         }
         Ok(())
     }
 
+    /// Put a non-registry item back to `target`, journalled like any change.
+    fn change_back(&mut self, item: &SysItem, target: &SysState) -> Result<()> {
+        let current = match item {
+            SysItem::File { path } => {
+                let bytes = self.resolver.system().read_file(path)?;
+                let same = match (&bytes, target) {
+                    (None, SysState::Absent) => true,
+                    (Some(b), SysState::File { sha256, .. }) => hex_sha256(b) == *sha256,
+                    _ => false,
+                };
+                if same {
+                    return Ok(());
+                }
+                match bytes {
+                    Some(b) => self.keep_file_copy(&b, "before")?,
+                    None => SysState::Absent,
+                }
+            }
+            _ => {
+                let now = self.resolver.system().read(item)?;
+                if now == *target {
+                    return Ok(());
+                }
+                now
+            }
+        };
+        self.record_change(item.clone(), current, target.clone())?;
+        self.put_back(item, target)
+    }
+
+    /// Make `item` be `state` without journalling (rollback, and the last step
+    /// of `change_back`).
+    fn put_back(&self, item: &SysItem, state: &SysState) -> Result<()> {
+        let system = self.resolver.system();
+        match (item, state) {
+            (SysItem::File { path }, SysState::Absent) => system.write_file(path, None),
+            (SysItem::File { path }, SysState::File { backup, sha256 }) => {
+                let src = self.journal.root().join(backup);
+                let bytes = std::fs::read(&src).map_err(|e| EngineError::storage(src.display().to_string(), e))?;
+                if hex_sha256(&bytes) != *sha256 {
+                    return Err(EngineError::Storage {
+                        path: src.display().to_string(),
+                        detail: "the saved copy of this file does not match its recorded checksum".into(),
+                    });
+                }
+                system.write_file(path, Some(&bytes))
+            }
+            (SysItem::File { .. }, _) | (_, SysState::File { .. }) => Err(EngineError::Internal {
+                detail: format!(
+                    "a journal record for the {} has the wrong kind of state",
+                    item.describe()
+                ),
+            }),
+            (item, state) => system.write(item, state),
+        }
+    }
+
     /// Close the transaction successfully.
-    pub fn commit(self) -> Result<Vec<JournalEntry>> {
+    pub fn commit(mut self) -> Result<Vec<JournalEntry>> {
         // One combined restore file per applied change, for recovery by hand
         // when PeakTweaks cannot run (Safe Mode; see journal.rs). Written
         // before the commit so a committed apply always has one.
@@ -197,6 +334,22 @@ impl<'a> Transaction<'a> {
             tweak_id: self.tweak_id.clone(),
             action,
         })?;
+        // The change has committed; side effects only help it take hold. Each
+        // outcome is journalled, but neither a failed effect nor a failed
+        // journal line for it may turn a committed change into a reported
+        // failure (the caller would then retry a change that is already made).
+        for effect in std::mem::take(&mut self.effects) {
+            let error = self.resolver.system().run(&effect).err().map(|e| e.to_string());
+            let seq = self.journal.take_seq();
+            let _ = self.journal.append_effect(EffectRecord {
+                seq,
+                tx_id: self.tx_id,
+                unix_ms: now_ms(),
+                tweak_id: self.tweak_id.clone(),
+                effect,
+                error,
+            });
+        }
         Ok(self.written)
     }
 
@@ -205,8 +358,23 @@ impl<'a> Transaction<'a> {
     /// cancel is not written: the writes stay outstanding so a revert can retry.
     pub fn rollback(self) -> Result<()> {
         let mut first_err = None;
-        for e in self.written.iter().rev() {
-            if let Err(err) = self.undo_entry(e) {
+        // Newest first across registry writes and other changes.
+        let mut seqs: Vec<(u64, bool, usize)> = self
+            .written
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.seq, true, i))
+            .chain(self.changes.iter().enumerate().map(|(i, c)| (c.seq, false, i)))
+            .collect();
+        seqs.sort_by_key(|(seq, _, _)| std::cmp::Reverse(*seq));
+        for (_, is_reg, i) in seqs {
+            let undone = if is_reg {
+                self.undo_entry(&self.written[i])
+            } else {
+                let c = &self.changes[i];
+                self.put_back(&c.item, &c.previous)
+            };
+            if let Err(err) = undone {
                 first_err.get_or_insert(err);
             }
         }
@@ -321,6 +489,54 @@ impl<'a> Transaction<'a> {
         // fails, rollback still undoes it (a no-op if nothing changed).
         self.written.push(entry.clone());
         Ok(entry)
+    }
+
+    /// Journal (durably) and remember one non-registry change, before it is made.
+    fn record_change(&mut self, item: SysItem, previous: SysState, written: SysState) -> Result<()> {
+        let entry = ChangeEntry {
+            seq: self.journal.take_seq(),
+            tx_id: self.tx_id,
+            unix_ms: now_ms(),
+            tweak_id: self.tweak_id.clone(),
+            action: self.action,
+            item,
+            previous,
+            written,
+        };
+        self.journal.append_change(entry.clone())?;
+        self.changes.push(entry);
+        Ok(())
+    }
+
+    /// Keep a copy of a file's content with the backups; the state names it
+    /// (relative to the journal directory) and its checksum.
+    fn keep_file_copy(&mut self, bytes: &[u8], which: &str) -> Result<SysState> {
+        let seq = self.journal.take_seq();
+        let name = format!("{seq}_{}_{which}.file", sanitise(&self.tweak_id));
+        let path = self.session_dir.join(name);
+        crate::fsutil::create_dir_durable(&self.session_dir)?;
+        crate::fsutil::write_durable(&path, bytes)?;
+        let backup = path
+            .strip_prefix(self.journal.root())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        Ok(SysState::File {
+            backup,
+            sha256: hex_sha256(bytes),
+        })
+    }
+
+    /// The tweak's declared non-registry items.
+    fn check_sys_allowed(&self, item: &SysItem) -> Result<()> {
+        if self.sys_allowlist.iter().any(|p| item.matches(p)) {
+            Ok(())
+        } else {
+            Err(EngineError::ContextViolation {
+                tweak_id: self.tweak_id.clone(),
+                detail: format!("the {} is not in this tweak's declared targets", item.describe()),
+            })
+        }
     }
 
     /// Keys on the way to `key` that do not exist yet, shallowest first.
@@ -449,6 +665,11 @@ pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal,
         }
     }
     offline::refresh(journal.root(), &offline::plan(&outstanding, &facts))
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Registry value names allow characters that filenames do not. Also capped so

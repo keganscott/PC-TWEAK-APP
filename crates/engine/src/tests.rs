@@ -1419,3 +1419,43 @@ fn the_sticky_keys_tool_clears_only_the_shortcut_and_keeps_the_users_own_setting
     assert_eq!(flags(r"Control Panel\Accessibility\ToggleKeys"), None);
     assert!(matches!(state(&mut engine), TweakState::Default));
 }
+
+/// Every value tweak, on an empty registry: Apply reaches Applied, Undo leaves
+/// the registry exactly as it was (no values, no keys left behind).
+#[test]
+fn every_value_tweak_applies_and_undoes_to_an_identical_registry() {
+    let expected = [
+        "privacy.advertisingid",
+        "privacy.tips",
+        "privacy.tailored",
+        "privacy.activityhistory",
+        "privacy.telemetry",
+        "explorer.fileextensions",
+        "explorer.websearch",
+        "display.wallpaperquality",
+        "display.animations",
+        "input.queuesize",
+        "system.faststartup",
+        "scheduling.timerrequests",
+    ];
+    let all = crate::tweaks::registry_values::all();
+    let ids: Vec<&str> = all.iter().map(|t| t.id()).collect();
+    for id in expected {
+        assert!(ids.contains(&id), "{id} missing from the value tweaks");
+    }
+    for tweak in crate::tweaks::registry_values::all() {
+        let id = tweak.id().to_owned();
+        let fake = Arc::new(FakeRegistry::new());
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = build_engine(&fake, dir.path(), vec![tweak], true, Tier::Ultimate);
+        let before_keys = fake.key_paths();
+        engine.apply(&id).unwrap();
+        assert!(
+            matches!(engine.list().unwrap()[0].state, TweakState::Applied),
+            "{id} not Applied after Apply"
+        );
+        engine.revert(&id).unwrap();
+        assert!(fake.snapshot().is_empty(), "{id} left values behind");
+        assert_eq!(fake.key_paths(), before_keys, "{id} left keys behind");
+    }
+}

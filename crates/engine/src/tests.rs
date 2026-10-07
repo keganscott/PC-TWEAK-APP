@@ -478,6 +478,34 @@ fn a_tweak_cannot_write_outside_its_declared_targets() {
     assert_eq!(h.fake.snapshot(), before, "the allowed write was rolled back too");
 }
 
+/// A per-PC key (an adapter's `{guid}`) is declared with one `*` segment: any
+/// one key there may be written and undone, created keys included.
+#[test]
+fn a_wildcard_target_allows_one_per_pc_key_and_undo_removes_what_it_created() {
+    let concrete = r"SOFTWARE\PeakTest\Interfaces\{1234-ABCD}";
+    let mut t = TestTweak::new("t", concrete, &[("TcpNoDelay", 1)]);
+    t.allow_key = r"SOFTWARE\PeakTest\Interfaces\*".into();
+    let mut h = Harness::new(one(t));
+    h.engine.apply("t").unwrap();
+    assert_eq!(hklm_dword(&h.fake, concrete, "TcpNoDelay"), Some(1));
+    h.engine.revert("t").unwrap();
+    assert_eq!(hklm_dword(&h.fake, concrete, "TcpNoDelay"), None);
+    assert!(h.fake.key_paths().is_empty(), "{:?}", h.fake.key_paths());
+}
+
+/// The `*` stands for exactly one key: one level deeper is refused.
+#[test]
+fn a_wildcard_target_cannot_reach_a_key_two_levels_down() {
+    let deeper = r"SOFTWARE\PeakTest\Interfaces\{1234-ABCD}\Sub";
+    let mut t = TestTweak::new("t", deeper, &[("TcpNoDelay", 1)]);
+    t.allow_key = r"SOFTWARE\PeakTest\Interfaces\*".into();
+    let mut h = Harness::new(one(t));
+    let before = h.fake.snapshot();
+    let err = h.engine.apply("t").unwrap_err();
+    assert!(matches!(err, EngineError::ContextViolation { .. }), "{err:?}");
+    assert_eq!(h.fake.snapshot(), before);
+}
+
 #[test]
 fn allowlist_comparison_ignores_case() {
     let mut t = TestTweak::new("t", KEY, &[("Alpha", 1)]);

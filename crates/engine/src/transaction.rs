@@ -19,7 +19,7 @@ use super::error::{EngineError, Result};
 use super::journal::{now_ms, CommitAction, CommitRecord, Journal, JournalAction, JournalEntry};
 use super::offline;
 use super::reg_export::{write_reg_backup, write_session_backup};
-use super::registry::{components, is_ancestor_or_equal, path_eq};
+use super::registry::{components, pattern_eq, pattern_is_ancestor_or_equal};
 use super::types::{ExecutionContext, RawValue, RegRoot, RegTarget, Tweak};
 
 #[must_use = "a transaction must be committed or rolled back"]
@@ -357,10 +357,9 @@ impl<'a> Transaction<'a> {
     /// The tweak's declared blast radius. Case-insensitive, as the registry is.
     fn check_allowed(&self, root: RegRoot, key: &str, name: &str) -> Result<()> {
         self.guard_context(root)?;
-        let allowed = self
-            .allowlist
-            .iter()
-            .any(|t| t.root == root && path_eq(&t.key, key) && t.values.iter().any(|v| v.eq_ignore_ascii_case(name)));
+        let allowed = self.allowlist.iter().any(|t| {
+            t.root == root && pattern_eq(&t.key, key) && t.values.iter().any(|v| v.eq_ignore_ascii_case(name))
+        });
         if allowed {
             Ok(())
         } else {
@@ -382,7 +381,7 @@ impl<'a> Transaction<'a> {
             && self
                 .allowlist
                 .iter()
-                .any(|t| t.root == root && is_ancestor_or_equal(key, &t.key));
+                .any(|t| t.root == root && pattern_is_ancestor_or_equal(key, &t.key));
         if ok {
             Ok(())
         } else {

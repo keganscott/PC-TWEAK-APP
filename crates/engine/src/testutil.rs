@@ -25,6 +25,8 @@ pub struct TestTweak {
     pub id: String,
     pub context: ExecutionContext,
     pub key: String,
+    /// The key declared in `touches()`; may hold a `*` segment. Defaults to `key`.
+    pub allow_key: String,
     pub writes: Vec<(String, u32)>,
     pub allow: Vec<String>,
     pub tier: Tier,
@@ -38,6 +40,7 @@ impl TestTweak {
             id: id.into(),
             context: ExecutionContext::Service,
             key: key.into(),
+            allow_key: key.into(),
             writes: writes.iter().map(|(n, v)| ((*n).to_owned(), *v)).collect(),
             allow: writes.iter().map(|(n, _)| (*n).to_owned()).collect(),
             tier: Tier::Free,
@@ -80,7 +83,7 @@ impl Tweak for TestTweak {
 
     fn touches(&self) -> Vec<RegTarget> {
         let names: Vec<&str> = self.allow.iter().map(String::as_str).collect();
-        vec![RegTarget::new(self.root(), self.key.clone(), &names)]
+        vec![RegTarget::new(self.root(), self.allow_key.clone(), &names)]
     }
 
     fn evaluate_predicate(&self, _env: &SystemEnv) -> PredicateOutcome {

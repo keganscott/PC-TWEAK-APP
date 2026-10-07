@@ -58,6 +58,38 @@ pub fn is_ancestor_or_equal(ancestor: &str, path: &str) -> bool {
     a.len() <= p.len() && a.iter().zip(&p).all(|(x, y)| x.eq_ignore_ascii_case(y))
 }
 
+/// The one wildcard a declared target key may hold: a whole `*` component,
+/// standing for exactly one key whose name differs per PC (a network adapter's
+/// `{guid}`, a device instance, a `00xx` adapter index). Never more than one per
+/// target, and never part of a component.
+pub const WILDCARD: &str = "*";
+
+/// Number of `*` components in `pattern`.
+fn wildcards(pattern: &[&str]) -> usize {
+    pattern.iter().filter(|c| **c == WILDCARD).count()
+}
+
+/// One component against one pattern component: `*` matches any one name.
+fn component_matches(pattern: &str, name: &str) -> bool {
+    pattern == WILDCARD || pattern.eq_ignore_ascii_case(name)
+}
+
+/// Does the concrete `path` name the key that `pattern` (a declared target,
+/// possibly with one `*` component) allows? Same number of components, so `*`
+/// matches exactly one. A pattern with two or more `*` matches nothing.
+pub fn pattern_eq(pattern: &str, path: &str) -> bool {
+    let (p, k) = (components(pattern), components(path));
+    wildcards(&p) <= 1 && p.len() == k.len() && p.iter().zip(&k).all(|(x, y)| component_matches(x, y))
+}
+
+/// True when the concrete key `ancestor` is the key `pattern` allows, or one of
+/// its parents. Used for removing keys a write created, and by the never-do
+/// audit (where a `*` could stand for a forbidden key, so it counts as a match).
+pub fn pattern_is_ancestor_or_equal(ancestor: &str, pattern: &str) -> bool {
+    let (a, p) = (components(ancestor), components(pattern));
+    wildcards(&p) <= 1 && a.len() <= p.len() && p.iter().zip(&a).all(|(x, y)| component_matches(x, y))
+}
+
 /// The operations the engine needs, and no more. All methods take `&self`;
 /// implementations synchronise internally, which lets tests keep a handle to the
 /// fake and change it "externally" between engine calls.
@@ -97,5 +129,44 @@ mod tests {
         assert!(is_ancestor_or_equal(r"A\B", r"a\b"));
         assert!(!is_ancestor_or_equal(r"A\B\C", r"a\b"));
         assert!(!is_ancestor_or_equal(r"A\BX", r"a\b\c"));
+    }
+
+    #[test]
+    fn a_wildcard_segment_matches_exactly_one_component() {
+        let p = r"SYSTEM\Tcpip\Interfaces\*";
+        assert!(pattern_eq(p, r"system\tcpip\interfaces\{0A1B-22}"));
+        assert!(
+            !pattern_eq(p, r"SYSTEM\Tcpip\Interfaces"),
+            "must not match zero components"
+        );
+        assert!(
+            !pattern_eq(p, r"SYSTEM\Tcpip\Interfaces\{0A1B-22}\Sub"),
+            "must not match two components"
+        );
+        assert!(pattern_eq(
+            r"Enum\PCI\*\Device Parameters",
+            r"enum\pci\VEN_10DE\device parameters"
+        ));
+        assert!(!pattern_eq(
+            r"Enum\PCI\*\Device Parameters",
+            r"Enum\PCI\a\b\Device Parameters"
+        ));
+        // Only a whole `*` component is a wildcard.
+        assert!(!pattern_eq(r"A\0*", r"A\0001"));
+        assert!(pattern_eq(r"A\0*", r"A\0*"));
+        // Two wildcards are refused outright, even where they would line up.
+        assert!(!pattern_eq(r"A\*\*", r"A\b\c"));
+        // Without a wildcard it is plain path equality.
+        assert!(pattern_eq(r"A\B", r"a\b"));
+    }
+
+    #[test]
+    fn a_concrete_key_is_on_the_path_to_a_wildcard_target_only_within_its_length() {
+        assert!(pattern_is_ancestor_or_equal(r"A", r"A\*\C"));
+        assert!(pattern_is_ancestor_or_equal(r"a\guid", r"A\*\C"));
+        assert!(pattern_is_ancestor_or_equal(r"a\guid\c", r"A\*\C"));
+        assert!(!pattern_is_ancestor_or_equal(r"a\guid\c\d", r"A\*\C"));
+        assert!(!pattern_is_ancestor_or_equal(r"a\guid\x", r"A\*\C"));
+        assert!(!pattern_is_ancestor_or_equal(r"a\b", r"A\*\*"));
     }
 }

@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use crate::network_audit::{hits, walk, workspace_root};
-use crate::registry::is_ancestor_or_equal;
+use crate::registry::pattern_is_ancestor_or_equal;
 use crate::types::{RegRoot, Tweak};
 
 /// `HKLM` keys no tweak may touch, nor anything below them.
@@ -37,7 +37,7 @@ fn forbidden_targets(tweaks: &[Box<dyn Tweak>]) -> Vec<String> {
                 continue;
             }
             for (key, what) in FORBIDDEN_HKLM {
-                if is_ancestor_or_equal(key, &target.key) {
+                if pattern_is_ancestor_or_equal(key, &target.key) {
                     found.push(format!("{}: {} ({what})", t.id(), target.key));
                 }
             }
@@ -79,6 +79,19 @@ fn the_registry_check_catches_a_planted_violation() {
     let found = forbidden_targets(&planted);
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found[0].contains("Memory Integrity") && found[1].contains("vulnerable-driver"));
+}
+
+/// A `*` segment could stand for a forbidden key, so it counts as one.
+#[test]
+fn a_wildcard_target_that_could_reach_a_security_key_is_caught() {
+    let mut t = crate::testutil::TestTweak::new("planted.wild", r"SYSTEM\CurrentControlSet\Control\X", &[("V", 0)]);
+    t.allow_key = r"SYSTEM\CurrentControlSet\Control\*".into();
+    let planted: Vec<Box<dyn Tweak>> = vec![Box::new(t)];
+    assert_eq!(
+        forbidden_targets(&planted).len(),
+        3,
+        "DeviceGuard, SecureBoot and CI sit under Control"
+    );
 }
 
 /// Win32 calls and strings that only the forbidden features need.

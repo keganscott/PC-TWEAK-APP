@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::cleanup::{AreaCleanup, AreaSize, CleanupArea, CleanupReport};
 use crate::context::UserResolution;
+use crate::drive_optimize::DriveOptimization;
 use crate::engine::{ContextInfo, JournalView, Progress, RevertResult};
 use crate::env::EnvProbe;
 use crate::error::EngineError;
@@ -519,6 +520,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { CleanupReport } from \"./CleanupReport\";\n\
          import type { Comparison } from \"./Comparison\";\n\
          import type { ContextInfo } from \"./ContextInfo\";\n\
+         import type { DriveOptimization } from \"./DriveOptimization\";\n\
          import type { EngineError } from \"./EngineError\";\n\
          import type { JournalView } from \"./JournalView\";\n\
          import type { Progress } from \"./Progress\";\n\
@@ -603,6 +605,21 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         },
     );
     ts_const(&mut out, "cleanupSizes", "AreaSize[]", &cleanup_sizes());
+    ts_const(
+        &mut out,
+        "driveOptimization",
+        "DriveOptimization",
+        &DriveOptimization {
+            drive: "C:".into(),
+            unix_ms: 1_791_331_800_000,
+            seconds: 41,
+            report: vec![
+                "Invoking retrim on (C:)...".into(),
+                "Retrim:  100% complete.".into(),
+                "The operation completed successfully.".into(),
+            ],
+        },
+    );
     ts_const(&mut out, "cleanupReport", "CleanupReport", &cleanup_report());
     ts_const(
         &mut out,

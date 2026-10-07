@@ -40,7 +40,8 @@
             "allow-proof-runs",
             "allow-purge-standby-memory",
             "allow-cleanup-measure",
-            "allow-cleanup-run"
+            "allow-cleanup-run",
+            "allow-optimize-drive"
           ]
         }
       ]

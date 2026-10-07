@@ -7,6 +7,7 @@
 pub mod background;
 pub mod cleanup;
 pub mod context;
+pub mod drive_optimize;
 pub mod engine;
 pub mod env;
 pub mod error;
@@ -32,6 +33,7 @@ pub mod scanner;
 pub mod secure_dir;
 pub mod security;
 pub mod settings;
+pub mod sysdirs;
 pub mod sysprobe;
 pub mod system;
 pub mod timeutil;

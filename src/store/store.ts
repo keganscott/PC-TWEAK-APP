@@ -17,6 +17,7 @@ import type { CleanupArea } from "../generated/CleanupArea";
 import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
+import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalView } from "../generated/JournalView";
@@ -97,6 +98,8 @@ export interface State {
   cleanupSizesOp: Op<AreaSize[]>;
   /** The last cleanup, for its card. */
   cleanupOp: Op<CleanupReport>;
+  /** "Optimize the Windows drive" (catalogue H29); keeps the last run for its card. */
+  driveOp: Op<DriveOptimization>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   bus: BusEntry[];
@@ -127,6 +130,7 @@ export function initialState(sample: boolean): State {
     standbyOp: IDLE,
     cleanupSizesOp: IDLE,
     cleanupOp: IDLE,
+    driveOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     bus: [],
@@ -149,6 +153,18 @@ export function recommendedIds(tweaks: readonly TweakView[]): string[] {
 /** Look-and-feel changes: one click each in Tools, never part of a one-click
  * set, so the safe set never changes how someone's desktop looks. */
 export const APPEARANCE = "appearance";
+
+/** Long work the engine runs one at a time (`Activity` in commands.rs). */
+export type LongWork = "proof" | "cleanup" | "drive";
+
+/** The long work running now other than `own`, which would make the engine
+ * refuse `own`. */
+export function otherLongWork(s: State, own: LongWork): LongWork | null {
+  if (own !== "proof" && s.proof.capturingSession !== null) return "proof";
+  if (own !== "cleanup" && s.cleanupOp.status === "running") return "cleanup";
+  if (own !== "drive" && s.driveOp.status === "running") return "drive";
+  return null;
+}
 
 export type AppStore = ReturnType<typeof createAppStore>;
 
@@ -367,6 +383,18 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
         set((s) => ({ ...s, standbyOp: { status: "done", value: result } }));
       } catch (e) {
         set((s) => ({ ...s, standbyOp: failed(e) }));
+      }
+    },
+
+    /** Run Windows' own drive optimisation. Changes no setting, so nothing to refresh or undo. */
+    async optimizeDrive() {
+      if (state.driveOp.status === "running") return;
+      set((s) => ({ ...s, driveOp: RUNNING }));
+      try {
+        const result = await backend.optimizeDrive();
+        set((s) => ({ ...s, driveOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, driveOp: failed(e) }));
       }
     },
 

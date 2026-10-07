@@ -11,6 +11,7 @@ import type { CleanupArea } from "../generated/CleanupArea";
 import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
+import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
@@ -45,6 +46,7 @@ export interface Backend {
   purgeStandbyMemory(): Promise<StandbyPurge>;
   cleanupMeasure(): Promise<AreaSize[]>;
   cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;
+  optimizeDrive(): Promise<DriveOptimization>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

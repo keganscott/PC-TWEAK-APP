@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
-import { BUS_LIMIT, createAppStore, recommendedIds, type State } from "./store";
+import { BUS_LIMIT, createAppStore, otherLongWork, recommendedIds, type State } from "./store";
 
 async function booted(options: MockOptions = {}) {
   const backend = createMockBackend(options);
@@ -315,5 +315,36 @@ describe("one-time actions", () => {
     expect(store.getState().cleanupOp.status).toBe("idle");
     await store.actions.runCleanup(["user_temp"]);
     expect(store.getState().cleanupOp).toMatchObject({ status: "failed", error: { detail: "a Proof recording is running" } });
+  });
+
+  it("optimizes the drive and keeps Windows' report for the card", async () => {
+    const { store } = await booted();
+    await store.actions.optimizeDrive();
+    const op = store.getState().driveOp;
+    if (op.status !== "done") throw new Error(`drive ${op.status}`);
+    expect(op.value.drive).toBe("C:");
+    expect(op.value.report.at(-1)).toBe("The operation completed successfully.");
+  });
+
+  it("a failed drive optimization keeps Windows' reason", async () => {
+    const error = {
+      kind: "command",
+      what: "Drive optimization",
+      exitCode: -1_996_488_662,
+      detail: "defrag C: /O: The operation requested is not supported by the hardware backing the volume. (0x8900002A)",
+    } as const;
+    const { store } = await booted({ failures: { optimizeDrive: error } });
+    await store.actions.optimizeDrive();
+    expect(store.getState().driveOp).toEqual({ status: "failed", error });
+  });
+
+  it("long work waits for other long work, as the engine runs one at a time", async () => {
+    const { store } = await booted({ latencyFor: (command) => (command === "optimizeDrive" ? 20 : undefined) });
+    const running = store.actions.optimizeDrive();
+    expect(otherLongWork(store.getState(), "cleanup")).toBe("drive");
+    expect(otherLongWork(store.getState(), "proof")).toBe("drive");
+    expect(otherLongWork(store.getState(), "drive")).toBeNull();
+    await running;
+    expect(otherLongWork(store.getState(), "cleanup")).toBeNull();
   });
 });

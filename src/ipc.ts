@@ -14,6 +14,7 @@ import type { CleanupArea } from "./generated/CleanupArea";
 import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
+import type { DriveOptimization } from "./generated/DriveOptimization";
 import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
 import type { JournalEntry } from "./generated/JournalEntry";
@@ -102,6 +103,8 @@ export const engine = {
   cleanupMeasure: () => call<AreaSize[]>("cleanup_measure"),
   /** Delete the junk files in these areas. Cannot be undone: ask the user first. */
   cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
+  /** Run Windows' own drive optimisation on the Windows drive (catalogue H29). Can take an hour or more on a hard drive. */
+  optimizeDrive: () => call<DriveOptimization>("optimize_drive"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

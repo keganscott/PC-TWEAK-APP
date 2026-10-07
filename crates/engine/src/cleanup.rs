@@ -143,7 +143,7 @@ pub struct Places {
 #[cfg(windows)]
 pub fn places(user_sid: &str) -> Places {
     Places {
-        windows: imp::windows_dir().ok(),
+        windows: crate::sysdirs::windows_dir().ok(),
         program_data: imp::program_data().ok(),
         profile: crate::identity::profile_dir_for_sid(user_sid).ok().flatten(),
     }
@@ -651,32 +651,9 @@ mod imp {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED};
     use windows::Win32::System::Com::CoTaskMemFree;
-    use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
     use windows::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
-    /// Calls `fill` with a growing buffer until the text fits. `fill` returns
-    /// the length written, or the size needed when the buffer is too small,
-    /// or 0 on failure (`GetLastError`).
-    fn wide_text(mut fill: impl FnMut(&mut [u16]) -> u32) -> std::io::Result<PathBuf> {
-        let mut buf = vec![0u16; 300];
-        loop {
-            let n = fill(&mut buf) as usize;
-            if n == 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if n < buf.len() {
-                buf.truncate(n);
-                return Ok(PathBuf::from(OsString::from_wide(&buf)));
-            }
-            buf.resize(n + 1, 0);
-        }
-    }
-
-    /// The shared Windows folder, as the kernel has it.
-    pub fn windows_dir() -> std::io::Result<PathBuf> {
-        // SAFETY: a buffer of the length passed.
-        wide_text(|buf| unsafe { GetSystemWindowsDirectoryW(Some(buf)) })
-    }
+    use crate::sysdirs::wide_path;
 
     pub fn program_data() -> windows::core::Result<PathBuf> {
         // SAFETY: the returned string is copied, then freed once.
@@ -693,7 +670,7 @@ mod imp {
         let handle = HANDLE(f.as_raw_handle());
         // SAFETY: a handle this process holds open, and a buffer of the
         // length passed.
-        wide_text(|buf| unsafe { GetFinalPathNameByHandleW(handle, buf, FILE_NAME_NORMALIZED) })
+        wide_path(|buf| unsafe { GetFinalPathNameByHandleW(handle, buf, FILE_NAME_NORMALIZED) })
     }
 }
 

@@ -285,6 +285,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         }
         return report;
       }),
+    optimizeDrive: () =>
+      reply("optimizeDrive", [], () => {
+        emit("drive", "Optimizing the Windows drive");
+        return { ...clone(fx.driveOptimization), unixMs: Date.now() };
+      }),
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {
         const now = Date.now();

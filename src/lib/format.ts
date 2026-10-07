@@ -25,3 +25,13 @@ export function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
   return `${Math.ceil(bytes / 1024)} KB`;
 }
+
+/** "41 seconds", "12 minutes", "1 hour 5 minutes". */
+export function formatDuration(seconds: number): string {
+  const count = (n: number, unit: string) => `${n.toLocaleString()} ${unit}${n === 1 ? "" : "s"}`;
+  if (seconds < 60) return count(Math.max(0, Math.round(seconds)), "second");
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return count(minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? count(hours, "hour") : `${count(hours, "hour")} ${count(minutes % 60, "minute")}`;
+}

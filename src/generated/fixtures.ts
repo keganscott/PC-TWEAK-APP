@@ -4,6 +4,7 @@ import type { AreaSize } from "./AreaSize";
 import type { CleanupReport } from "./CleanupReport";
 import type { Comparison } from "./Comparison";
 import type { ContextInfo } from "./ContextInfo";
+import type { DriveOptimization } from "./DriveOptimization";
 import type { EngineError } from "./EngineError";
 import type { JournalView } from "./JournalView";
 import type { Progress } from "./Progress";
@@ -840,6 +841,17 @@ export const cleanupSizes = [
     ]
   }
 ] satisfies AreaSize[];
+
+export const driveOptimization = {
+  "drive": "C:",
+  "unixMs": 1791331800000,
+  "seconds": 41,
+  "report": [
+    "Invoking retrim on (C:)...",
+    "Retrim:  100% complete.",
+    "The operation completed successfully."
+  ]
+} satisfies DriveOptimization;
 
 export const cleanupReport = {
   "areas": [

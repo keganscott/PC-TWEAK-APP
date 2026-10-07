@@ -131,6 +131,30 @@ describe("App", () => {
     expect(run).toHaveBeenCalledWith(["user_temp", "windows_temp", "thumbnails", "crash_dumps"]);
   });
 
+  it("Tools optimizes the Windows drive, holds the junk cleanup meanwhile, then says how long Windows took", async () => {
+    const base = createMockBackend();
+    let finish = () => {};
+    const held = new Promise<void>((resolve) => (finish = resolve));
+    renderApp({ ...base, optimizeDrive: async () => held.then(() => base.optimizeDrive()) });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = await screen.findByRole("region", { name: "Optimize the Windows drive" });
+    expect(within(card).getByText("SAMPLE")).toBeTruthy();
+    // The sample PC's Windows drive is an SSD.
+    expect(await within(card).findByText(/is an SSD, so Windows tells it which space is no longer in use/)).toBeTruthy();
+
+    await userEvent.click(within(card).getByRole("button", { name: "Optimize now" }));
+    expect(await within(card).findByText(/Windows is working on it/)).toBeTruthy();
+    // The engine runs long work one at a time.
+    const junk = screen.getByRole("region", { name: "Clear out junk files" });
+    expect(within(junk).getByText("Available again when the drive optimization finishes.")).toBeTruthy();
+    expect(within(junk).getByRole("button", { name: "Delete selected files" }).hasAttribute("disabled")).toBe(true);
+
+    await act(async () => finish());
+    expect(await within(card).findByText(/\(drive C:\)\. Windows took 41 seconds\./)).toBeTruthy();
+    expect(within(junk).queryByText("Available again when the drive optimization finishes.")).toBeNull();
+  });
+
   it("a safe change with a cost shows one line and needs no confirmation", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({

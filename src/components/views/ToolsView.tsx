@@ -1,12 +1,13 @@
 import { useEffect, useId, useMemo, useState } from "react";
 
 import type { CleanupArea } from "../../generated/CleanupArea";
+import type { DiskMedia } from "../../generated/DiskMedia";
 import type { TweakView } from "../../generated/TweakView";
 import { blockedHint } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
-import { formatBytes, formatDateTime, formatNumber } from "../../lib/format";
+import { formatBytes, formatDateTime, formatDuration, formatNumber, probeValue } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { recommendedIds } from "../../store/store";
+import { otherLongWork, recommendedIds, type LongWork } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
@@ -119,10 +120,20 @@ function OneTimeActions() {
         <li>
           <CleanupCard />
         </li>
+        <li>
+          <DriveCard />
+        </li>
       </ul>
     </section>
   );
 }
+
+/** Why a long one-time action waits: the engine runs these one at a time. */
+const WAIT_FOR: Record<LongWork, string> = {
+  proof: "Available again when the Proof recording finishes.",
+  cleanup: "Available again when the junk cleanup finishes.",
+  drive: "Available again when the drive optimization finishes.",
+};
 
 const gb = (bytes: number) => `${formatNumber(bytes / 1024 ** 3)} GB`;
 
@@ -150,7 +161,7 @@ function StandbyCard() {
             Windows keeps files it read recently in memory that nothing else is using, and gives that memory to a
             program as soon as it asks. This empties that list now; Windows fills it again as files are read.
           </p>
-          {capturing && <p className="mt-2 text-sm text-ink-muted">Available again when the Proof recording finishes.</p>}
+          {capturing && <p className="mt-2 text-sm text-ink-muted">{WAIT_FOR.proof}</p>}
           {result && (
             <p className="mt-2 text-sm" role="status">
               Emptied {formatDateTime(result.unixMs)}. Files kept in memory: {gb(result.before.cachedBytes)} before,{" "}
@@ -201,6 +212,7 @@ function CleanupCard() {
   const sizesOp = useStore((s) => s.cleanupSizesOp);
   const op = useStore((s) => s.cleanupOp);
   const capturing = useStore((s) => s.proof.capturingSession !== null);
+  const waiting = useStore((s) => otherLongWork(s, "cleanup"));
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
   const { measureCleanup, runCleanup } = useActions();
@@ -244,7 +256,7 @@ function CleanupCard() {
         Temporary files, caches and crash reports that Windows and programs leave behind. Deleting them cannot be undone.
         Files a program has open are left where they are.
       </p>
-      {capturing && <p className="mt-2 text-sm text-ink-muted">Available again when the Proof recording finishes.</p>}
+      {waiting && <p className="mt-2 text-sm text-ink-muted">{WAIT_FOR[waiting]}</p>}
 
       <fieldset className="mt-3" disabled={running}>
         <legend className="sr-only">What to clear</legend>
@@ -312,7 +324,7 @@ function CleanupCard() {
           <Button
             variant="danger"
             busy={running}
-            disabled={capturing || checking || !sizes || total === 0}
+            disabled={waiting !== null || checking || !sizes || total === 0}
             onClick={() => setConfirming(true)}
           >
             Delete selected files
@@ -362,6 +374,72 @@ function CleanupCard() {
           they are.
         </p>
       </Dialog>
+    </Card>
+  );
+}
+
+/** What Windows' optimization does on the Windows drive (VERIFY, NOTES N71). */
+function driveJob(media: DiskMedia | null): string {
+  switch (media) {
+    case "ssd":
+      return "The Windows drive is an SSD, so Windows tells it which space is no longer in use (TRIM). This is usually quick.";
+    case "hdd":
+      return "The Windows drive is a hard drive, so Windows puts the pieces of each file back together (defragmenting). This can take an hour or more, and the PC can be used meanwhile.";
+    default:
+      return "On an SSD, Windows tells the drive which space is no longer in use (TRIM). On a hard drive it puts the pieces of each file back together (defragmenting), which can take an hour or more.";
+  }
+}
+
+/** Catalogue H29: Windows' own drive optimization, now. The engine runs it
+ * one long action at a time, never during a Proof recording. */
+function DriveCard() {
+  const op = useStore((s) => s.driveOp);
+  const media = useStore((s) => probeValue(s.audit?.env.hardware?.bootDisk)?.media ?? null);
+  const waiting = useStore((s) => otherLongWork(s, "drive"));
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { optimizeDrive } = useActions();
+  const headingId = useId();
+  const running = op.status === "running";
+  const result = op.status === "done" ? op.value : null;
+
+  return (
+    <Card className="p-4" aria-labelledby={headingId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 id={headingId} className="font-bold">
+              Optimize the Windows drive
+            </h3>
+            {sample && <SampleBadge />}
+          </div>
+          <p className="mt-1 text-sm text-ink-muted">
+            Windows normally does this on a schedule; this runs it now. {driveJob(media)}
+          </p>
+          {waiting && <p className="mt-2 text-sm text-ink-muted">{WAIT_FOR[waiting]}</p>}
+          {running && (
+            <p className="mt-2 text-sm text-ink-muted">Windows is working on it. The result shows here when it finishes.</p>
+          )}
+          {result && (
+            <p className="mt-2 text-sm" role="status">
+              Optimized {formatDateTime(result.unixMs)} (drive {result.drive}). Windows took {formatDuration(result.seconds)}.
+            </p>
+          )}
+        </div>
+        <Button busy={running} disabled={waiting !== null} onClick={() => void optimizeDrive()}>
+          Optimize now
+        </Button>
+      </div>
+      {technical && result && result.report.length > 0 && (
+        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-ink-faint">
+          {result.report.join("\n")}
+        </pre>
+      )}
+      {op.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
     </Card>
   );
 }

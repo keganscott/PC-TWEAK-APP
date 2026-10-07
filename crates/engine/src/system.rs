@@ -1,4 +1,4 @@
-﻿//! Changes that are not registry values: power plans, services, scheduled
+//! Changes that are not registry values: power plans, services, scheduled
 //! tasks, DNS servers, `netsh` TCP settings, NVIDIA profile settings and whole
 //! files (a game's settings file).
 //!

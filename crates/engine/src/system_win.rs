@@ -1,4 +1,4 @@
-﻿//! The real `SystemBackend` on Windows.
+//! The real `SystemBackend` on Windows.
 //!
 //! Nothing here goes through a shell command line. Windows' own tools
 //! (`powercfg.exe`, `gpupdate.exe`) are started by absolute path under

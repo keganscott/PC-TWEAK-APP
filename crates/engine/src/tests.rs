@@ -822,6 +822,7 @@ fn tweak_sources_do_not_bypass_the_transaction() {
         "winreg",
         "RegistryBackend",
         ".backend(",
+        ".system(",
         "registry::",
         "std::process",
         "std::fs",
@@ -861,7 +862,11 @@ fn the_shipped_catalogue_is_consistent() {
     assert_eq!(ids.len(), n, "duplicate tweak ids");
     for t in &cat {
         assert_eq!(t.metadata().id, t.id(), "metadata id must match id()");
-        assert!(!t.touches().is_empty(), "{} declares no registry targets", t.id());
+        assert!(
+            !t.touches().is_empty() || !t.system_targets().is_empty(),
+            "{} declares no targets",
+            t.id()
+        );
         for target in t.touches() {
             assert_eq!(
                 target.root.required_context(),
@@ -1873,5 +1878,81 @@ mod nagle {
         let before = h.fake.snapshot();
         assert!(h.engine.apply(ID).is_err());
         assert_eq!(h.fake.snapshot(), before);
+    }
+}
+
+mod dns {
+    use super::*;
+    use crate::system::{NetAdapter, SysItem, SysState};
+    use crate::tweaks::dns::{CloudflareDns, ID};
+
+    fn adapter(g: &str, up: bool) -> NetAdapter {
+        NetAdapter {
+            guid: g.into(),
+            name: g.into(),
+            up,
+            wireless: false,
+        }
+    }
+
+    fn dns(g: &str) -> SysItem {
+        SysItem::DnsServers { interface: g.into() }
+    }
+
+    fn list(items: &[&str]) -> SysState {
+        SysState::List {
+            items: items.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    fn state(h: &Harness) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == ID)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn sets_cloudflare_on_connected_adapters_and_undo_restores_each_ones_own_servers() {
+        let mut h = Harness::new(vec![Box::new(CloudflareDns)]);
+        h.sys
+            .set_adapters(vec![adapter("aa", true), adapter("bb", true), adapter("cc", false)]);
+        h.sys.set(&dns("aa"), list(&["156.154.70.5", "156.154.71.5"]));
+        h.sys.set(&dns("bb"), list(&[]));
+        assert_eq!(state(&h), TweakState::Default);
+
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&dns("aa")), list(&["1.1.1.1", "1.0.0.1"]));
+        assert_eq!(h.sys.get(&dns("bb")), list(&["1.1.1.1", "1.0.0.1"]));
+        assert_eq!(
+            h.sys.get(&dns("cc")),
+            SysState::Absent,
+            "a disconnected adapter is left alone"
+        );
+        assert_eq!(state(&h), TweakState::Applied);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&dns("aa")), list(&["156.154.70.5", "156.154.71.5"]));
+        assert_eq!(h.sys.get(&dns("bb")), list(&[]), "automatic stays automatic");
+    }
+
+    #[test]
+    fn cloudflare_already_set_reads_as_already_optimized() {
+        let h = Harness::new(vec![Box::new(CloudflareDns)]);
+        h.sys.set_adapters(vec![adapter("aa", true)]);
+        h.sys.set(&dns("aa"), list(&["1.1.1.1", "1.0.0.1"]));
+        assert_eq!(state(&h), TweakState::Foreign);
+    }
+
+    #[test]
+    fn with_no_connected_adapter_it_is_blocked() {
+        let mut h = Harness::new(vec![Box::new(CloudflareDns)]);
+        h.sys.set_adapters(vec![adapter("aa", false)]);
+        assert!(matches!(state(&h), TweakState::Blocked { .. }));
+        assert!(h.engine.apply(ID).is_err());
+        assert!(h.engine.applied_tweak_ids().is_empty());
     }
 }

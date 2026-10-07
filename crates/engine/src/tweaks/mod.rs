@@ -1,7 +1,8 @@
-﻿//! The tweak catalogue.
+//! The tweak catalogue.
 
 use crate::types::Tweak;
 
+pub mod dns;
 pub mod ifeo_priority;
 pub mod mouse_accel;
 pub mod nagle;
@@ -13,6 +14,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     let mut all: Vec<Box<dyn Tweak>> = vec![Box::new(mouse_accel::MouseAcceleration)];
     all.extend(registry_values::all());
     all.push(Box::new(nagle::Nagle));
+    all.push(Box::new(dns::CloudflareDns));
     all.push(Box::new(ifeo_priority::IfeoPriority::fortnite()));
     all
 }

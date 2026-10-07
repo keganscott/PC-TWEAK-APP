@@ -1,4 +1,4 @@
-﻿//! PeakTweaks engine: journalled, reversible system changes.
+//! PeakTweaks engine: journalled, reversible system changes.
 //!
 //! Deliberately free of Tauri types so the logic runs and is tested on any OS.
 //! The Windows-only pieces (`identity`, `registry::windows`, the ProgramData

@@ -1,4 +1,4 @@
-﻿//! Interactive-user context and registry root routing.
+//! Interactive-user context and registry root routing.
 //!
 //! `ContextResolver` is pure routing: it knows which user we are acting for and
 //! maps a `RegRoot` plus a path to a concrete hive and path. Reads and writes

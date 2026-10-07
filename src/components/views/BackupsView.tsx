@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Undo2 } from "lucide-react";
 
 import type { AppliedChange } from "../../generated/AppliedChange";

@@ -1,4 +1,4 @@
-﻿//! Shared test scaffolding: a configurable tweak and a harness that wires an
+//! Shared test scaffolding: a configurable tweak and a harness that wires an
 //! engine to the in-memory registry and a temp journal directory.
 
 use std::sync::Arc;

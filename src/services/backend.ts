@@ -6,8 +6,12 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import { engine, onProgress, proof } from "../ipc";
 
+import type { AreaSize } from "../generated/AreaSize";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
+import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
@@ -19,6 +23,7 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { StandbyPurge } from "../generated/StandbyPurge";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 
@@ -38,6 +43,10 @@ export interface Backend {
   revertTweak(id: string): Promise<JournalEntry[]>;
   revertAll(): Promise<RevertResult[]>;
   listJournal(): Promise<JournalView>;
+  purgeStandbyMemory(): Promise<StandbyPurge>;
+  cleanupMeasure(): Promise<AreaSize[]>;
+  cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;
+  optimizeDrive(): Promise<DriveOptimization>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

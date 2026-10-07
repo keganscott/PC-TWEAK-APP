@@ -9,8 +9,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { AreaSize } from "./generated/AreaSize";
+import type { CleanupArea } from "./generated/CleanupArea";
+import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
+import type { DriveOptimization } from "./generated/DriveOptimization";
 import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
 import type { JournalEntry } from "./generated/JournalEntry";
@@ -23,6 +27,7 @@ import type { RestoreOutcome } from "./generated/RestoreOutcome";
 import type { RevertResult } from "./generated/RevertResult";
 import type { Settings } from "./generated/Settings";
 import type { Side } from "./generated/Side";
+import type { StandbyPurge } from "./generated/StandbyPurge";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
 
@@ -92,6 +97,14 @@ export const engine = {
   revertTweak: (id: string) => call<JournalEntry[]>("revert_tweak", { id }),
   revertAll: () => call<RevertResult[]>("revert_all"),
   listJournal: () => call<JournalView>("list_journal"),
+  /** Empty Windows' standby list (catalogue E6). Changes no setting; nothing to undo. */
+  purgeStandbyMemory: () => call<StandbyPurge>("purge_standby_memory"),
+  /** What each junk-file area holds that a cleanup would delete now (catalogue H28). Reads only. */
+  cleanupMeasure: () => call<AreaSize[]>("cleanup_measure"),
+  /** Delete the junk files in these areas. Cannot be undone: ask the user first. */
+  cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
+  /** Run Windows' own drive optimisation on the Windows drive (catalogue H29). Can take an hour or more on a hard drive. */
+  optimizeDrive: () => call<DriveOptimization>("optimize_drive"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

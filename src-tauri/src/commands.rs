@@ -8,13 +8,17 @@
 //! No command accepts environment, license, tier or gate state: the engine
 //! builds those itself. `tests::no_command_takes_system_env` enforces that.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::SystemTime;
 
 use tauri::{AppHandle, Emitter, State};
 
+use peaktweaks_engine::cleanup::{self, AreaSize, CleanupArea, CleanupReport};
+use peaktweaks_engine::drive_optimize::{self, DriveOptimization};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
-use peaktweaks_engine::journal::JournalEntry;
+use peaktweaks_engine::journal::{now_ms, ActionDone, JournalEntry, OneTimeAction};
+use peaktweaks_engine::memory::{self, StandbyPurge};
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use peaktweaks_engine::proof::verdict::Comparison;
@@ -267,7 +271,9 @@ pub async fn proof_capture(
     delay_seconds: u32,
 ) -> Result<ProofRun> {
     let shared = engine.get()?;
+    let activity = Activity::start("a Proof recording")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _activity = activity;
         let (svc, applied) = {
             let guard = shared.lock().map_err(|_| EngineError::Internal {
                 detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
@@ -366,4 +372,184 @@ pub async fn revert_all(app: AppHandle, engine: State<'_, EngineHandle>) -> Resu
 #[tauri::command]
 pub async fn list_journal(engine: State<'_, EngineHandle>) -> Result<JournalView> {
     blocking_recovering(&engine, |e| Ok(e.journal_view())).await
+}
+
+/// Short one-time actions (emptying the standby list, looking for junk files)
+/// would still disturb a Proof recording, so they wait for it. Long ones take
+/// the activity slot instead.
+fn refuse_while_recording(shared: &SharedEngine, what: &str) -> Result<()> {
+    if proof_service(shared).is_ok_and(|svc| svc.is_capturing()) {
+        return Err(EngineError::Internal {
+            detail: format!("a Proof recording is running; {what} after it finishes"),
+        });
+    }
+    Ok(())
+}
+
+/// The long-running work that keeps the disk busy (a Proof recording, a junk
+/// cleanup, a drive optimisation) runs one at a time: a recording made while
+/// the disk is busy would measure that too.
+static ACTIVITY: Mutex<Option<&'static str>> = Mutex::new(None);
+
+/// Holds the activity slot until dropped; moved into the worker, so the slot
+/// stays taken as long as the work runs.
+#[must_use]
+struct Activity;
+
+impl Activity {
+    /// `name` says what runs, for the refusal another start gets.
+    fn start(name: &'static str) -> Result<Self> {
+        let mut slot = ACTIVITY.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(running) = *slot {
+            return Err(EngineError::Internal {
+                detail: format!("{running} is running; try again when it finishes"),
+            });
+        }
+        *slot = Some(name);
+        Ok(Self)
+    }
+}
+
+impl Drop for Activity {
+    fn drop(&mut self) {
+        *ACTIVITY.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+}
+
+/// The interactive user's SID, as the engine resolved it at start: whose
+/// folders the junk cleaner looks in.
+fn user_sid(shared: &SharedEngine) -> Result<String> {
+    Ok(shared
+        .lock()
+        .map_err(|_| EngineError::Internal {
+            detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+        })?
+        .context_info()
+        .sid)
+}
+
+/// Keep a line in the journal for a one-time action that ran, for the history
+/// in Backups. The action has already happened, so neither a poisoned engine
+/// nor a failed append makes it a reported failure, which would invite running
+/// it again (as with a change's side effects).
+fn record_action(shared: &SharedEngine, action: OneTimeAction, outcome: std::result::Result<ActionDone, String>) {
+    if let Ok(mut engine) = shared.lock() {
+        let _ = engine.record_action(action, outcome);
+    }
+}
+
+/// Empty Windows' standby list (catalogue E6). It changes no setting, so it
+/// needs no restore point and leaves nothing to undo. Refused while a Proof
+/// capture records, because it would disturb the measurement.
+#[tauri::command]
+pub async fn purge_standby_memory(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<StandbyPurge> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "empty the standby list")?;
+    progress(&app, "standby", None, "Emptying the standby list");
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let out = memory::purge_standby(memory::system().as_ref(), now_ms());
+        let outcome = out.as_ref().map(StandbyPurge::done).map_err(ToString::to_string);
+        record_action(&shared, OneTimeAction::PurgeStandby, outcome);
+        out
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("memory worker failed: {e}"),
+    })?;
+    progress(
+        &app,
+        if out.is_ok() { "standby_done" } else { "standby_failed" },
+        None,
+        "",
+    );
+    out
+}
+
+/// What each junk-file area holds that a cleanup would delete now (catalogue
+/// H28). Reads only.
+#[tauri::command]
+pub async fn cleanup_measure(engine: State<'_, EngineHandle>) -> Result<Vec<AreaSize>> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "look for junk files")?;
+    let sid = user_sid(&shared)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        cleanup::measure(&cleanup::places(&sid), &CleanupArea::ALL, SystemTime::now())
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("cleanup worker failed: {e}"),
+    })
+}
+
+/// Delete the junk files in the chosen areas. Cannot be undone; the screen
+/// shows the sizes and asks first. Changes no setting, so no restore point.
+#[tauri::command]
+pub async fn cleanup_run(
+    app: AppHandle,
+    engine: State<'_, EngineHandle>,
+    areas: Vec<CleanupArea>,
+) -> Result<CleanupReport> {
+    let shared = engine.get()?;
+    let sid = user_sid(&shared)?;
+    let activity = Activity::start("a junk cleanup")?;
+    let worker_app = app.clone();
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let _activity = activity;
+        let report = cleanup::clean(&cleanup::places(&sid), &areas, SystemTime::now(), now_ms(), &|area| {
+            progress(&worker_app, "cleanup", None, format!("Clearing {}", area.label()))
+        });
+        record_action(&shared, OneTimeAction::Cleanup, Ok(report.done()));
+        report
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("cleanup worker failed: {e}"),
+    });
+    progress(
+        &app,
+        if out.is_ok() { "cleanup_done" } else { "cleanup_failed" },
+        None,
+        "",
+    );
+    out
+}
+
+/// Run Windows' own drive optimisation on the Windows drive now (catalogue
+/// H29). Changes no setting, so no restore point and nothing to undo. Takes an
+/// hour or more on a hard drive; the engine lock is not held meanwhile.
+#[tauri::command]
+pub async fn optimize_drive(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<DriveOptimization> {
+    let shared = engine.get()?;
+    let activity = Activity::start("a drive optimization")?;
+    progress(&app, "drive", None, "Optimizing the Windows drive");
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let _activity = activity;
+        let out = drive_optimize::windows_drive()
+            .and_then(|drive| drive_optimize::optimize(drive_optimize::system().as_ref(), &drive, now_ms()));
+        let outcome = out.as_ref().map(DriveOptimization::done).map_err(ToString::to_string);
+        record_action(&shared, OneTimeAction::OptimizeDrive, outcome);
+        out
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("drive worker failed: {e}"),
+    })?;
+    progress(&app, if out.is_ok() { "drive_done" } else { "drive_failed" }, None, "");
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_work_runs_one_at_a_time() {
+        let first = Activity::start("a drive optimization").unwrap();
+        let Err(EngineError::Internal { detail }) = Activity::start("a Proof recording") else {
+            panic!("a second start was allowed");
+        };
+        assert_eq!(detail, "a drive optimization is running; try again when it finishes");
+        drop(first);
+        drop(Activity::start("a Proof recording").expect("free again once the first ends"));
+    }
 }

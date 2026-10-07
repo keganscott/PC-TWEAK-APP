@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::env::{License, StubProbe};
 use crate::error::EngineError;
-use crate::journal::{CommitAction, Journal, JournalAction, JournalEntry, Record};
+use crate::journal::{ActionDone, CommitAction, Journal, JournalAction, JournalEntry, OneTimeAction, Record};
 use crate::registry::fake::FakeRegistry;
 use crate::registry::Hive;
 use crate::secure_dir::TrustedDir;
@@ -354,6 +354,53 @@ fn a_failed_apply_rolls_back_its_own_writes_and_returns_the_original_error() {
     // And the tweak still applies cleanly afterwards.
     h.engine.apply("t").unwrap();
     assert_eq!(dw(&h, "C"), Some(3));
+}
+
+#[test]
+fn a_one_time_action_is_kept_in_the_history_and_undo_all_leaves_it_there() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    h.engine.apply("t").unwrap();
+    let drive = ActionDone::OptimizeDrive {
+        drive: "C:".into(),
+        seconds: 41,
+    };
+    h.engine
+        .record_action(OneTimeAction::OptimizeDrive, Ok(drive.clone()))
+        .unwrap();
+    h.engine
+        .record_action(OneTimeAction::PurgeStandby, Err("no privilege".into()))
+        .unwrap();
+
+    let view = h.engine.journal_view();
+    let actions: Vec<_> = view
+        .records
+        .iter()
+        .filter_map(|r| match r {
+            Record::Action(a) => Some(a),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(
+        (actions[0].done.as_ref(), actions[0].error.as_deref()),
+        (Some(&drive), None)
+    );
+    assert_eq!(
+        (actions[1].done.as_ref(), actions[1].error.as_deref()),
+        (None, Some("no privilege"))
+    );
+    // Nothing to undo: only the change is listed.
+    let applied: Vec<_> = view.applied.iter().map(|c| c.tweak_id.as_str()).collect();
+    assert_eq!(applied, ["t"]);
+
+    assert!(h.engine.revert_all().iter().all(|r| r.ok));
+    let view = h.engine.journal_view();
+    assert!(view.applied.is_empty());
+    assert_eq!(
+        view.records.iter().filter(|r| matches!(r, Record::Action(_))).count(),
+        2
+    );
+    assert_eq!(dw(&h, "A"), None);
 }
 
 #[test]
@@ -1051,6 +1098,35 @@ fn proof_verdict_text_is_the_only_place_a_result_is_worded() {
         hits.iter().all(|h| h.contains("verdict.rs")),
         "verdict wording outside proof/verdict.rs: {hits:?}"
     );
+}
+
+#[test]
+fn windows_folders_come_from_windows_not_the_environment() {
+    // Whoever starts PeakTweaks sets its environment, so a planted SystemRoot
+    // or windir must never pick which powershell.exe or System32 tool runs
+    // elevated (NOTES N72). Paths come from sysdirs (GetSystemDirectoryW).
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut hits = Vec::new();
+    fn walk(dir: &std::path::Path, hits: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                if p.file_name().is_some_and(|n| n != "target") {
+                    walk(&p, hits);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let src = std::fs::read_to_string(&p).unwrap();
+                for (n, line) in src.lines().enumerate() {
+                    let l = line.to_ascii_lowercase();
+                    if l.contains("var") && (l.contains("(\"systemroot\")") || l.contains("(\"windir\")")) {
+                        hits.push(format!("{}:{}", p.display(), n + 1));
+                    }
+                }
+            }
+        }
+    }
+    walk(&crates, &mut hits);
+    assert!(hits.is_empty(), "Windows folder read from the environment: {hits:?}");
 }
 
 #[test]

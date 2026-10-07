@@ -8,6 +8,7 @@ import type { Side } from "../../generated/Side";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatNumber } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { otherLongWork } from "../../store/store";
 import { useNavigate } from "../shell/nav";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, Spinner, cx } from "../ui/primitives";
 
@@ -210,6 +211,9 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   const runs = useStore((s) => s.proof.runs[session.sessionId]);
   const captureOp = useStore((s) => s.proof.captureOps[session.sessionId]);
   const capturingSession = useStore((s) => s.proof.capturingSession);
+  // A cleanup or drive optimization keeps the disk busy; the engine refuses a
+  // recording until it ends.
+  const toolsBusy = useStore((s) => otherLongWork(s, "proof"));
   const comparison = useStore((s) => s.proof.comparisons[session.sessionId]);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
@@ -316,13 +320,18 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
               type="submit"
               variant="primary"
               busy={capturing}
-              disabled={otherRecording}
+              disabled={otherRecording || toolsBusy !== null}
               icon={<Play aria-hidden className="size-4" />}
             >
               Record
             </Button>
             {capturing && <Spinner label={`Recording for ${delay + seconds} s. Keep the game in front.`} />}
             {otherRecording && <span className="text-sm text-ink-muted">Another comparison is recording.</span>}
+            {toolsBusy && (
+              <span className="text-sm text-ink-muted">
+                Available again when the {toolsBusy === "drive" ? "drive optimization" : "junk cleanup"} in Tools finishes.
+              </span>
+            )}
           </div>
         </form>
         <p className="mt-3 text-xs text-ink-faint">

@@ -1,11 +1,15 @@
 name: ci
 
+# A branch with a pull request is tested once, by the pull_request event; a
+# push trigger on the same branch ran every job twice per push (NOTES N74).
+# Other branches can be run by hand from the Actions tab.
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
     paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
     paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -202,6 +206,14 @@ jobs:
       # output is what tells which happened.
       - name: Storage ownership and WMI timeout on this runner
         run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
+
+      # The one-time actions in Tools (catalogue E6, H28, H29) against the real
+      # Windows: the standby list is emptied for real and its before and after
+      # printed; the junk areas are only measured, never cleared; defrag runs
+      # analysis only (/A), which changes nothing. A test that prints SKIPPED
+      # did not run its check.
+      - name: One-time actions on this runner
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 the_standby_list_empties_on_this_pc measures_the_real_areas_on_this_pc defrag_runs_from_system32_on_this_pc windows_and_system32_are_real_folders
 
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the

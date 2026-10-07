@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
-import { BUS_LIMIT, createAppStore, recommendedIds, type State } from "./store";
+import { BUS_LIMIT, createAppStore, otherLongWork, recommendedIds, type State } from "./store";
 
 async function booted(options: MockOptions = {}) {
   const backend = createMockBackend(options);
@@ -273,5 +273,88 @@ describe("recommended changes", () => {
     const { store } = await booted({ gateOpen: true });
     const tweaks = store.getState().tweaks.map((t) => (t.id === "fixture.default" ? { ...t, category: "appearance" } : t));
     expect(recommendedIds(tweaks)).toEqual([]);
+  });
+});
+
+describe("one-time actions", () => {
+  it("empties the standby list and keeps the before and after for the card", async () => {
+    const { store } = await booted();
+    await store.actions.purgeStandby();
+    const op = store.getState().standbyOp;
+    expect(op.status).toBe("done");
+    if (op.status !== "done") return;
+    expect(op.value.before.cachedBytes).toBeGreaterThan(op.value.after.cachedBytes);
+  });
+
+  it("a refused purge is reported with the engine's reason, not dropped", async () => {
+    const { store } = await booted({ failures: { purgeStandbyMemory: { kind: "internal", detail: "no privilege" } } });
+    await store.actions.purgeStandby();
+    expect(store.getState().standbyOp).toMatchObject({ status: "failed", error: { kind: "internal", detail: "no privilege" } });
+  });
+
+  it("clears only the chosen junk areas, then looks again", async () => {
+    const { store } = await booted();
+    await store.actions.measureCleanup();
+    const before = store.getState().cleanupSizesOp;
+    expect(before.status).toBe("done");
+    await store.actions.runCleanup(["windows_temp", "user_temp"]);
+    const op = store.getState().cleanupOp;
+    if (op.status !== "done") throw new Error(`cleanup ${op.status}`);
+    expect(op.value.areas.map((a) => a.area)).toEqual(["user_temp", "windows_temp"]);
+    const after = store.getState().cleanupSizesOp;
+    if (after.status !== "done" || before.status !== "done") throw new Error("sizes not read");
+    const files = (sizes: typeof after.value, area: string) => sizes.find((s) => s.area === area)?.files;
+    expect(files(after.value, "windows_temp")).toBe(0);
+    expect(files(after.value, "user_temp")).toBe(op.value.areas[0]!.leftFiles);
+    expect(files(after.value, "crash_dumps")).toBe(files(before.value, "crash_dumps"));
+  });
+
+  it("a refused cleanup is reported with the engine's reason, and nothing chosen does nothing", async () => {
+    const { store } = await booted({ failures: { cleanupRun: { kind: "internal", detail: "a Proof recording is running" } } });
+    await store.actions.runCleanup([]);
+    expect(store.getState().cleanupOp.status).toBe("idle");
+    await store.actions.runCleanup(["user_temp"]);
+    expect(store.getState().cleanupOp).toMatchObject({ status: "failed", error: { detail: "a Proof recording is running" } });
+  });
+
+  it("optimizes the drive and keeps Windows' report for the card", async () => {
+    const { store } = await booted();
+    await store.actions.optimizeDrive();
+    const op = store.getState().driveOp;
+    if (op.status !== "done") throw new Error(`drive ${op.status}`);
+    expect(op.value.drive).toBe("C:");
+    expect(op.value.report.at(-1)).toBe("The operation completed successfully.");
+  });
+
+  it("a failed drive optimization keeps Windows' reason", async () => {
+    const error = {
+      kind: "command",
+      what: "Drive optimization",
+      exitCode: -1_996_488_662,
+      detail: "defrag C: /O: The operation requested is not supported by the hardware backing the volume. (0x8900002A)",
+    } as const;
+    const { store } = await booted({ failures: { optimizeDrive: error } });
+    await store.actions.optimizeDrive();
+    expect(store.getState().driveOp).toEqual({ status: "failed", error });
+  });
+
+  it("each one-time action adds a line to the change record", async () => {
+    const { store } = await booted();
+    const actions = () => (store.getState().journal?.records ?? []).flatMap((r) => (r.record === "action" ? [r.action] : []));
+    const before = actions().length;
+    await store.actions.purgeStandby();
+    await store.actions.runCleanup(["user_temp"]);
+    await store.actions.optimizeDrive();
+    expect(actions().slice(before)).toEqual(["purge_standby", "cleanup", "optimize_drive"]);
+  });
+
+  it("long work waits for other long work, as the engine runs one at a time", async () => {
+    const { store } = await booted({ latencyFor: (command) => (command === "optimizeDrive" ? 20 : undefined) });
+    const running = store.actions.optimizeDrive();
+    expect(otherLongWork(store.getState(), "cleanup")).toBe("drive");
+    expect(otherLongWork(store.getState(), "proof")).toBe("drive");
+    expect(otherLongWork(store.getState(), "drive")).toBeNull();
+    await running;
+    expect(otherLongWork(store.getState(), "cleanup")).toBeNull();
   });
 });

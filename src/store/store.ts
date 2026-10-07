@@ -12,8 +12,12 @@
 // - Nothing here decides what the engine allows. The store asks; the engine
 //   answers, including "blocked".
 
+import type { AreaSize } from "../generated/AreaSize";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
+import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalView } from "../generated/JournalView";
@@ -25,6 +29,7 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { StandbyPurge } from "../generated/StandbyPurge";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 import { explain, toEngineError } from "../lib/errors";
@@ -87,6 +92,14 @@ export interface State {
   revertAllOp: Op<RevertResult[]>;
   /** "Apply the safe set", "Apply recommended" and the result card's Undo. */
   applyManyOp: Op<null>;
+  /** "Empty the standby list" (catalogue E6); keeps the last result for its card. */
+  standbyOp: Op<StandbyPurge>;
+  /** "Clear out junk files" (catalogue H28): what each area holds now. */
+  cleanupSizesOp: Op<AreaSize[]>;
+  /** The last cleanup, for its card. */
+  cleanupOp: Op<CleanupReport>;
+  /** "Optimize the Windows drive" (catalogue H29); keeps the last run for its card. */
+  driveOp: Op<DriveOptimization>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   bus: BusEntry[];
@@ -114,6 +127,10 @@ export function initialState(sample: boolean): State {
     tweakOps: {},
     revertAllOp: IDLE,
     applyManyOp: IDLE,
+    standbyOp: IDLE,
+    cleanupSizesOp: IDLE,
+    cleanupOp: IDLE,
+    driveOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     bus: [],
@@ -136,6 +153,18 @@ export function recommendedIds(tweaks: readonly TweakView[]): string[] {
 /** Look-and-feel changes: one click each in Tools, never part of a one-click
  * set, so the safe set never changes how someone's desktop looks. */
 export const APPEARANCE = "appearance";
+
+/** Long work the engine runs one at a time (`Activity` in commands.rs). */
+export type LongWork = "proof" | "cleanup" | "drive";
+
+/** The long work running now other than `own`, which would make the engine
+ * refuse `own`. */
+export function otherLongWork(s: State, own: LongWork): LongWork | null {
+  if (own !== "proof" && s.proof.capturingSession !== null) return "proof";
+  if (own !== "cleanup" && s.cleanupOp.status === "running") return "cleanup";
+  if (own !== "drive" && s.driveOp.status === "running") return "drive";
+  return null;
+}
 
 export type AppStore = ReturnType<typeof createAppStore>;
 
@@ -213,6 +242,18 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       }
     } catch (e) {
       if (current()) refreshFailed(e);
+    }
+  }
+
+  /** What each junk-file area holds now. The newest answer wins. */
+  async function refreshCleanupSizes() {
+    const current = tag("cleanup_sizes");
+    set((s) => ({ ...s, cleanupSizesOp: RUNNING }));
+    try {
+      const sizes = await backend.cleanupMeasure();
+      if (current()) set((s) => ({ ...s, cleanupSizesOp: { status: "done", value: sizes } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, cleanupSizesOp: failed(e) }));
     }
   }
 
@@ -331,6 +372,51 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     /** Undo each in turn (the result card's "Undo these"). */
     async revertMany(ids: readonly string[]) {
       await many(ids, "revert");
+    },
+
+    /** Empty Windows' standby list. Changes no setting, so nothing to undo; the change record gains a line. */
+    async purgeStandby() {
+      if (state.standbyOp.status === "running") return;
+      set((s) => ({ ...s, standbyOp: RUNNING }));
+      try {
+        const result = await backend.purgeStandbyMemory();
+        set((s) => ({ ...s, standbyOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, standbyOp: failed(e) }));
+      }
+      // The engine keeps a line in the change record whether it worked or not.
+      await refreshJournal();
+    },
+
+    /** Run Windows' own drive optimisation. Changes no setting, so nothing to undo. */
+    async optimizeDrive() {
+      if (state.driveOp.status === "running") return;
+      set((s) => ({ ...s, driveOp: RUNNING }));
+      try {
+        const result = await backend.optimizeDrive();
+        set((s) => ({ ...s, driveOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, driveOp: failed(e) }));
+      }
+      await refreshJournal();
+    },
+
+    /** Look at what each junk-file area holds. Reads only. */
+    async measureCleanup() {
+      await refreshCleanupSizes();
+    },
+
+    /** Delete the junk in `areas`, then look again. Cannot be undone; the card asks first. */
+    async runCleanup(areas: readonly CleanupArea[]) {
+      if (areas.length === 0 || state.cleanupOp.status === "running") return;
+      set((s) => ({ ...s, cleanupOp: RUNNING }));
+      try {
+        const report = await backend.cleanupRun([...areas]);
+        set((s) => ({ ...s, cleanupOp: { status: "done", value: report } }));
+      } catch (e) {
+        set((s) => ({ ...s, cleanupOp: failed(e) }));
+      }
+      await Promise.allSettled([refreshCleanupSizes(), refreshJournal()]);
     },
 
     async revertAll() {

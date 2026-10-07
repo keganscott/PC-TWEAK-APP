@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { Undo2 } from "lucide-react";
 
+import type { ActionDone } from "../../generated/ActionDone";
 import type { AppliedChange } from "../../generated/AppliedChange";
 import type { ChangeKind } from "../../generated/ChangeKind";
+import type { OneTimeAction } from "../../generated/OneTimeAction";
 import type { Record as JournalRecord } from "../../generated/Record";
 import { explain } from "../../lib/errors";
-import { formatDateTime } from "../../lib/format";
+import { formatBytes, formatDateTime, formatDuration } from "../../lib/format";
 import { describeEffect, describeItem, describeState } from "../../lib/systemItems";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge } from "../ui/primitives";
@@ -230,8 +232,46 @@ function AppliedRow({ change, technical }: { change: AppliedChange; technical: b
   );
 }
 
+/** One-time actions from Tools: nothing to undo, listed so the record says what ran. */
+const ACTION_DONE: Record<OneTimeAction, string> = {
+  purge_standby: "Emptied the standby list",
+  cleanup: "Cleared junk files",
+  optimize_drive: "Optimized the Windows drive",
+};
+
+const ACTION_FAILED: Record<OneTimeAction, string> = {
+  purge_standby: "Could not empty the standby list",
+  cleanup: "Could not clear junk files",
+  optimize_drive: "The drive optimization did not finish",
+};
+
+function describeDone(done: ActionDone): string {
+  switch (done.action) {
+    case "purge_standby":
+      return `files kept in memory ${formatBytes(done.cachedBefore)} before, ${formatBytes(done.cachedAfter)} after`;
+    case "cleanup": {
+      const files = `${done.removedFiles.toLocaleString()} ${done.removedFiles === 1 ? "file" : "files"}`;
+      const left = done.leftFiles > 0 ? `, ${done.leftFiles.toLocaleString()} left in place` : "";
+      return `deleted ${formatBytes(done.removedBytes)} in ${files}${left}`;
+    }
+    case "optimize_drive":
+      return `drive ${done.drive}, Windows took ${formatDuration(done.seconds)}`;
+  }
+}
+
 function JournalRow({ record, name, technical }: { record: JournalRecord; name: (id: string) => string; technical: boolean }) {
   const when = formatDateTime(record.unixMs);
+  if (record.record === "action") {
+    return (
+      <li className="py-2">
+        <div className="flex justify-between gap-3">
+          <span>{record.done ? `${ACTION_DONE[record.action]}: ${describeDone(record.done)}` : ACTION_FAILED[record.action]}</span>
+          <span className="shrink-0 text-ink-faint">{when}</span>
+        </div>
+        {technical && record.error && <div className="break-all font-mono text-xs text-ink-faint">{record.error}</div>}
+      </li>
+    );
+  }
   if (record.record === "restore_point") {
     return (
       <li className="flex justify-between gap-3 py-2">

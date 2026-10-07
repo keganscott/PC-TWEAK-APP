@@ -20,6 +20,10 @@ const COMMANDS: &[&str] = &[
     "revert_tweak",
     "revert_all",
     "list_journal",
+    "purge_standby_memory",
+    "cleanup_measure",
+    "cleanup_run",
+    "optimize_drive",
 ];
 
 fn main() {

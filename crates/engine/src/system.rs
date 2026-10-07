@@ -62,27 +62,69 @@ pub enum SysItem {
     File { path: String },
 }
 
+/// Same variant, and every field equal (text ignoring case), where a declared
+/// text field of exactly `*` matches any one value. The variant tag itself
+/// can never be `*`.
+fn fields_match<T: Serialize>(concrete: &T, pattern: &T) -> bool {
+    let (Ok(serde_json::Value::Object(c)), Ok(serde_json::Value::Object(p))) =
+        (serde_json::to_value(concrete), serde_json::to_value(pattern))
+    else {
+        return false;
+    };
+    c.len() == p.len()
+        && p.iter().all(|(k, pv)| match (pv, c.get(k)) {
+            (serde_json::Value::String(ps), Some(serde_json::Value::String(cs))) => {
+                ps == "*" || ps.eq_ignore_ascii_case(cs)
+            }
+            (pv, Some(cv)) => pv == cv,
+            (_, None) => false,
+        })
+}
+
 impl SysItem {
-    /// Does this concrete item fall under the declared `pattern`? Same kind,
-    /// and every field equal (text ignoring case), where a declared text field
-    /// of exactly `*` matches any one value. A file path never matches by `*`.
+    /// Does this concrete item fall under the declared `pattern`? See
+    /// `fields_match`. A file path never matches by `*`.
     pub fn matches(&self, pattern: &SysItem) -> bool {
         if matches!(pattern, SysItem::File { path } if path.contains('*')) {
             return false;
         }
-        let (Ok(serde_json::Value::Object(c)), Ok(serde_json::Value::Object(p))) =
-            (serde_json::to_value(self), serde_json::to_value(pattern))
-        else {
-            return false;
-        };
-        c.len() == p.len()
-            && p.iter().all(|(k, pv)| match (pv, c.get(k)) {
-                (serde_json::Value::String(ps), Some(serde_json::Value::String(cs))) => {
-                    ps == "*" || ps.eq_ignore_ascii_case(cs)
-                }
-                (pv, Some(cv)) => pv == cv,
-                (_, None) => false,
-            })
+        fields_match(self, pattern)
+    }
+
+    /// Registry values Windows keeps this item's state in, if any: exported to
+    /// `.reg` before every change (plan section 12), so the change can also be
+    /// put back by hand from Safe Mode. Items Windows does not keep in plain
+    /// registry values (scheduled tasks, TCP globals, NVIDIA settings) have
+    /// none; files have their own whole copy. VERIFY each path on a real PC.
+    pub fn registry_backing(&self) -> Vec<(String, &'static str)> {
+        const POWER: &str = r"SYSTEM\CurrentControlSet\Control\Power";
+        const SCHEMES: &str = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes";
+        match self {
+            Self::Service { name } => vec![
+                (format!(r"SYSTEM\CurrentControlSet\Services\{name}"), "Start"),
+                (format!(r"SYSTEM\CurrentControlSet\Services\{name}"), "DelayedAutostart"),
+            ],
+            Self::Hibernation => vec![(POWER.to_owned(), "HibernateEnabled")],
+            Self::DnsServers { interface } => vec![(
+                format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{interface}}}"),
+                "NameServer",
+            )],
+            Self::ActivePowerScheme => vec![(SCHEMES.to_owned(), "ActivePowerScheme")],
+            Self::PowerSetting {
+                scheme,
+                subgroup,
+                setting,
+                ac,
+            } => vec![(
+                format!(r"{SCHEMES}\{scheme}\{subgroup}\{setting}"),
+                if *ac { "ACSettingIndex" } else { "DCSettingIndex" },
+            )],
+            Self::PowerScheme { .. }
+            | Self::ScheduledTask { .. }
+            | Self::TcpGlobal { .. }
+            | Self::NvidiaSetting { .. }
+            | Self::File { .. } => Vec::new(),
+        }
     }
 
     /// One line for the Backups list and error text.
@@ -179,6 +221,11 @@ pub enum SideEffect {
 }
 
 impl SideEffect {
+    /// Does this effect fall under the declared `pattern`? Like `SysItem::matches`.
+    pub fn matches(&self, pattern: &SideEffect) -> bool {
+        fields_match(self, pattern)
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Self::RestartAdapter { interface } => format!("restart network adapter {interface}"),

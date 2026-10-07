@@ -3,6 +3,7 @@ import type { ChangeEntry } from "./ChangeEntry";
 import type { CommitRecord } from "./CommitRecord";
 import type { EffectRecord } from "./EffectRecord";
 import type { JournalEntry } from "./JournalEntry";
+import type { NoteRecord } from "./NoteRecord";
 import type { RestorePointRecord } from "./RestorePointRecord";
 
-export type Record = { "record": "write" } & JournalEntry | { "record": "commit" } & CommitRecord | { "record": "restore_point" } & RestorePointRecord | { "record": "change" } & ChangeEntry | { "record": "effect" } & EffectRecord;
+export type Record = { "record": "write" } & JournalEntry | { "record": "commit" } & CommitRecord | { "record": "restore_point" } & RestorePointRecord | { "record": "change" } & ChangeEntry | { "record": "effect" } & EffectRecord | { "record": "note" } & NoteRecord;

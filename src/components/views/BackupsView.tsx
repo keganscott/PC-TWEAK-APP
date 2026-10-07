@@ -253,6 +253,16 @@ function JournalRow({ record, name, technical }: { record: JournalRecord; name: 
       </li>
     );
   }
+  if (record.record === "note") {
+    return (
+      <li className="flex justify-between gap-3 py-2">
+        <span>
+          {name(record.tweakId)}: {record.text}
+        </span>
+        <span className="text-ink-faint">{when}</span>
+      </li>
+    );
+  }
   if (!technical) return null;
   if (record.record === "change") {
     return (

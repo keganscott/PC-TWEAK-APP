@@ -400,6 +400,12 @@ pub trait Tweak: Send + Sync {
         Vec::new()
     }
 
+    /// Side effects this tweak may queue (`Transaction::after_commit`), with `*`
+    /// allowed in text fields like `system_targets`. Anything else is refused.
+    fn effect_targets(&self) -> Vec<crate::system::SideEffect> {
+        Vec::new()
+    }
+
     /// Cheap, pure, no I/O. Called on every refresh.
     fn evaluate_predicate(&self, env: &SystemEnv) -> PredicateOutcome {
         let _ = env;

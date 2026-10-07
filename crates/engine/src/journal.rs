@@ -162,6 +162,36 @@ pub struct ChangeEntry {
     /// What revert puts back.
     pub previous: SysState,
     pub written: SysState,
+    /// The registry values Windows keeps this item in, exported to `.reg` before
+    /// the change (plan section 12; `SysItem::registry_backing`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reg_backups: Vec<RegBackup>,
+}
+
+/// One registry value exported before a non-registry change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct RegBackup {
+    pub display_path: String,
+    pub value_name: String,
+    /// `None` when the value did not exist.
+    pub previous: Option<RawValue>,
+    /// The `.reg` file, relative to the journal directory.
+    pub backup_file: String,
+}
+
+/// Something a transaction wants the history to say, such as a step Undo
+/// skipped because what it would restore is gone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteRecord {
+    pub seq: u64,
+    pub tx_id: u64,
+    pub unix_ms: u64,
+    pub tweak_id: String,
+    pub text: String,
 }
 
 /// A side effect run after a change committed, and how it went. Nothing to
@@ -188,6 +218,7 @@ pub enum Record {
     RestorePoint(RestorePointRecord),
     Change(ChangeEntry),
     Effect(EffectRecord),
+    Note(NoteRecord),
 }
 
 impl Record {
@@ -198,6 +229,7 @@ impl Record {
             Self::RestorePoint(r) => r.seq,
             Self::Change(c) => c.seq,
             Self::Effect(e) => e.seq,
+            Self::Note(n) => n.seq,
         }
     }
 }
@@ -326,7 +358,7 @@ impl TweakIndex {
                     self.changes.retain(|e| e.tx_id != c.tx_id);
                 }
             },
-            Record::Write(_) | Record::Change(_) | Record::Effect(_) | Record::RestorePoint(_) => {}
+            Record::Write(_) | Record::Change(_) | Record::Effect(_) | Record::Note(_) | Record::RestorePoint(_) => {}
         }
     }
 
@@ -512,6 +544,10 @@ impl Journal {
         self.append(Record::Effect(rec))
     }
 
+    pub fn append_note(&mut self, rec: NoteRecord) -> Result<()> {
+        self.append(Record::Note(rec))
+    }
+
     /// Append one record on a fresh line and flush it to disk before returning.
     /// The in-memory state only changes once the record is durable.
     fn append(&mut self, rec: Record) -> Result<()> {
@@ -569,6 +605,7 @@ fn record_tweak(rec: &Record) -> Option<&str> {
         Record::Commit(c) => Some(&c.tweak_id),
         Record::Change(c) => Some(&c.tweak_id),
         Record::Effect(e) => Some(&e.tweak_id),
+        Record::Note(n) => Some(&n.tweak_id),
         Record::RestorePoint(_) => None,
     }
 }

@@ -18,6 +18,8 @@ use std::time::Duration;
 
 use super::error::{EngineError, Result};
 use super::proc::run_limited;
+use super::registry::windows::WinRegistry;
+use super::registry::{Hive, RegistryBackend};
 use super::system::{guid, guids_in, setting_indexes, NetAdapter, SideEffect, SysItem, SysState, SystemBackend};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -26,12 +28,16 @@ const LIMIT: Duration = Duration::from_secs(60);
 /// The real backend. The adapter list is cached for a short while: the tool
 /// list asks for it on every refresh, and each listing starts PowerShell.
 pub struct WinSystem {
+    /// Values Windows keeps in the registry (hibernation, DNS) are read here
+    /// rather than by starting PowerShell on every refresh.
+    reg: WinRegistry,
     adapters: std::sync::Mutex<Option<(std::time::Instant, Vec<NetAdapter>)>>,
 }
 
 impl WinSystem {
     pub fn new() -> Self {
         Self {
+            reg: WinRegistry::new(),
             adapters: std::sync::Mutex::new(None),
         }
     }
@@ -138,8 +144,9 @@ fn need_name(s: &str, what: &str) -> Result<()> {
 }
 
 fn need_ip(s: &str) -> Result<()> {
-    // IPv4 or IPv6 characters only; Windows checks the address itself.
-    let ok = !s.is_empty() && s.len() <= 45 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '.' || c == ':');
+    // IPv4 only: the before-state read is the IPv4 NameServer value, so an
+    // IPv6 server could not be put back. Windows checks the address itself.
+    let ok = !s.is_empty() && s.len() <= 15 && s.chars().all(|c| c.is_ascii_digit() || c == '.');
     if ok {
         Ok(())
     } else {
@@ -216,13 +223,16 @@ impl SystemBackend for WinSystem {
                 })
             }
             SysItem::Hibernation => {
-                let out = powershell(
-                    "hibernation",
-                    "(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power' -Name HibernateEnabled \
-                     -ErrorAction Stop).HibernateEnabled",
-                    &[],
-                )?;
-                Ok(SysState::Bool { on: out.trim() != "0" })
+                let v = self
+                    .reg
+                    .read_value(
+                        Hive::LocalMachine,
+                        r"SYSTEM\CurrentControlSet\Control\Power",
+                        "HibernateEnabled",
+                    )?
+                    .and_then(|v| v.as_dword())
+                    .ok_or_else(|| fail("hibernation", "Windows has not recorded whether hibernation is on"))?;
+                Ok(SysState::Bool { on: v != 0 })
             }
             SysItem::Service { name } => {
                 need_name(name, "service")?;
@@ -245,12 +255,13 @@ impl SystemBackend for WinSystem {
                 let g = need_guid(interface, "network adapter")?;
                 // The servers set by hand for this adapter (IPv4). Empty means
                 // automatic, from the router.
-                let out = powershell(
-                    "DNS servers",
-                    "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\{' + \
-                     $env:PT_GUID + '}'; (Get-ItemProperty $k -ErrorAction Stop).NameServer",
-                    &[("PT_GUID", &g)],
-                )?;
+                let key = format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{g}}}");
+                let out = match self.reg.read_value(Hive::LocalMachine, &key, "NameServer")? {
+                    None => String::new(),
+                    Some(v) => v
+                        .as_sz()
+                        .ok_or_else(|| fail("DNS servers", "NameServer is not a string value"))?,
+                };
                 let items = out
                     .split(|c: char| c == ',' || c.is_whitespace())
                     .filter(|s| !s.is_empty())
@@ -274,10 +285,13 @@ impl SystemBackend for WinSystem {
                 tool("powercfg.exe", &["/setactive", &g]).map(drop)
             }
             (SysItem::PowerScheme { guid: g }, SysState::Scheme { source }) => {
-                let (g, src) = (need_guid(g, "power plan")?, need_guid(source, "power plan")?);
+                // Already there (a retry, or a rollback putting back what a read
+                // reported without its source): nothing to do.
+                let g = need_guid(g, "power plan")?;
                 if guids_in(&tool("powercfg.exe", &["/list"])?).contains(&g) {
                     return Ok(());
                 }
+                let src = need_guid(source, "power plan")?;
                 tool("powercfg.exe", &["/duplicatescheme", &src, &g]).map(drop)
             }
             (SysItem::PowerScheme { guid: g }, SysState::Absent) => {
@@ -569,7 +583,11 @@ mod tests {
         for bad in ["", "-delete", r"..\x", "a;b", "a&b", "a\"b", "a|b"] {
             assert!(need_name(bad, "t").is_err(), "{bad:?}");
         }
-        assert!(need_ip("1.1.1.1").is_ok() && need_ip("2606:4700:4700::1111").is_ok());
+        assert!(need_ip("1.1.1.1").is_ok());
+        assert!(
+            need_ip("2606:4700:4700::1111").is_err(),
+            "IPv6 could not be put back yet"
+        );
         assert!(need_ip("1.1.1.1; rm").is_err());
     }
 

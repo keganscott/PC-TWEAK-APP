@@ -506,6 +506,66 @@ fn a_wildcard_target_cannot_reach_a_key_two_levels_down() {
     assert_eq!(h.fake.snapshot(), before);
 }
 
+/// A per-PC key that is gone at Undo (the adapter or device was removed) is
+/// skipped, not created again, and the history says so.
+#[test]
+fn undo_skips_a_wildcard_key_that_no_longer_exists_and_notes_it() {
+    let concrete = r"SOFTWARE\PeakTest\Interfaces\{1234-ABCD}";
+    let mut t = TestTweak::new("t", concrete, &[("TcpNoDelay", 1)]);
+    t.allow_key = r"SOFTWARE\PeakTest\Interfaces\*".into();
+    let mut h = Harness::new(one(t));
+    h.fake.set_external(Hive::LocalMachine, concrete, "Other", dword(7));
+    h.engine.apply("t").unwrap();
+    h.fake.remove_key_external(Hive::LocalMachine, concrete);
+
+    h.engine.revert("t").unwrap();
+    assert!(
+        !h.fake.key_exists_for_test(Hive::LocalMachine, concrete),
+        "not recreated"
+    );
+    assert!(h.engine.applied_tweak_ids().is_empty());
+    assert!(h
+        .engine
+        .journal_view()
+        .records
+        .iter()
+        .any(|r| matches!(r, Record::Note(n) if n.text.contains("no longer exists"))));
+}
+
+/// `HKEY_CLASSES_ROOT\*` is a real key (every file type), so under that root
+/// a `*` segment is only ever that key, never a wildcard.
+#[test]
+fn a_star_under_classes_root_is_the_literal_key() {
+    struct Hkcr(&'static str);
+    impl Tweak for Hkcr {
+        fn id(&self) -> &str {
+            "hkcr"
+        }
+        fn metadata(&self) -> crate::types::TweakMetadata {
+            TestTweak::new("hkcr", KEY, &[]).metadata()
+        }
+        fn execution_context(&self) -> ExecutionContext {
+            ExecutionContext::Service
+        }
+        fn touches(&self) -> Vec<crate::types::RegTarget> {
+            vec![crate::types::RegTarget::new(RegRoot::ClassesRoot, r"*\shell", &["V"])]
+        }
+        fn read_state(&self, _: &crate::context::ContextResolver, _: bool) -> crate::error::Result<TweakState> {
+            Ok(TweakState::Default)
+        }
+        fn apply(&self, tx: &mut Transaction) -> crate::error::Result<()> {
+            tx.set_dword(RegRoot::ClassesRoot, &format!(r"{}\shell", self.0), "V", 1)
+        }
+    }
+    let mut ok = Harness::new(vec![Box::new(Hkcr("*"))]);
+    ok.engine.apply("hkcr").unwrap();
+    let mut refused = Harness::new(vec![Box::new(Hkcr("txtfile"))]);
+    assert!(matches!(
+        refused.engine.apply("hkcr"),
+        Err(EngineError::ContextViolation { .. })
+    ));
+}
+
 #[test]
 fn allowlist_comparison_ignores_case() {
     let mut t = TestTweak::new("t", KEY, &[("Alpha", 1)]);
@@ -1468,6 +1528,7 @@ mod system_changes {
         files: Vec<(String, Vec<u8>)>,
         effects: Vec<SideEffect>,
         declared: Vec<SysItem>,
+        declared_effects: Vec<SideEffect>,
         fail_after: bool,
     }
 
@@ -1479,6 +1540,7 @@ mod system_changes {
                 files: vec![],
                 effects: vec![],
                 declared,
+                declared_effects: vec![],
                 fail_after: false,
             }
         }
@@ -1500,6 +1562,13 @@ mod system_changes {
         fn system_targets(&self) -> Vec<SysItem> {
             self.declared.clone()
         }
+        fn effect_targets(&self) -> Vec<SideEffect> {
+            if self.declared_effects.is_empty() {
+                self.effects.clone()
+            } else {
+                self.declared_effects.clone()
+            }
+        }
         fn read_state(&self, _: &crate::context::ContextResolver, j: bool) -> crate::error::Result<TweakState> {
             Ok(if j { TweakState::Applied } else { TweakState::Default })
         }
@@ -1511,7 +1580,7 @@ mod system_changes {
                 tx.write_file(p, b)?;
             }
             for e in &self.effects {
-                tx.after_commit(e.clone());
+                tx.after_commit(e.clone())?;
             }
             if self.fail_after {
                 return Err(EngineError::Internal {
@@ -1523,7 +1592,7 @@ mod system_changes {
         fn revert(&self, tx: &mut Transaction) -> crate::error::Result<()> {
             tx.restore_journalled()?;
             for e in &self.effects {
-                tx.after_commit(e.clone());
+                tx.after_commit(e.clone())?;
             }
             Ok(())
         }
@@ -1744,6 +1813,117 @@ mod system_changes {
         let mut engine = build_engine(&fake, dir.path(), vec![Box::new(t)], true, Tier::Ultimate);
         assert!(engine.apply("sys").is_err());
         assert!(engine.applied_tweak_ids().is_empty());
+    }
+
+    // ---- review fixes (2026-10-07) -------------------------------------
+
+    const SVC_KEY: &str = r"SYSTEM\CurrentControlSet\Services\WSearch";
+
+    /// Plan section 12: a .reg backup before each change. A service's start
+    /// type lives in the registry, so it is exported before the change, and
+    /// the per-change session file carries it for Safe Mode recovery.
+    #[test]
+    fn a_service_change_backs_up_its_registry_values_to_reg_files_first() {
+        let t = SysTweak::new(vec![(svc(), running(ServiceStart::Disabled, false))]);
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.fake.set_external(Hive::LocalMachine, SVC_KEY, "Start", dword(2));
+        h.fake
+            .set_external(Hive::LocalMachine, SVC_KEY, "DelayedAutostart", dword(1));
+        h.sys.set(&svc(), running(ServiceStart::DelayedAutomatic, true));
+        h.engine.apply("sys").unwrap();
+
+        let change = h
+            .engine
+            .journal_view()
+            .records
+            .into_iter()
+            .find_map(|r| match r {
+                Record::Change(c) => Some(c),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(change.reg_backups.len(), 2, "{:?}", change.reg_backups);
+        let text = |rel: &str| {
+            let bytes = std::fs::read(h.dir.path().join(rel)).unwrap();
+            String::from_utf16_lossy(&crate::types::utf16le_units(&bytes))
+        };
+        let start = change.reg_backups.iter().find(|b| b.value_name == "Start").unwrap();
+        let reg = text(&start.backup_file);
+        assert!(
+            reg.contains(r"Services\WSearch") && reg.contains("dword:00000002"),
+            "{reg}"
+        );
+
+        let session = walk_files(h.dir.path())
+            .into_iter()
+            .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("session_"))
+            .expect("a session .reg for the change");
+        let s = text(session.strip_prefix(h.dir.path()).unwrap().to_str().unwrap());
+        assert!(
+            s.contains(r"Services\WSearch") && s.contains("\"DelayedAutostart\"=dword:00000001"),
+            "{s}"
+        );
+    }
+
+    fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                out.extend(walk_files(&p));
+            } else {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    fn setting(scheme: &str) -> SysItem {
+        SysItem::PowerSetting {
+            scheme: scheme.into(),
+            subgroup: "54533251-82be-4824-96c1-47b60b740d00".into(),
+            setting: "0cc5b647-c1df-4637-891a-dec35c318583".into(),
+            ac: true,
+        }
+    }
+
+    /// A setting Windows hides reads as Absent and could not be put back, so
+    /// it may only be changed on a plan copy this same tweak created.
+    #[test]
+    fn a_hidden_power_setting_on_a_plan_we_did_not_make_is_refused() {
+        let t = SysTweak::new(vec![(setting("theirs"), SysState::Dword { value: 100 })]);
+        let mut h = Harness::new(vec![Box::new(t)]);
+        let err = h.engine.apply("sys").unwrap_err();
+        assert!(matches!(err, EngineError::ContextViolation { .. }), "{err:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn a_hidden_power_setting_on_our_own_new_plan_copy_is_allowed() {
+        let ours = SysItem::PowerScheme { guid: "ours".into() };
+        let t = SysTweak::new(vec![
+            (
+                ours.clone(),
+                SysState::Scheme {
+                    source: "e9a42b02".into(),
+                },
+            ),
+            (setting("ours"), SysState::Dword { value: 100 }),
+        ]);
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.engine.apply("sys").unwrap();
+        h.engine.revert("sys").unwrap();
+        assert_eq!(h.sys.get(&ours), SysState::Absent);
+    }
+
+    #[test]
+    fn a_side_effect_the_tweak_did_not_declare_is_refused() {
+        let mut t = SysTweak::new(vec![(svc(), running(ServiceStart::Manual, false))]);
+        t.effects = vec![SideEffect::RestartService { name: "Spooler".into() }];
+        t.declared_effects = vec![SideEffect::RestartService { name: "WSearch".into() }];
+        let mut h = Harness::new(vec![Box::new(t)]);
+        assert!(h.engine.apply("sys").is_err());
+        assert!(h.sys.effects().is_empty());
     }
 }
 

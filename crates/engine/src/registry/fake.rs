@@ -69,6 +69,17 @@ impl FakeRegistry {
             .insert(name.to_ascii_lowercase(), (name.to_owned(), value));
     }
 
+    /// Delete a key and everything under it, as if a device were removed.
+    pub fn remove_key_external(&self, hive: Hive, path: &str) {
+        let (h, p) = key_id(hive, path);
+        let prefix = format!("{p}\\");
+        self.inner
+            .lock()
+            .unwrap()
+            .keys
+            .retain(|(kh, kp), _| !(*kh == h && (*kp == p || kp.starts_with(&prefix))));
+    }
+
     pub fn remove_external(&self, hive: Hive, path: &str, name: &str) {
         let mut g = self.inner.lock().unwrap();
         if let Some(k) = g.keys.get_mut(&key_id(hive, path)) {

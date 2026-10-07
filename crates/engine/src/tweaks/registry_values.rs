@@ -435,6 +435,8 @@ pub const TIPS: ValueTweak = ValueTweak {
         dword(CONTENT_DELIVERY, "SubscribedContent-338388Enabled", 0),
         dword(CONTENT_DELIVERY, "SystemPaneSuggestionsEnabled", 0),
         dword(CONTENT_DELIVERY, "SoftLandingEnabled", 0),
+        // "Show me the Windows welcome experience after updates". VERIFY.
+        dword(CONTENT_DELIVERY, "SubscribedContent-310093Enabled", 0),
     ],
 };
 
@@ -461,7 +463,7 @@ pub const ACTIVITY_HISTORY: ValueTweak = ValueTweak {
     category: "privacy",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Safe,
-    tradeoff: None,
+    tradeoff: Some("Settings shows \"Some settings are managed by your organization\" while this is on."),
     requires_reboot: false,
     settings: &[
         dword(SYSTEM_POLICY, "PublishUserActivities", 0),
@@ -478,7 +480,10 @@ pub const TELEMETRY: ValueTweak = ValueTweak {
     category: "privacy",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Safe,
-    tradeoff: Some("Settings shows \"Some settings are managed by your organization\" while this is on."),
+    tradeoff: Some(
+        "Settings shows \"Some settings are managed by your organization\" while this is on, and Windows Insider \
+         builds stop arriving.",
+    ),
     requires_reboot: false,
     settings: &[dword(DATA_COLLECTION, "AllowTelemetry", 1)],
 };

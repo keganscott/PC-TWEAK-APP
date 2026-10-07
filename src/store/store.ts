@@ -374,7 +374,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       await many(ids, "revert");
     },
 
-    /** Empty Windows' standby list. Changes no setting, so nothing to refresh or undo. */
+    /** Empty Windows' standby list. Changes no setting, so nothing to undo; the change record gains a line. */
     async purgeStandby() {
       if (state.standbyOp.status === "running") return;
       set((s) => ({ ...s, standbyOp: RUNNING }));
@@ -384,9 +384,11 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       } catch (e) {
         set((s) => ({ ...s, standbyOp: failed(e) }));
       }
+      // The engine keeps a line in the change record whether it worked or not.
+      await refreshJournal();
     },
 
-    /** Run Windows' own drive optimisation. Changes no setting, so nothing to refresh or undo. */
+    /** Run Windows' own drive optimisation. Changes no setting, so nothing to undo. */
     async optimizeDrive() {
       if (state.driveOp.status === "running") return;
       set((s) => ({ ...s, driveOp: RUNNING }));
@@ -396,6 +398,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       } catch (e) {
         set((s) => ({ ...s, driveOp: failed(e) }));
       }
+      await refreshJournal();
     },
 
     /** Look at what each junk-file area holds. Reads only. */
@@ -413,7 +416,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       } catch (e) {
         set((s) => ({ ...s, cleanupOp: failed(e) }));
       }
-      await refreshCleanupSizes();
+      await Promise.allSettled([refreshCleanupSizes(), refreshJournal()]);
     },
 
     async revertAll() {

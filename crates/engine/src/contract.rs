@@ -19,8 +19,8 @@ use crate::env::EnvProbe;
 use crate::error::EngineError;
 use crate::hardware::{DisplayInfo, GpuAdapter, OsFacts, GIB};
 use crate::journal::{
-    CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind, Record, RestoreMethod,
-    RestorePointRecord,
+    ActionRecord, CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind,
+    OneTimeAction, Record, RestoreMethod, RestorePointRecord,
 };
 use crate::memory::{MemoryUse, StandbyPurge};
 use crate::proof::metrics::compute_stats;
@@ -171,6 +171,13 @@ fn journal_view() -> JournalView {
                 description: "PeakTweaks: before changes".into(),
                 method: RestoreMethod::PowerShell,
                 protection_enabled_by_us: Some(true),
+            }),
+            Record::Action(ActionRecord {
+                seq: 6,
+                unix_ms: 1_700_000_002_000,
+                action: OneTimeAction::Cleanup,
+                done: Some(cleanup_report().done()),
+                error: None,
             }),
         ],
         warnings: vec![JournalWarning {

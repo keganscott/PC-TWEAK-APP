@@ -17,7 +17,7 @@ use peaktweaks_engine::cleanup::{self, AreaSize, CleanupArea, CleanupReport};
 use peaktweaks_engine::drive_optimize::{self, DriveOptimization};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
-use peaktweaks_engine::journal::{now_ms, JournalEntry};
+use peaktweaks_engine::journal::{now_ms, ActionDone, JournalEntry, OneTimeAction};
 use peaktweaks_engine::memory::{self, StandbyPurge};
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
@@ -428,18 +428,34 @@ fn user_sid(shared: &SharedEngine) -> Result<String> {
         .sid)
 }
 
+/// Keep a line in the journal for a one-time action that ran, for the history
+/// in Backups. The action has already happened, so neither a poisoned engine
+/// nor a failed append makes it a reported failure, which would invite running
+/// it again (as with a change's side effects).
+fn record_action(shared: &SharedEngine, action: OneTimeAction, outcome: std::result::Result<ActionDone, String>) {
+    if let Ok(mut engine) = shared.lock() {
+        let _ = engine.record_action(action, outcome);
+    }
+}
+
 /// Empty Windows' standby list (catalogue E6). It changes no setting, so it
 /// needs no restore point and leaves nothing to undo. Refused while a Proof
 /// capture records, because it would disturb the measurement.
 #[tauri::command]
 pub async fn purge_standby_memory(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<StandbyPurge> {
-    refuse_while_recording(&engine.get()?, "empty the standby list")?;
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "empty the standby list")?;
     progress(&app, "standby", None, "Emptying the standby list");
-    let out = tauri::async_runtime::spawn_blocking(|| memory::purge_standby(memory::system().as_ref(), now_ms()))
-        .await
-        .map_err(|e| EngineError::Internal {
-            detail: format!("memory worker failed: {e}"),
-        })?;
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let out = memory::purge_standby(memory::system().as_ref(), now_ms());
+        let outcome = out.as_ref().map(StandbyPurge::done).map_err(ToString::to_string);
+        record_action(&shared, OneTimeAction::PurgeStandby, outcome);
+        out
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("memory worker failed: {e}"),
+    })?;
     progress(
         &app,
         if out.is_ok() { "standby_done" } else { "standby_failed" },
@@ -479,9 +495,11 @@ pub async fn cleanup_run(
     let worker_app = app.clone();
     let out = tauri::async_runtime::spawn_blocking(move || {
         let _activity = activity;
-        cleanup::clean(&cleanup::places(&sid), &areas, SystemTime::now(), now_ms(), &|area| {
+        let report = cleanup::clean(&cleanup::places(&sid), &areas, SystemTime::now(), now_ms(), &|area| {
             progress(&worker_app, "cleanup", None, format!("Clearing {}", area.label()))
-        })
+        });
+        record_action(&shared, OneTimeAction::Cleanup, Ok(report.done()));
+        report
     })
     .await
     .map_err(|e| EngineError::Internal {
@@ -501,17 +519,16 @@ pub async fn cleanup_run(
 /// hour or more on a hard drive; the engine lock is not held meanwhile.
 #[tauri::command]
 pub async fn optimize_drive(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<DriveOptimization> {
-    // Needs no engine state, but an engine that failed to start still says why.
-    engine.get()?;
+    let shared = engine.get()?;
     let activity = Activity::start("a drive optimization")?;
     progress(&app, "drive", None, "Optimizing the Windows drive");
     let out = tauri::async_runtime::spawn_blocking(move || {
         let _activity = activity;
-        drive_optimize::optimize(
-            drive_optimize::system().as_ref(),
-            &drive_optimize::windows_drive()?,
-            now_ms(),
-        )
+        let out = drive_optimize::windows_drive()
+            .and_then(|drive| drive_optimize::optimize(drive_optimize::system().as_ref(), &drive, now_ms()));
+        let outcome = out.as_ref().map(DriveOptimization::done).map_err(ToString::to_string);
+        record_action(&shared, OneTimeAction::OptimizeDrive, outcome);
+        out
     })
     .await
     .map_err(|e| EngineError::Internal {

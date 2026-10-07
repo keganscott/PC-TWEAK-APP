@@ -4,7 +4,8 @@
 //! using (the standby list), and hands those pages to a program the moment it
 //! asks for memory. Emptying the list moves them to the free list now; Windows
 //! fills it again as files are read. No setting changes and nothing is written,
-//! so there is nothing to journal or undo and no restore point is needed.
+//! so there is nothing to undo and no restore point is needed; the journal
+//! keeps a line for the history (`StandbyPurge::done`).
 //!
 //! Only the standby list. ExitLag also trims every program's working set,
 //! which reaches into game processes (plan section 12), so that is left out
@@ -19,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::error::{EngineError, Result};
+use super::journal::ActionDone;
 
 /// Physical memory as Windows reports it (`GetPerformanceInfo`), in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -40,6 +42,16 @@ pub struct StandbyPurge {
     pub before: MemoryUse,
     pub after: MemoryUse,
     pub unix_ms: u64,
+}
+
+impl StandbyPurge {
+    /// The line the journal keeps for the history.
+    pub fn done(&self) -> ActionDone {
+        ActionDone::PurgeStandby {
+            cached_before: self.before.cached_bytes,
+            cached_after: self.after.cached_bytes,
+        }
+    }
 }
 
 /// What emptying the standby list needs from Windows.

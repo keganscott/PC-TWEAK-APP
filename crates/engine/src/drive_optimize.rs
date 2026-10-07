@@ -3,7 +3,8 @@
 //! its own schedule (weekly by default, VERIFY). On an SSD it tells the drive
 //! which space is free (TRIM); on a hard drive it defragments, which can take
 //! an hour or more. No setting changes, so there is nothing to undo and no
-//! restore point is needed.
+//! restore point is needed; the journal keeps a line for the history
+//! (`DriveOptimization::done`).
 //!
 //! `defrag.exe` runs from System32 by full path, never looked up on `PATH` or
 //! next to the app, and the drive must be a plain `X:`.
@@ -14,6 +15,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::error::{EngineError, Result};
+use super::journal::ActionDone;
 use super::proc::Output;
 
 /// A hard drive can take hours; past this the run is stopped. Windows moves
@@ -39,6 +41,16 @@ pub struct DriveOptimization {
     pub seconds: u64,
     /// What `defrag` printed, in the PC's language, for the technical view.
     pub report: Vec<String>,
+}
+
+impl DriveOptimization {
+    /// The line the journal keeps for the history, without Windows' report.
+    pub fn done(&self) -> ActionDone {
+        ActionDone::OptimizeDrive {
+            drive: self.drive.clone(),
+            seconds: self.seconds,
+        }
+    }
 }
 
 /// Runs `defrag` with these arguments: the real one on Windows.

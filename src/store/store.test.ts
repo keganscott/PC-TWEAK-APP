@@ -338,6 +338,16 @@ describe("one-time actions", () => {
     expect(store.getState().driveOp).toEqual({ status: "failed", error });
   });
 
+  it("each one-time action adds a line to the change record", async () => {
+    const { store } = await booted();
+    const actions = () => (store.getState().journal?.records ?? []).flatMap((r) => (r.record === "action" ? [r.action] : []));
+    const before = actions().length;
+    await store.actions.purgeStandby();
+    await store.actions.runCleanup(["user_temp"]);
+    await store.actions.optimizeDrive();
+    expect(actions().slice(before)).toEqual(["purge_standby", "cleanup", "optimize_drive"]);
+  });
+
   it("long work waits for other long work, as the engine runs one at a time", async () => {
     const { store } = await booted({ latencyFor: (command) => (command === "optimizeDrive" ? 20 : undefined) });
     const running = store.actions.optimizeDrive();

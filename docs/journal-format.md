@@ -50,6 +50,17 @@ Values are stored as their raw registry type number and bytes (comma-separated h
 
 `seq`, `unixMs`, `sequenceNumber` (Windows' own number for the point), `description`, `method` (`api` or `power_shell`), `protectionEnabledByUs` (`true` it was off and PeakTweaks turned it on, `false` it was already on, `null` could not be told; older journals hold only `true`/`false`).
 
+### `action`: a one-time action from Tools ran
+
+Written after the action ran. It changes no setting, so it has nothing to undo and is not part of any transaction; it is kept so the history says what was done.
+
+| Field | Meaning |
+|---|---|
+| `seq`, `unixMs` | As above. |
+| `action` | `purge_standby` (emptied the standby list), `cleanup` (deleted junk files) or `optimize_drive` (Windows' drive optimization). |
+| `done` | What it did, or `null` when it failed. An object with the same `action` tag and: for `purge_standby`, `cachedBefore` and `cachedAfter` (bytes of files Windows kept in memory); for `cleanup`, `areas` (`user_temp`, `windows_temp`, `thumbnails`, `shader_caches`, `crash_dumps`), `removedBytes`, `removedFiles` and `leftFiles` (files left because a program had them open or Windows refused); for `optimize_drive`, `drive` (`C:`) and `seconds`. |
+| `error` | Why it failed, or `null`. |
+
 ## Order of operations
 
 For each value a transaction changes: read the current value, write its `.reg`, append the `write` record and `fsync` it, and only then change the registry. A power cut at any point leaves a journal that describes at least everything that changed.

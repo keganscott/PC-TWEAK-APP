@@ -3,7 +3,8 @@
 //! Deleting is the one thing PeakTweaks does that cannot be undone, so the
 //! screen shows what each area holds, asks once and says so. No setting
 //! changes, so no restore point is needed; a restore point would not keep
-//! these files anyway.
+//! these files anyway. The journal keeps the totals for the history
+//! (`CleanupReport::done`).
 //!
 //! The engine is elevated, and most of these folders are ones the user, and
 //! anything running as the user, can write to. A planted link must not be able
@@ -32,6 +33,8 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use super::journal::ActionDone;
 
 /// Temporary folders keep anything created or changed this recently.
 pub const KEEP_RECENT: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -123,6 +126,18 @@ pub struct AreaCleanup {
 pub struct CleanupReport {
     pub areas: Vec<AreaCleanup>,
     pub unix_ms: u64,
+}
+
+impl CleanupReport {
+    /// The line the journal keeps for the history: totals, no file names.
+    pub fn done(&self) -> ActionDone {
+        ActionDone::Cleanup {
+            areas: self.areas.iter().map(|a| a.area).collect(),
+            removed_bytes: self.areas.iter().map(|a| a.removed_bytes).sum(),
+            removed_files: self.areas.iter().map(|a| a.removed_files).sum(),
+            left_files: self.areas.iter().map(|a| a.left_files).sum(),
+        }
+    }
 }
 
 /// The folders the areas are found under. `None` when it could not be found;

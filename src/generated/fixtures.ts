@@ -226,6 +226,24 @@ export const journalView = {
       "description": "PeakTweaks: before changes",
       "method": "power_shell",
       "protectionEnabledByUs": true
+    },
+    {
+      "record": "action",
+      "seq": 6,
+      "unixMs": 1700000002000,
+      "action": "cleanup",
+      "done": {
+        "action": "cleanup",
+        "areas": [
+          "user_temp",
+          "windows_temp",
+          "crash_dumps"
+        ],
+        "removedBytes": 6249512960,
+        "removedFiles": 5027,
+        "leftFiles": 22
+      },
+      "error": null
     }
   ],
   "warnings": [

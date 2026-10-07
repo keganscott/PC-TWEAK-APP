@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::env::{License, StubProbe};
 use crate::error::EngineError;
-use crate::journal::{CommitAction, Journal, JournalAction, JournalEntry, Record};
+use crate::journal::{ActionDone, CommitAction, Journal, JournalAction, JournalEntry, OneTimeAction, Record};
 use crate::registry::fake::FakeRegistry;
 use crate::registry::Hive;
 use crate::secure_dir::TrustedDir;
@@ -354,6 +354,53 @@ fn a_failed_apply_rolls_back_its_own_writes_and_returns_the_original_error() {
     // And the tweak still applies cleanly afterwards.
     h.engine.apply("t").unwrap();
     assert_eq!(dw(&h, "C"), Some(3));
+}
+
+#[test]
+fn a_one_time_action_is_kept_in_the_history_and_undo_all_leaves_it_there() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
+    h.engine.apply("t").unwrap();
+    let drive = ActionDone::OptimizeDrive {
+        drive: "C:".into(),
+        seconds: 41,
+    };
+    h.engine
+        .record_action(OneTimeAction::OptimizeDrive, Ok(drive.clone()))
+        .unwrap();
+    h.engine
+        .record_action(OneTimeAction::PurgeStandby, Err("no privilege".into()))
+        .unwrap();
+
+    let view = h.engine.journal_view();
+    let actions: Vec<_> = view
+        .records
+        .iter()
+        .filter_map(|r| match r {
+            Record::Action(a) => Some(a),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(
+        (actions[0].done.as_ref(), actions[0].error.as_deref()),
+        (Some(&drive), None)
+    );
+    assert_eq!(
+        (actions[1].done.as_ref(), actions[1].error.as_deref()),
+        (None, Some("no privilege"))
+    );
+    // Nothing to undo: only the change is listed.
+    let applied: Vec<_> = view.applied.iter().map(|c| c.tweak_id.as_str()).collect();
+    assert_eq!(applied, ["t"]);
+
+    assert!(h.engine.revert_all().iter().all(|r| r.ok));
+    let view = h.engine.journal_view();
+    assert!(view.applied.is_empty());
+    assert_eq!(
+        view.records.iter().filter(|r| matches!(r, Record::Action(_))).count(),
+        2
+    );
+    assert_eq!(dw(&h, "A"), None);
 }
 
 #[test]

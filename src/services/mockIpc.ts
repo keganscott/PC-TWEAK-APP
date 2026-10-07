@@ -11,6 +11,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import * as fx from "../generated/fixtures";
+import type { ActionDone } from "../generated/ActionDone";
 import type { AppliedChange } from "../generated/AppliedChange";
 import type { AreaCleanup } from "../generated/AreaCleanup";
 import type { AreaSize } from "../generated/AreaSize";
@@ -107,6 +108,13 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     leftExamples: [],
     skipped: [],
   });
+
+  // One-time actions leave a line in the change record, as in the engine
+  // (failures too there; here a failure is thrown before anything runs).
+  const recordAction = (done: ActionDone) => {
+    seq += 1;
+    records.push({ record: "action", seq, unixMs: Date.now(), action: done.action, done, error: null });
+  };
 
   const emit = (stage: string, message: string, tweakId: string | null = null) => {
     for (const l of listeners) l({ stage, message, tweakId });
@@ -263,7 +271,9 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     purgeStandbyMemory: () =>
       reply("purgeStandbyMemory", [], () => {
         emit("standby", "Emptying the standby list");
-        return { ...clone(fx.standbyPurge), unixMs: Date.now() };
+        const result = { ...clone(fx.standbyPurge), unixMs: Date.now() };
+        recordAction({ action: "purge_standby", cachedBefore: result.before.cachedBytes, cachedAfter: result.after.cachedBytes });
+        return result;
       }),
     cleanupMeasure: () => reply("cleanupMeasure", [], cleanupSizes),
     cleanupRun: (areas) =>
@@ -283,12 +293,22 @@ export function createMockBackend(options: MockOptions = {}): Backend {
           remaining.set(size.area, { bytes: done.leftBytes, files: done.leftFiles });
           report.areas.push(done);
         }
+        const total = (pick: (a: AreaCleanup) => number) => report.areas.reduce((sum, a) => sum + pick(a), 0);
+        recordAction({
+          action: "cleanup",
+          areas: report.areas.map((a) => a.area),
+          removedBytes: total((a) => a.removedBytes),
+          removedFiles: total((a) => a.removedFiles),
+          leftFiles: total((a) => a.leftFiles),
+        });
         return report;
       }),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {
         emit("drive", "Optimizing the Windows drive");
-        return { ...clone(fx.driveOptimization), unixMs: Date.now() };
+        const result = { ...clone(fx.driveOptimization), unixMs: Date.now() };
+        recordAction({ action: "optimize_drive", drive: result.drive, seconds: result.seconds });
+        return result;
       }),
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {

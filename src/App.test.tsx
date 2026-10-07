@@ -155,6 +155,21 @@ describe("App", () => {
     expect(within(junk).queryByText("Available again when the drive optimization finishes.")).toBeNull();
   });
 
+  it("Backups lists each one-time action in the change record with what it did", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    // The SAMPLE record already holds a cleanup.
+    expect(await screen.findByText("Cleared junk files: deleted 5.8 GB in 5,027 files, 22 left in place")).toBeTruthy();
+
+    await goTo("Tools");
+    const card = await screen.findByRole("region", { name: "Optimize the Windows drive" });
+    await userEvent.click(within(card).getByRole("button", { name: "Optimize now" }));
+    await within(card).findByText(/Windows took 41 seconds/);
+    await goTo("Backups");
+    expect(await screen.findByText("Optimized the Windows drive: drive C:, Windows took 41 seconds")).toBeTruthy();
+  });
+
   it("a safe change with a cost shows one line and needs no confirmation", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({

@@ -7,7 +7,9 @@ use ts_rs::TS;
 use super::context::{ContextResolver, UserResolution};
 use super::env::{EnvProbe, License, KNOWN_GAMES};
 use super::error::{EngineError, Result};
-use super::journal::{Journal, JournalAction, JournalEntry, JournalWarning, Record};
+use super::journal::{
+    now_ms, ActionDone, ActionRecord, Journal, JournalAction, JournalEntry, JournalWarning, OneTimeAction, Record,
+};
 use super::transaction::Transaction;
 use super::types::{
     BlockedCode, BlockedReason, ExecutionContext, PredicateOutcome, SystemEnv, Tweak, TweakMetadata, TweakState,
@@ -542,6 +544,28 @@ impl Engine {
         })?;
         self.probe.invalidate();
         Ok(())
+    }
+
+    /// Journal a one-time action that ran (Tools > One-time actions), for the
+    /// history in Backups: what it did, or why it did not. It changes no
+    /// setting, so there is nothing to undo.
+    pub fn record_action(
+        &mut self,
+        action: OneTimeAction,
+        outcome: std::result::Result<ActionDone, String>,
+    ) -> Result<()> {
+        let (done, error) = match outcome {
+            Ok(done) => (Some(done), None),
+            Err(error) => (None, Some(error)),
+        };
+        let seq = self.journal.take_seq();
+        self.journal.append_action(ActionRecord {
+            seq,
+            unix_ms: now_ms(),
+            action,
+            done,
+            error,
+        })
     }
 
     pub fn journal_view(&self) -> JournalView {

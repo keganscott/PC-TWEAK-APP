@@ -19,6 +19,7 @@ export const BLOCKED_HINT = {
   no_restore_point: "Make a restore point on Home first. Changes unlock as soon as Windows confirms it.",
   unsafe_for_device: "PeakTweaks does not make this change on this kind of device.",
   tier_required: "This change is not included in your current plan.",
+  needed_by_installed_app: "An app on this PC relies on this, so PeakTweaks leaves it as it is.",
 } as const satisfies Record<BlockedCode, string>;
 
 export function blockedHint(reason: BlockedReason): string {

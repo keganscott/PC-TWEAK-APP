@@ -6,4 +6,4 @@
  * by design: a new block class deserves a considered UI response, not a
  * fallback string.
  */
-export type BlockedCode = "anti_cheat_requirement" | "anti_cheat_eligibility" | "hardware_unsupported" | "hardware_counterproductive" | "os_version_unsupported" | "conflicting_tweak" | "insufficient_privilege" | "no_restore_point" | "unsafe_for_device" | "tier_required";
+export type BlockedCode = "anti_cheat_requirement" | "anti_cheat_eligibility" | "hardware_unsupported" | "hardware_counterproductive" | "os_version_unsupported" | "conflicting_tweak" | "insufficient_privilege" | "no_restore_point" | "unsafe_for_device" | "tier_required" | "needed_by_installed_app";

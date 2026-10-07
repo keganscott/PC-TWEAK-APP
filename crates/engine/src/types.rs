@@ -238,6 +238,9 @@ pub enum BlockedCode {
     UnsafeForDevice,
     /// The license held by the engine does not cover this tweak's tier.
     TierRequired,
+    /// An app installed on this PC relies on what this would change (the Xbox
+    /// app on Xbox sign-in). `message` names the app.
+    NeededByInstalledApp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

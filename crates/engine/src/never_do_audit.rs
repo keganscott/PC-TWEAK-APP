@@ -53,6 +53,39 @@ fn forbidden_targets(tweaks: &[Box<dyn Tweak>]) -> Vec<String> {
     found
 }
 
+/// Services Kegan ruled out (2026-10-06 brief): Windows Update, Defender and
+/// the Windows security stack, and anti-cheat. Names as Windows registers
+/// them, compared ignoring case. VERIFY each anti-cheat name against the
+/// game's own documentation (NOTES N76).
+const FORBIDDEN_SERVICES: &[(&str, &str)] = &[
+    ("wuauserv", "Windows Update"),
+    ("UsoSvc", "Windows Update"),
+    ("WaaSMedicSvc", "Windows Update"),
+    ("BITS", "Windows Update"),
+    ("DoSvc", "Windows Update"),
+    ("TrustedInstaller", "Windows Update"),
+    ("WinDefend", "Microsoft Defender"),
+    ("WdNisSvc", "Microsoft Defender"),
+    ("WdNisDrv", "Microsoft Defender"),
+    ("WdFilter", "Microsoft Defender"),
+    ("WdBoot", "Microsoft Defender"),
+    ("Sense", "Microsoft Defender"),
+    ("SecurityHealthService", "Windows Security"),
+    ("wscsvc", "Windows Security"),
+    ("mpssvc", "Windows Defender Firewall"),
+    ("vgc", "anti-cheat (Vanguard)"),
+    ("vgk", "anti-cheat (Vanguard)"),
+    ("EasyAntiCheat", "anti-cheat (Easy Anti-Cheat)"),
+    ("EasyAntiCheat_EOS", "anti-cheat (Easy Anti-Cheat)"),
+    ("BEService", "anti-cheat (BattlEye)"),
+    ("BEDaisy", "anti-cheat (BattlEye)"),
+    ("FACEIT", "anti-cheat (FACEIT)"),
+    ("FACEITService", "anti-cheat (FACEIT)"),
+    ("EAAntiCheatService", "anti-cheat (EA)"),
+    ("PnkBstrA", "anti-cheat (PunkBuster)"),
+    ("PnkBstrB", "anti-cheat (PunkBuster)"),
+];
+
 /// Folders no declared file may be in, matched without the drive and ignoring
 /// case: code-integrity policy (the vulnerable-driver blocklist is a file
 /// there), kernel drivers, and the boot files on the EFI partition.
@@ -75,6 +108,11 @@ fn forbidden_system_targets(id: &str, items: &[SysItem]) -> Vec<String> {
                 let key = format!(r"SYSTEM\CurrentControlSet\Services\{name}");
                 for (forbidden, what) in FORBIDDEN_HKLM {
                     if pattern_is_ancestor_or_equal(forbidden, &key) {
+                        found.push(format!("{id}: service {name} ({what})"));
+                    }
+                }
+                for (forbidden, what) in FORBIDDEN_SERVICES {
+                    if name == "*" || name.eq_ignore_ascii_case(forbidden) {
                         found.push(format!("{id}: service {name} ({what})"));
                     }
                 }
@@ -163,7 +201,8 @@ fn a_service_or_file_target_that_reaches_a_never_do_is_caught() {
             file(r"C:\Users\KFS\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini"),
         ],
     );
-    assert_eq!(found.len(), 6, "{found:#?}");
+    // `*` matches the TPM key and every named service below.
+    assert_eq!(found.len(), 6 + FORBIDDEN_SERVICES.len(), "{found:#?}");
     assert!(
         found[0].contains("service tpm") && found[1].contains("service *"),
         "{found:#?}"
@@ -171,6 +210,26 @@ fn a_service_or_file_target_that_reaches_a_never_do_is_caught() {
     assert!(!found
         .iter()
         .any(|f| f.contains("WSearch") || f.contains("GameUserSettings")));
+}
+
+/// Kegan's brief: never Windows Update, Defender or anti-cheat services.
+#[test]
+fn update_defender_and_anti_cheat_services_are_caught() {
+    let service = |n: &str| SysItem::Service { name: n.into() };
+    let found = forbidden_system_targets(
+        "planted",
+        &[
+            service("WUAUSERV"),
+            service("WinDefend"),
+            service("vgc"),
+            service("EasyAntiCheat_EOS"),
+            service("SysMain"),
+            service("DiagTrack"),
+        ],
+    );
+    assert_eq!(found.len(), 4, "{found:#?}");
+    assert!(found[0].contains("Windows Update") && found[1].contains("Defender"));
+    assert!(found[2].contains("Vanguard") && found[3].contains("Easy Anti-Cheat"));
 }
 
 /// Win32 calls and strings that only the forbidden features need.

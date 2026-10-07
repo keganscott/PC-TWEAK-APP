@@ -2212,3 +2212,216 @@ mod dns {
         assert!(h.engine.applied_tweak_ids().is_empty());
     }
 }
+
+/// CATALOGUE H14, H16-H18 (tweaks/services.rs).
+mod service_tools {
+    use std::sync::Arc;
+
+    use crate::context::ContextResolver;
+    use crate::error::EngineError;
+    use crate::hardware::{BootDisk, DiskMedia, HardwareReport};
+    use crate::probe::Probe;
+    use crate::registry::{fake::FakeRegistry, Hive};
+    use crate::system::{FakeSystem, ServiceStart, SysItem, SysState};
+    use crate::testutil::{user, Harness};
+    use crate::tweaks::services::*;
+    use crate::types::{BlockedCode, PredicateOutcome, RawValue, SystemEnv, Tweak, TweakState};
+
+    const SERVICES_KEY: &str = r"SYSTEM\CurrentControlSet\Services";
+    const GAMING_SERVICES: &str = "GamingServices";
+    const FAMILIES: &str =
+        r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Families";
+
+    fn svc(name: &str) -> SysItem {
+        SysItem::Service { name: name.into() }
+    }
+
+    fn state(start: ServiceStart, running: bool) -> SysState {
+        SysState::Service { start, running }
+    }
+
+    /// Windows has the service installed: its key exists, and the fake system
+    /// knows its start type.
+    fn install(h: &Harness, name: &str, start: ServiceStart, running: bool) {
+        h.fake.set_external(
+            Hive::LocalMachine,
+            &format!(r"{SERVICES_KEY}\{name}"),
+            "Start",
+            RawValue::dword(2),
+        );
+        h.sys.set(&svc(name), state(start, running));
+    }
+
+    fn status(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn search_indexing_is_turned_off_and_undo_restores_how_it_started_and_ran() {
+        let mut h = Harness::new(vec![Box::new(SEARCH_INDEXING)]);
+        install(&h, "WSearch", ServiceStart::DelayedAutomatic, true);
+        assert_eq!(status(&h, SEARCH_INDEXING.id), TweakState::Default);
+
+        h.engine.apply(SEARCH_INDEXING.id).unwrap();
+        assert_eq!(h.sys.get(&svc("WSearch")), state(ServiceStart::Disabled, false));
+        assert_eq!(status(&h, SEARCH_INDEXING.id), TweakState::Applied);
+
+        h.engine.revert(SEARCH_INDEXING.id).unwrap();
+        assert_eq!(h.sys.get(&svc("WSearch")), state(ServiceStart::DelayedAutomatic, true));
+        assert_eq!(status(&h, SEARCH_INDEXING.id), TweakState::Default);
+    }
+
+    #[test]
+    fn a_service_already_off_on_this_pc_is_listed_as_done() {
+        let h = Harness::new(vec![Box::new(TELEMETRY_SERVICE)]);
+        install(&h, "DiagTrack", ServiceStart::Disabled, false);
+        assert_eq!(status(&h, TELEMETRY_SERVICE.id), TweakState::Foreign);
+    }
+
+    #[test]
+    fn a_tool_whose_services_are_not_installed_is_not_offered() {
+        let mut h = Harness::new(vec![Box::new(SEARCH_INDEXING)]);
+        match status(&h, SEARCH_INDEXING.id) {
+            TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::OsVersionUnsupported),
+            other => panic!("{other:?}"),
+        }
+        let err = h.engine.apply(SEARCH_INDEXING.id).unwrap_err();
+        assert!(matches!(err, EngineError::Blocked { .. }), "{err:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn only_installed_xbox_services_are_changed() {
+        let mut h = Harness::new(vec![Box::new(XBOX_SERVICES)]);
+        install(&h, "XblAuthManager", ServiceStart::Manual, false);
+        install(&h, "XblGameSave", ServiceStart::Manual, false);
+        h.engine.apply(XBOX_SERVICES.id).unwrap();
+        assert_eq!(h.sys.get(&svc("XblAuthManager")), state(ServiceStart::Disabled, false));
+        assert_eq!(h.sys.get(&svc("XblGameSave")), state(ServiceStart::Disabled, false));
+        assert_eq!(
+            h.sys.get(&svc("XboxNetApiSvc")),
+            SysState::Absent,
+            "not installed, not touched"
+        );
+        h.engine.revert(XBOX_SERVICES.id).unwrap();
+        assert_eq!(h.sys.get(&svc("XblAuthManager")), state(ServiceStart::Manual, false));
+    }
+
+    #[test]
+    fn xbox_services_are_never_offered_with_game_pass_or_the_xbox_app() {
+        // Game Pass: the Gaming Services service is installed.
+        let mut h = Harness::new(vec![Box::new(XBOX_SERVICES)]);
+        install(&h, "XblAuthManager", ServiceStart::Manual, false);
+        install(&h, GAMING_SERVICES, ServiceStart::Automatic, true);
+        match status(&h, XBOX_SERVICES.id) {
+            TweakState::Blocked { reason } => {
+                assert_eq!(reason.code, BlockedCode::NeededByInstalledApp);
+                assert!(reason.message.contains("Game Pass"), "{}", reason.message);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(h.engine.apply(XBOX_SERVICES.id).is_err());
+        assert_eq!(h.sys.get(&svc("XblAuthManager")), state(ServiceStart::Manual, false));
+
+        // The Xbox app, installed for the signed-in user.
+        let h = Harness::new(vec![Box::new(XBOX_SERVICES)]);
+        install(&h, "XblAuthManager", ServiceStart::Manual, false);
+        h.fake.set_external(
+            Hive::CurrentUser,
+            &format!(r"{FAMILIES}\Microsoft.GamingApp_8wekyb3d8bbwe\Microsoft.GamingApp_1_x64__8wekyb3d8bbwe"),
+            "x",
+            RawValue::dword(1),
+        );
+        match status(&h, XBOX_SERVICES.id) {
+            TweakState::Blocked { reason } => assert!(reason.message.contains("Xbox app"), "{}", reason.message),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_applied_xbox_change_stays_undoable_after_the_xbox_app_arrives() {
+        let fake = Arc::new(FakeRegistry::new());
+        let sys = Arc::new(FakeSystem::new());
+        let res = ContextResolver::new(user(true), true, fake.clone()).with_system(sys.clone());
+        fake.set_external(
+            Hive::LocalMachine,
+            &format!(r"{SERVICES_KEY}\XblAuthManager"),
+            "Start",
+            RawValue::dword(4),
+        );
+        fake.set_external(
+            Hive::LocalMachine,
+            &format!(r"{SERVICES_KEY}\{GAMING_SERVICES}"),
+            "Start",
+            RawValue::dword(2),
+        );
+        sys.set(&svc("XblAuthManager"), state(ServiceStart::Disabled, false));
+        assert_eq!(XBOX_SERVICES.read_state(&res, true).unwrap(), TweakState::Applied);
+        assert!(matches!(
+            XBOX_SERVICES.read_state(&res, false).unwrap(),
+            TweakState::Blocked { .. }
+        ));
+    }
+
+    fn env_with_boot(disk: Probe<BootDisk>) -> SystemEnv {
+        let hardware = HardwareReport {
+            os: Probe::unknown("-"),
+            cpu: Probe::unknown("-"),
+            memory: Probe::unknown("-"),
+            gpus: Probe::unknown("-"),
+            gpu_drivers: Probe::unknown("-"),
+            boot_disk: disk,
+            display: Probe::unknown("-"),
+            is_laptop: Probe::unknown("-"),
+            rig_class: Probe::unknown("-"),
+        };
+        SystemEnv {
+            hardware: Some(hardware),
+            ..SystemEnv::default()
+        }
+    }
+
+    fn disk(media: DiskMedia) -> Probe<BootDisk> {
+        Probe::yes(BootDisk {
+            media,
+            name: "disk".into(),
+        })
+    }
+
+    #[test]
+    fn sysmain_is_offered_only_when_windows_is_known_to_be_on_an_ssd() {
+        let blocked = |env: &SystemEnv| match SYSMAIN.evaluate_predicate(env) {
+            PredicateOutcome::Block(r) => Some(r.code),
+            PredicateOutcome::Allow => None,
+        };
+        assert_eq!(blocked(&env_with_boot(disk(DiskMedia::Ssd))), None);
+        assert_eq!(
+            blocked(&env_with_boot(disk(DiskMedia::Hdd))),
+            Some(BlockedCode::HardwareCounterproductive)
+        );
+        assert!(blocked(&env_with_boot(Probe::unknown("query failed"))).is_some());
+        assert!(blocked(&SystemEnv::default()).is_some(), "not probed yet is not an SSD");
+        assert!(matches!(
+            SEARCH_INDEXING.evaluate_predicate(&SystemEnv::default()),
+            PredicateOutcome::Allow
+        ));
+    }
+
+    #[test]
+    fn every_service_tool_declares_exactly_its_services() {
+        for t in all() {
+            let declared = t.system_targets();
+            assert!(!declared.is_empty(), "{}", t.id());
+            assert!(declared
+                .iter()
+                .all(|i| matches!(i, SysItem::Service { name } if name != "*")));
+            assert!(t.touches().is_empty(), "{}", t.id());
+        }
+    }
+}

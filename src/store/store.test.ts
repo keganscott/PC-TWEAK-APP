@@ -267,3 +267,11 @@ describe("apply the safe set", () => {
     expect(change.failed.map((f) => f.tweakId)).toEqual(["fixture.blocked"]);
   });
 });
+
+describe("recommended changes", () => {
+  it("leave out look-and-feel changes, which stay one click each in Tools", async () => {
+    const { store } = await booted({ gateOpen: true });
+    const tweaks = store.getState().tweaks.map((t) => (t.id === "fixture.default" ? { ...t, category: "appearance" } : t));
+    expect(recommendedIds(tweaks)).toEqual([]);
+  });
+});

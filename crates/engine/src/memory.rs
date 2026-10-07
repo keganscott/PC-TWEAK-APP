@@ -11,10 +11,13 @@
 //! which reaches into game processes (plan section 12), so that is left out
 //! (NOTES N69).
 //!
-//! VERIFY: `NtSetSystemInformation` with `SystemMemoryListInformation` (80)
-//! and the command `MemoryPurgeStandbyList` (4) is undocumented; the numbers
-//! are from memory (Sysinternals RAMMap's "Empty Standby List" makes this
-//! call). The Windows test below runs it on an elevated runner.
+//! `NtSetSystemInformation` with `SystemMemoryListInformation` (80) and the
+//! command `MemoryPurgeStandbyList` (4) is undocumented (Sysinternals RAMMap's
+//! "Empty Standby List" makes this call). Checked 2026-10-07 against System
+//! Informer's `phnt/ntexapi.h` (class 80, command 4, the signature, and that it
+//! needs `SeProfileSingleProcessPrivilege`) and on Windows Server 2025 by the
+//! Windows test below in CI run 37571551831: files kept in memory went from
+//! 4723 to 197 MiB.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -111,9 +114,9 @@ mod imp {
     use super::{MemoryLists, MemoryUse};
     use crate::error::{EngineError, Result};
 
-    /// `SYSTEM_INFORMATION_CLASS::SystemMemoryListInformation`. VERIFY.
+    /// `SYSTEM_INFORMATION_CLASS::SystemMemoryListInformation` (phnt).
     const SYSTEM_MEMORY_LIST_INFORMATION: i32 = 80;
-    /// `SYSTEM_MEMORY_LIST_COMMAND::MemoryPurgeStandbyList`. VERIFY.
+    /// `SYSTEM_MEMORY_LIST_COMMAND::MemoryPurgeStandbyList` (phnt).
     const MEMORY_PURGE_STANDBY_LIST: i32 = 4;
 
     type NtSetSystemInformation = unsafe extern "system" fn(i32, *mut c_void, u32) -> NTSTATUS;
@@ -185,7 +188,7 @@ mod imp {
         fn purge_standby(&self) -> Result<()> {
             enable_profile_privilege()?;
             // SAFETY: ntdll is always loaded; the pointer is transmuted to the
-            // function's documented-by-use signature (VERIFY above), and the
+            // function's signature in phnt (see the note at the top), and the
             // command is a 4-byte value that outlives the call.
             unsafe {
                 let ntdll = GetModuleHandleW(w!("ntdll.dll")).map_err(|e| EngineError::win32("GetModuleHandleW", e))?;

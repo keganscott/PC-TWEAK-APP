@@ -252,6 +252,12 @@ impl ProofService {
         }
     }
 
+    /// True while a capture is recording, so other work that would disturb
+    /// the measurement (emptying the standby list) can wait for it.
+    pub fn is_capturing(&self) -> bool {
+        matches!(self.busy.try_lock(), Err(TryLockError::WouldBlock))
+    }
+
     pub fn runs(&self, session_id: &str) -> Result<Vec<ProofRun>> {
         self.store.runs(session_id)
     }

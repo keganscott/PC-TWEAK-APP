@@ -275,3 +275,20 @@ describe("recommended changes", () => {
     expect(recommendedIds(tweaks)).toEqual([]);
   });
 });
+
+describe("one-time actions", () => {
+  it("empties the standby list and keeps the before and after for the card", async () => {
+    const { store } = await booted();
+    await store.actions.purgeStandby();
+    const op = store.getState().standbyOp;
+    expect(op.status).toBe("done");
+    if (op.status !== "done") return;
+    expect(op.value.before.cachedBytes).toBeGreaterThan(op.value.after.cachedBytes);
+  });
+
+  it("a refused purge is reported with the engine's reason, not dropped", async () => {
+    const { store } = await booted({ failures: { purgeStandbyMemory: { kind: "internal", detail: "no privilege" } } });
+    await store.actions.purgeStandby();
+    expect(store.getState().standbyOp).toMatchObject({ status: "failed", error: { kind: "internal", detail: "no privilege" } });
+  });
+});

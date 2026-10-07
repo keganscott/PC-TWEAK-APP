@@ -3,6 +3,7 @@ import { useId, useMemo, useState } from "react";
 import type { TweakView } from "../../generated/TweakView";
 import { blockedHint } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
+import { formatDateTime, formatNumber } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { recommendedIds } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
@@ -94,8 +95,75 @@ export function ToolsView() {
             </ul>
           </section>
         ))}
+        <OneTimeActions />
       </div>
     </>
+  );
+}
+
+/** Actions that change no setting: no restore point needed, nothing to undo. */
+function OneTimeActions() {
+  return (
+    <section aria-labelledby="cat-one-time">
+      <div className="mb-3">
+        <h2 id="cat-one-time" className="text-base font-extrabold tracking-tight">
+          One-time actions
+        </h2>
+        <p className="mt-1 text-sm text-ink-muted">These change no setting, so there is nothing to undo.</p>
+      </div>
+      <ul className="flex flex-col gap-3">
+        <li>
+          <StandbyCard />
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+const gb = (bytes: number) => `${formatNumber(bytes / 1024 ** 3)} GB`;
+
+/** Catalogue E6. Refused by the engine while a Proof recording runs. */
+function StandbyCard() {
+  const op = useStore((s) => s.standbyOp);
+  const capturing = useStore((s) => s.proof.capturingSession !== null);
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { purgeStandby } = useActions();
+  const headingId = useId();
+  const result = op.status === "done" ? op.value : null;
+
+  return (
+    <Card className="p-4" aria-labelledby={headingId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 id={headingId} className="font-bold">
+              Empty the standby list
+            </h3>
+            {sample && <SampleBadge />}
+          </div>
+          <p className="mt-1 text-sm text-ink-muted">
+            Windows keeps files it read recently in memory that nothing else is using, and gives that memory to a
+            program as soon as it asks. This empties that list now; Windows fills it again as files are read.
+          </p>
+          {capturing && <p className="mt-2 text-sm text-ink-muted">Available again when the Proof recording finishes.</p>}
+          {result && (
+            <p className="mt-2 text-sm" role="status">
+              Emptied {formatDateTime(result.unixMs)}. Files kept in memory: {gb(result.before.cachedBytes)} before,{" "}
+              {gb(result.after.cachedBytes)} after.
+            </p>
+          )}
+        </div>
+        <Button busy={op.status === "running"} disabled={capturing} onClick={() => void purgeStandby()}>
+          Empty it now
+        </Button>
+      </div>
+      {op.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
+    </Card>
   );
 }
 

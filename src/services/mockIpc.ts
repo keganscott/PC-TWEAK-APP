@@ -241,6 +241,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         warnings: clone(fx.journalView.warnings),
         offlineError: null,
       })),
+    purgeStandbyMemory: () =>
+      reply("purgeStandbyMemory", [], () => {
+        emit("standby", "Emptying the standby list");
+        return { ...clone(fx.standbyPurge), unixMs: Date.now() };
+      }),
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {
         const now = Date.now();

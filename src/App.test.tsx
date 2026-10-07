@@ -97,6 +97,16 @@ describe("App", () => {
     await waitFor(() => expect(within(card).getByText("Optimized")).toBeTruthy());
   });
 
+  it("Tools empties the standby list without a restore point and shows before and after", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = await screen.findByRole("region", { name: "Empty the standby list" });
+    expect(within(card).getByText("SAMPLE")).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Empty it now" }));
+    expect(await within(card).findByText(/6\.0 GB before, 1\.0 GB after/)).toBeTruthy();
+  });
+
   it("a safe change with a cost shows one line and needs no confirmation", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({

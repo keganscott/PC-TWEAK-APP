@@ -37,7 +37,8 @@
             "allow-proof-capture",
             "allow-proof-compare",
             "allow-proof-list-sessions",
-            "allow-proof-runs"
+            "allow-proof-runs",
+            "allow-purge-standby-memory"
           ]
         }
       ]

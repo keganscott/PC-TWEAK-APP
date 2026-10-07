@@ -25,6 +25,7 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { StandbyPurge } from "../generated/StandbyPurge";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 import { explain, toEngineError } from "../lib/errors";
@@ -87,6 +88,8 @@ export interface State {
   revertAllOp: Op<RevertResult[]>;
   /** "Apply the safe set", "Apply recommended" and the result card's Undo. */
   applyManyOp: Op<null>;
+  /** "Empty the standby list" (catalogue E6); keeps the last result for its card. */
+  standbyOp: Op<StandbyPurge>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   bus: BusEntry[];
@@ -114,6 +117,7 @@ export function initialState(sample: boolean): State {
     tweakOps: {},
     revertAllOp: IDLE,
     applyManyOp: IDLE,
+    standbyOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     bus: [],
@@ -331,6 +335,18 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     /** Undo each in turn (the result card's "Undo these"). */
     async revertMany(ids: readonly string[]) {
       await many(ids, "revert");
+    },
+
+    /** Empty Windows' standby list. Changes no setting, so nothing to refresh or undo. */
+    async purgeStandby() {
+      if (state.standbyOp.status === "running") return;
+      set((s) => ({ ...s, standbyOp: RUNNING }));
+      try {
+        const result = await backend.purgeStandbyMemory();
+        set((s) => ({ ...s, standbyOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, standbyOp: failed(e) }));
+      }
     },
 
     async revertAll() {

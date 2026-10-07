@@ -20,6 +20,7 @@ use crate::journal::{
     CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind, Record, RestoreMethod,
     RestorePointRecord,
 };
+use crate::memory::{MemoryUse, StandbyPurge};
 use crate::proof::metrics::compute_stats;
 use crate::proof::nvml::{ThrottleReason, ThrottleSeen, ThrottleSummary};
 use crate::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
@@ -469,6 +470,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { ProofSessionSummary } from \"./ProofSessionSummary\";\n\
          import type { RestoreOutcome } from \"./RestoreOutcome\";\n\
          import type { RevertResult } from \"./RevertResult\";\n\
+         import type { StandbyPurge } from \"./StandbyPurge\";\n\
          import type { SystemAudit } from \"./SystemAudit\";\n\
          import type { TweakView } from \"./TweakView\";\n\n",
     );
@@ -523,6 +525,25 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             description: "PeakTweaks: before changes".into(),
             method: RestoreMethod::Api,
             protection_enabled_by_us: None,
+        },
+    );
+    // The shape of a real result; the numbers are illustrative (SAMPLE in the UI).
+    ts_const(
+        &mut out,
+        "standbyPurge",
+        "StandbyPurge",
+        &StandbyPurge {
+            before: MemoryUse {
+                total_bytes: 16 * GIB,
+                available_bytes: 9 * GIB,
+                cached_bytes: 6 * GIB,
+            },
+            after: MemoryUse {
+                total_bytes: 16 * GIB,
+                available_bytes: 9 * GIB + GIB / 2,
+                cached_bytes: GIB,
+            },
+            unix_ms: 1_791_331_200_000,
         },
     );
     ts_const(

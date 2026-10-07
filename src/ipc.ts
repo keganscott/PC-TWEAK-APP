@@ -23,6 +23,7 @@ import type { RestoreOutcome } from "./generated/RestoreOutcome";
 import type { RevertResult } from "./generated/RevertResult";
 import type { Settings } from "./generated/Settings";
 import type { Side } from "./generated/Side";
+import type { StandbyPurge } from "./generated/StandbyPurge";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
 
@@ -92,6 +93,8 @@ export const engine = {
   revertTweak: (id: string) => call<JournalEntry[]>("revert_tweak", { id }),
   revertAll: () => call<RevertResult[]>("revert_all"),
   listJournal: () => call<JournalView>("list_journal"),
+  /** Empty Windows' standby list (catalogue E6). Changes no setting; nothing to undo. */
+  purgeStandbyMemory: () => call<StandbyPurge>("purge_standby_memory"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

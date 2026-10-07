@@ -14,7 +14,8 @@ use tauri::{AppHandle, Emitter, State};
 
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
-use peaktweaks_engine::journal::JournalEntry;
+use peaktweaks_engine::journal::{now_ms, JournalEntry};
+use peaktweaks_engine::memory::{self, StandbyPurge};
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use peaktweaks_engine::proof::verdict::Comparison;
@@ -366,4 +367,30 @@ pub async fn revert_all(app: AppHandle, engine: State<'_, EngineHandle>) -> Resu
 #[tauri::command]
 pub async fn list_journal(engine: State<'_, EngineHandle>) -> Result<JournalView> {
     blocking_recovering(&engine, |e| Ok(e.journal_view())).await
+}
+
+/// Empty Windows' standby list (catalogue E6). It changes no setting, so it
+/// needs no restore point and leaves nothing to undo. Refused while a Proof
+/// capture records, because it would disturb the measurement.
+#[tauri::command]
+pub async fn purge_standby_memory(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<StandbyPurge> {
+    let shared = engine.get()?;
+    if proof_service(&shared).is_ok_and(|svc| svc.is_capturing()) {
+        return Err(EngineError::Internal {
+            detail: "a Proof recording is running; empty the standby list after it finishes".into(),
+        });
+    }
+    progress(&app, "standby", None, "Emptying the standby list");
+    let out = tauri::async_runtime::spawn_blocking(|| memory::purge_standby(memory::system().as_ref(), now_ms()))
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("memory worker failed: {e}"),
+        })?;
+    progress(
+        &app,
+        if out.is_ok() { "standby_done" } else { "standby_failed" },
+        None,
+        "",
+    );
+    out
 }

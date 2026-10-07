@@ -19,6 +19,7 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { StandbyPurge } from "../generated/StandbyPurge";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 
@@ -38,6 +39,7 @@ export interface Backend {
   revertTweak(id: string): Promise<JournalEntry[]>;
   revertAll(): Promise<RevertResult[]>;
   listJournal(): Promise<JournalView>;
+  purgeStandbyMemory(): Promise<StandbyPurge>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

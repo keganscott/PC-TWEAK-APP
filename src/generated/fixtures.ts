@@ -9,6 +9,7 @@ import type { ProofRun } from "./ProofRun";
 import type { ProofSessionSummary } from "./ProofSessionSummary";
 import type { RestoreOutcome } from "./RestoreOutcome";
 import type { RevertResult } from "./RevertResult";
+import type { StandbyPurge } from "./StandbyPurge";
 import type { SystemAudit } from "./SystemAudit";
 import type { TweakView } from "./TweakView";
 
@@ -788,6 +789,20 @@ export const restoreOutcome = {
   "method": "api",
   "protectionEnabledByUs": null
 } satisfies RestoreOutcome;
+
+export const standbyPurge = {
+  "before": {
+    "totalBytes": 17179869184,
+    "availableBytes": 9663676416,
+    "cachedBytes": 6442450944
+  },
+  "after": {
+    "totalBytes": 17179869184,
+    "availableBytes": 10200547328,
+    "cachedBytes": 1073741824
+  },
+  "unixMs": 1791331200000
+} satisfies StandbyPurge;
 
 export const progressEvent = {
   "stage": "apply",

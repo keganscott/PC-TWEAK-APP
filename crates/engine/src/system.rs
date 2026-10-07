@@ -372,6 +372,12 @@ impl SystemBackend for FakeSystem {
 // Parsing tool output (pure, so tested on any OS)
 // ---------------------------------------------------------------------------
 
+/// Whether the hibernation read printed "on". Empty output (no value) is off.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn hibernation_on(output: &str) -> bool {
+    !matches!(output.trim(), "" | "0")
+}
+
 /// A lower-case GUID without braces, if `s` is one.
 // Used by system_win.rs and the tests; dead on other OS builds.
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
@@ -416,6 +422,13 @@ pub(crate) fn setting_indexes(output: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hibernation_reads_off_when_windows_has_no_value() {
+        assert!(!hibernation_on(""));
+        assert!(!hibernation_on("0\r\n"));
+        assert!(hibernation_on("1\r\n"));
+    }
 
     #[test]
     fn power_scheme_guids_are_read_whatever_the_language() {

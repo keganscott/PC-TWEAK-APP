@@ -1,4 +1,4 @@
-﻿//! The real `SystemBackend` on Windows.
+//! The real `SystemBackend` on Windows.
 //!
 //! Nothing here goes through a shell command line. Windows' own tools
 //! (`powercfg.exe`, `gpupdate.exe`) are started by absolute path under
@@ -18,7 +18,9 @@ use std::time::Duration;
 
 use super::error::{EngineError, Result};
 use super::proc::run_limited;
-use super::system::{guid, guids_in, setting_indexes, NetAdapter, SideEffect, SysItem, SysState, SystemBackend};
+use super::system::{
+    guid, guids_in, hibernation_on, setting_indexes, NetAdapter, SideEffect, SysItem, SysState, SystemBackend,
+};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const LIMIT: Duration = Duration::from_secs(60);
@@ -216,13 +218,17 @@ impl SystemBackend for WinSystem {
                 })
             }
             SysItem::Hibernation => {
+                // No HibernateEnabled value (Windows Server, or a PC where
+                // hibernation was never set up) means hibernation is not on.
                 let out = powershell(
                     "hibernation",
-                    "(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power' -Name HibernateEnabled \
-                     -ErrorAction Stop).HibernateEnabled",
+                    "$v = (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power' \
+                     -ErrorAction Stop).HibernateEnabled; if ($null -eq $v) { '0' } else { $v }",
                     &[],
                 )?;
-                Ok(SysState::Bool { on: out.trim() != "0" })
+                Ok(SysState::Bool {
+                    on: hibernation_on(&out),
+                })
             }
             SysItem::Service { name } => {
                 need_name(name, "service")?;

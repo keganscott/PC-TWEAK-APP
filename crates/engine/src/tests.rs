@@ -989,6 +989,35 @@ fn proof_verdict_text_is_the_only_place_a_result_is_worded() {
 }
 
 #[test]
+fn windows_folders_come_from_windows_not_the_environment() {
+    // Whoever starts PeakTweaks sets its environment, so a planted SystemRoot
+    // or windir must never pick which powershell.exe or System32 tool runs
+    // elevated (NOTES N72). Paths come from sysdirs (GetSystemDirectoryW).
+    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut hits = Vec::new();
+    fn walk(dir: &std::path::Path, hits: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                if p.file_name().is_some_and(|n| n != "target") {
+                    walk(&p, hits);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let src = std::fs::read_to_string(&p).unwrap();
+                for (n, line) in src.lines().enumerate() {
+                    let l = line.to_ascii_lowercase();
+                    if l.contains("var") && (l.contains("(\"systemroot\")") || l.contains("(\"windir\")")) {
+                        hits.push(format!("{}:{}", p.display(), n + 1));
+                    }
+                }
+            }
+        }
+    }
+    walk(&crates, &mut hits);
+    assert!(hits.is_empty(), "Windows folder read from the environment: {hits:?}");
+}
+
+#[test]
 fn settings_persist_and_the_override_wins_over_the_detected_rig_class() {
     use crate::hardware::RigClass;
     use crate::settings::{Language, Settings};

@@ -75,8 +75,9 @@ fn fail(what: &str, detail: impl Into<String>) -> EngineError {
 }
 
 fn system32(exe: &str) -> Result<PathBuf> {
-    let root = std::env::var_os("SystemRoot").ok_or_else(|| fail(exe, "%SystemRoot% is not set"))?;
-    let path = PathBuf::from(root).join("System32").join(exe);
+    // From Windows, not %SystemRoot%, which whoever starts PeakTweaks can set.
+    let dir = crate::sysdirs::system32().map_err(|e| fail(exe, format!("could not find the System32 folder: {e}")))?;
+    let path = dir.join(exe);
     if path.is_file() {
         Ok(path)
     } else {

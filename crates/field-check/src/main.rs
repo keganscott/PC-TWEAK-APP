@@ -149,8 +149,9 @@ Read-only unless a flag below says otherwise. Run from an elevated PowerShell.
     }
 
     fn system32(exe: &str) -> Result<PathBuf, String> {
-        let root = std::env::var_os("SystemRoot").ok_or("%SystemRoot% is not set")?;
-        Ok(PathBuf::from(root).join("System32").join(exe))
+        let dir =
+            peaktweaks_engine::sysdirs::system32().map_err(|e| format!("could not find the System32 folder: {e}"))?;
+        Ok(dir.join(exe))
     }
 
     fn run_tool(exe: &str, args: &[&str]) -> Result<Value, String> {

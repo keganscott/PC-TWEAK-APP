@@ -3,7 +3,8 @@
 //! Scripts are `&'static str`, so they are fixed at compile time: there is no
 //! way to interpolate anything from the webview, a game name or a file path into
 //! a command line. The executable is addressed by absolute path under
-//! `%SystemRoot%`, not looked up on `PATH`. Every call has a timeout, and the
+//! System32 as Windows reports it (not `%SystemRoot%`, which whoever starts
+//! PeakTweaks can set), never looked up on `PATH`. Every call has a timeout, and the
 //! exit code and stderr come back to the caller.
 
 use std::os::windows::process::CommandExt;
@@ -24,12 +25,12 @@ pub struct ShellOutput {
 }
 
 fn powershell_path() -> Result<PathBuf> {
-    let root = std::env::var_os("SystemRoot").ok_or_else(|| EngineError::Command {
+    let dir = crate::sysdirs::system32().map_err(|e| EngineError::Command {
         what: "PowerShell".into(),
         exit_code: None,
-        detail: "%SystemRoot% is not set".into(),
+        detail: format!("could not find the System32 folder: {e}"),
     })?;
-    let path = PathBuf::from(root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    let path = dir.join(r"WindowsPowerShell\v1.0\powershell.exe");
     if path.is_file() {
         Ok(path)
     } else {

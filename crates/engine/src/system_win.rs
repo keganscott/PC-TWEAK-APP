@@ -1595,6 +1595,133 @@ mod tests {
         println!("netsh after: {:?}", show());
     }
 
+    /// Changes this PC, then puts it back: each tool that changes something
+    /// other than registry values (services, power plans, TCP settings, DNS
+    /// servers, ...) and restarts nothing is applied and undone through the
+    /// engine. After the undo the tool must read as it did before, and every
+    /// item the apply recorded must read exactly as recorded before the
+    /// change. Tools that restart network adapters are left to their own
+    /// check; tools this PC cannot take are named and skipped.
+    #[test]
+    fn every_system_tool_applies_and_undoes_on_this_pc() {
+        use crate::journal::{ChangeEntry, JournalAction, Record};
+        use crate::types::TweakState;
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change this PC's settings for real");
+            return;
+        }
+        let tools: Vec<String> = crate::tweaks::catalogue()
+            .iter()
+            .filter(|t| !t.system_targets().is_empty() && t.effect_targets().is_empty())
+            .map(|t| t.id().to_owned())
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let (res, mut engine) = real_engine(dir.path(), crate::tweaks::catalogue());
+        let state_of = |engine: &crate::engine::Engine, id: &str| -> TweakState {
+            engine
+                .list()
+                .unwrap()
+                .into_iter()
+                .find(|v| v.metadata.id == id)
+                .expect("listed")
+                .state
+        };
+        let changes_after = |engine: &crate::engine::Engine, id: &str, seq: u64| -> Vec<ChangeEntry> {
+            engine
+                .journal_view()
+                .records
+                .into_iter()
+                .filter_map(|r| match r {
+                    Record::Change(c) if c.tweak_id == id && c.action == JournalAction::Apply && c.seq > seq => Some(c),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let mut tried = Vec::new();
+        let mut failed = Vec::new();
+        for id in &tools {
+            let view = engine
+                .list()
+                .unwrap()
+                .into_iter()
+                .find(|v| v.metadata.id == *id)
+                .expect("listed");
+            if let Some(reason) = &view.blocked {
+                println!("{id}: skipped, blocked here ({:?}) {}", reason.code, reason.message);
+                continue;
+            }
+            if view.state != TweakState::Default {
+                println!("{id}: skipped, reads {:?} here", view.state);
+                continue;
+            }
+            let seq = engine.journal_view().records.iter().map(Record::seq).max().unwrap_or(0);
+            if let Err(e) = engine.apply(id) {
+                println!("{id}: APPLY FAILED: {e}");
+                failed.push(format!("{id}: apply: {e}"));
+                continue;
+            }
+            let applied = state_of(&engine, id);
+            let changes = changes_after(&engine, id, seq);
+            for c in &changes {
+                println!("{id}: {}: {:?} -> {:?}", c.item.describe(), c.previous, c.written);
+            }
+            if let Err(e) = engine.revert(id) {
+                println!("{id}: UNDO FAILED: {e}");
+                failed.push(format!("{id}: undo: {e}"));
+                continue;
+            }
+            let mut problems = Vec::new();
+            if applied != TweakState::Applied {
+                problems.push(format!("read {applied:?} after Apply"));
+            }
+            if changes.is_empty() {
+                problems.push("Apply recorded no change".to_owned());
+            }
+            let after = state_of(&engine, id);
+            if after != TweakState::Default {
+                problems.push(format!("read {after:?} after Undo"));
+            }
+            // Settings of a power plan the apply made are gone with the plan,
+            // which must read Absent again; they are not compared.
+            let made: Vec<&str> = changes
+                .iter()
+                .filter_map(|c| match (&c.item, &c.previous) {
+                    (SysItem::PowerScheme { guid }, SysState::Absent) => Some(guid.as_str()),
+                    _ => None,
+                })
+                .collect();
+            for c in &changes {
+                if matches!(&c.item, SysItem::PowerSetting { scheme, .. } if made.contains(&scheme.as_str())) {
+                    continue;
+                }
+                match res.read_system(&c.item) {
+                    Ok(now) if now == c.previous => {}
+                    Ok(now) => problems.push(format!("{} reads {now:?}, was {:?}", c.item.describe(), c.previous)),
+                    Err(e) => problems.push(format!("{} could not be read: {e}", c.item.describe())),
+                }
+            }
+            if problems.is_empty() {
+                println!("{id}: applied and undone, {} changes put back", changes.len());
+                tried.push(id.clone());
+            } else {
+                for p in &problems {
+                    println!("{id}: {p}");
+                }
+                failed.push(format!("{id}: {}", problems.join("; ")));
+            }
+        }
+        println!(
+            "{} system tools, {} applied and undone here, {} failed",
+            tools.len(),
+            tried.len(),
+            failed.len()
+        );
+        assert!(failed.is_empty(), "failed: {failed:#?}");
+        assert!(!tried.is_empty(), "no system tool could be tried here");
+    }
+
     /// DNS servers (catalogue H25) on this PC, through the engine: each
     /// connected adapter's servers are read, the tool is applied (every one
     /// with IPv4 must then read 1.1.1.1, 1.0.0.1) and undone (every one must

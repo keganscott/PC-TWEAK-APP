@@ -290,6 +290,24 @@ jobs:
           reg add 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' /v TaskbarAnimations /t REG_DWORD /d 1 /f
           cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_registry_tool_applies_and_undoes_on_this_pc
 
+      # Every tool that changes something other than registry values and
+      # restarts nothing (services, power plan, TCP settings, DNS servers,
+      # ...), applied and undone through the engine; after each undo every
+      # item the apply recorded must read as recorded before it (same gate).
+      - name: Every system tool applied and undone on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        shell: pwsh
+        run: |
+          # Start Windows Search if this runner has it, so the search
+          # indexing tool has something to turn off and put back.
+          if (Get-Service WSearch -ErrorAction SilentlyContinue) {
+            Set-Service WSearch -StartupType Manual -ErrorAction Continue
+            Start-Service WSearch -ErrorAction Continue
+          }
+          Write-Host "prepared WSearch: $((Get-Service WSearch -ErrorAction SilentlyContinue).Status)"
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_system_tool_applies_and_undoes_on_this_pc
+
       # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
       # set by hand and put back (same gate). The runner has no Wi-Fi, so the
       # tool itself is not offered there. Read only: the devices MSI mode

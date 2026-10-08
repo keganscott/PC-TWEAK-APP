@@ -203,18 +203,15 @@ impl Tweak for CsrssPriority {
             name: "Client Server Runtime priority".into(),
             // VERIFY the description of csrss.exe (NOTES N79).
             summary: "Asks Windows to start csrss.exe (Client Server Runtime, a core Windows process that takes part \
-                      in handling mouse and keyboard input) at Realtime CPU priority and High disk priority."
+                      in handling mouse and keyboard input) at Realtime CPU priority, the highest there is, and High \
+                      disk priority. Windows already runs it at High CPU priority."
                 .into(),
             target: format!(r"HKLM\{key}\{CPU}; HKLM\{key}\{IO}").into(),
             category: "scheduling".into(),
             tier: Tier::Pro,
             safety: SafetyTier::Extreme,
             impact: Impact::Moderate,
-            tradeoff: Some(
-                "Realtime is the highest priority there is. Windows already runs csrss.exe high, so other \
-                 programs may get less CPU time. Needs a restart."
-                    .into(),
-            ),
+            tradeoff: Some("Other programs may get less processor time. Needs a restart.".into()),
             requires_reboot: true,
         }
     }

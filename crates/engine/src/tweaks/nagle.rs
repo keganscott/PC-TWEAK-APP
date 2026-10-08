@@ -52,7 +52,8 @@ impl Tweak for Nagle {
             name: Cow::Borrowed("Nagle's algorithm (TCP)"),
             summary: Cow::Borrowed(
                 "Makes Windows send small TCP packets straight away and acknowledge each one it receives, on every \
-                 connected network adapter, instead of grouping them.",
+                 connected network adapter, instead of grouping them. TCP only: most online shooters use UDP and \
+                 are not affected. Adapters connected later are covered when you apply it again.",
             ),
             target: Cow::Owned(format!(
                 r"HKLM\{INTERFACES}\{{adapter}}\TcpAckFrequency = 1; TCPNoDelay = 1"
@@ -61,10 +62,7 @@ impl Tweak for Nagle {
             tier: Tier::Pro,
             safety: SafetyTier::Moderate,
             impact: Impact::Moderate,
-            tradeoff: Some(Cow::Borrowed(
-                "Applies to TCP only: most online shooters use UDP and are not affected. Adapters connected later \
-                 are not covered until you apply it again.",
-            )),
+            tradeoff: None,
             requires_reboot: true,
         }
     }

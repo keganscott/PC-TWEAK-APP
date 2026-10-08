@@ -171,13 +171,10 @@ pub const THREADED: NvidiaSetting = NvidiaSetting {
     name: "NVIDIA threaded optimization: on",
     summary: "Turns Threaded optimization on in NVIDIA Control Panel's global settings, so the driver spreads its \
               work for OpenGL games, such as Minecraft: Java Edition, across more processor cores. DirectX and \
-              Vulkan games do not use it.",
+              Vulkan games do not use it. The default, Auto, lets the driver choose per program.",
     target: "Manage 3D settings > Threaded optimization: On",
     safety: SafetyTier::Moderate,
-    tradeoff: Some(
-        "Some older OpenGL programs stutter or close with it forced on. The default, Auto, lets the driver choose \
-         per program.",
-    ),
+    tradeoff: Some("Some older OpenGL programs stutter or close with it forced on."),
     values: &[(THREADED_OPTIMIZATION, 1)],
 };
 

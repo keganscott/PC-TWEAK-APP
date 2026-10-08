@@ -382,14 +382,12 @@ pub const BACKGROUND_APPS: ValueTweak = ValueTweak {
 pub const GPU_SCHEDULING: ValueTweak = ValueTweak {
     id: "display.gpuscheduling",
     name: "Hardware-accelerated GPU scheduling",
-    summary: "Turns on the Windows setting that lets the graphics card manage its own memory and work queue.",
+    summary: "Turns on the Windows setting that lets the graphics card manage its own memory and work queue. \
+              Windows ignores it unless the graphics card and its driver support it.",
     category: "display",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Moderate,
-    tradeoff: Some(
-        "Windows ignores it unless the graphics card and its driver support it. Some older games and recording \
-         tools have had problems with it on; Undo puts it back.",
-    ),
+    tradeoff: Some("Some older games and recording tools have had problems with it on."),
     requires_reboot: true,
     settings: &[dword(GRAPHICS, "HwSchMode", 2)],
 };
@@ -432,11 +430,11 @@ pub const NETWORK_THROTTLING: ValueTweak = ValueTweak {
     id: "network.throttling",
     name: "Network throttling",
     summary: "Turns off the limit Windows' multimedia scheduler puts on network packet handling while audio or \
-              video plays.",
+              video plays. Microsoft added the limit to keep audio playback steady.",
     category: "network",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Moderate,
-    tradeoff: Some("Network traffic can use more processor time while media plays. Microsoft added the limit to keep audio playback steady."),
+    tradeoff: Some("Network traffic can use more processor time while media plays."),
     requires_reboot: true,
     settings: &[dword(MMCSS, "NetworkThrottlingIndex", 0xFFFF_FFFF)],
 };
@@ -446,15 +444,12 @@ pub const NETWORK_THROTTLING: ValueTweak = ValueTweak {
 pub const GAMES_TASK: ValueTweak = ValueTweak {
     id: "scheduling.gamestask",
     name: "Game task priority",
-    summary: "Raises the priority of Windows' multimedia scheduler profile for games, used by games that register \
-              with it.",
+    summary: "Raises the priority of Windows' multimedia scheduler profile for games. Only games that register \
+              with the scheduler use this profile; others ignore it.",
     category: "scheduling",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Moderate,
-    tradeoff: Some(
-        "Only games that register with the multimedia scheduler use this profile; others ignore it. Other programs \
-         using the scheduler get lower priority while such a game runs.",
-    ),
+    tradeoff: Some("Other programs that use the scheduler get lower priority while a game that uses it runs."),
     requires_reboot: true,
     settings: &[
         dword(MMCSS_GAMES, "Priority", 6),

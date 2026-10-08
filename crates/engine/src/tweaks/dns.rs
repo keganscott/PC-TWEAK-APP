@@ -65,9 +65,8 @@ impl Tweak for CloudflareDns {
             safety: SafetyTier::Safe,
             impact: Impact::Moderate,
             tradeoff: Some(Cow::Borrowed(
-                "Name lookups go to Cloudflare instead of your internet provider or router. Networks that need \
-                 their own DNS (some work or school networks) may stop resolving their own sites until you undo \
-                 this.",
+                "Name lookups go to Cloudflare instead of your internet provider or router, and some work or school \
+                 networks stop finding their own sites until you undo this.",
             )),
             requires_reboot: false,
         }

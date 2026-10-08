@@ -120,9 +120,7 @@ impl Tweak for PowerPlan {
             tier: Tier::Pro,
             safety: SafetyTier::Moderate,
             impact: Impact::Moderate,
-            tradeoff: Some(Cow::Borrowed(
-                "Uses more electricity while plugged in. Undo switches back to your previous plan.",
-            )),
+            tradeoff: Some(Cow::Borrowed("Uses more electricity while plugged in.")),
             requires_reboot: false,
         }
     }

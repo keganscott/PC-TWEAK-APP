@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 
+import type { BlockedCode } from "../../generated/BlockedCode";
 import type { CleanupArea } from "../../generated/CleanupArea";
 import type { DiskMedia } from "../../generated/DiskMedia";
 import type { TweakView } from "../../generated/TweakView";
@@ -24,6 +25,15 @@ const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }>
 
 const TIER_LABEL = { free: null, pro: "Pro", ultimate: "Ultimate" } as const;
 
+/** Reasons a change can never be made on this PC as it is (its hardware, its
+ * Windows), as opposed to ones the user can act on. */
+const NOT_HERE: readonly BlockedCode[] = ["hardware_unsupported", "os_version_unsupported"];
+
+/** A change this PC cannot take at all: listed apart, folded, with why. */
+export function notForThisPc(t: TweakView): boolean {
+  return t.state.status === "blocked" && NOT_HERE.includes(t.state.reason.code);
+}
+
 export function ToolsView() {
   const tweaks = useStore((s) => s.tweaks);
   // null until the audit has answered (or if it failed): the engine still
@@ -41,8 +51,10 @@ export function ToolsView() {
   }, [tweaks, advanced]);
   const hiddenCount = tweaks.filter((t) => t.safety !== "safe").length;
   // Settings this PC already has count as done, whoever set them: they are
-  // listed, not hidden, so the user sees the whole set.
+  // listed, not hidden, so the user sees the whole set. Changes this PC
+  // cannot take are not counted.
   const doneCount = tweaks.filter((t) => t.state.status === "applied" || t.state.status === "foreign").length;
+  const forThisPc = tweaks.filter((t) => !notForThisPc(t)).length;
 
   return (
     <>
@@ -76,9 +88,9 @@ export function ToolsView() {
               : "A restore point lets Windows put the whole PC back the way it is now. One click makes it; it can take a minute."}
           </Callout>
         )}
-        {tweaks.length > 0 && (
+        {forThisPc > 0 && (
           <p className="text-sm text-ink-muted">
-            {doneCount} of {tweaks.length} already optimized on this PC.
+            {doneCount} of {forThisPc} already optimized on this PC.
           </p>
         )}
         {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}
@@ -91,12 +103,15 @@ export function ToolsView() {
               <ApplyRecommended ids={recommendedIds(list)} gateOpen={gateOpen} />
             </div>
             <ul className="flex flex-col gap-3">
-              {list.map((t) => (
-                <li key={t.id}>
-                  <TweakCard tweak={t} gateOpen={gateOpen} />
-                </li>
-              ))}
+              {list
+                .filter((t) => !notForThisPc(t))
+                .map((t) => (
+                  <li key={t.id}>
+                    <TweakCard tweak={t} gateOpen={gateOpen} />
+                  </li>
+                ))}
             </ul>
+            <NotForThisPc list={list.filter(notForThisPc)} />
           </section>
         ))}
         {advanced && <DevicesSection gateOpen={gateOpen} />}
@@ -161,6 +176,27 @@ function DevicesSection({ gateOpen }: { gateOpen: boolean | null }) {
       )}
       {op.status === "failed" && <ErrorCallout text={explain(op.error)} technical={technical} />}
     </section>
+  );
+}
+
+/** The group's changes this PC cannot take, folded into one line, each with
+ * the engine's reason. */
+function NotForThisPc({ list }: { list: TweakView[] }) {
+  if (list.length === 0) return null;
+  return (
+    <details className="mt-3 text-sm text-ink-muted">
+      <summary className="cursor-pointer">
+        {list.length === 1 ? "1 change does not" : `${list.length} changes do not`} apply to this PC
+      </summary>
+      <ul className="mt-2 flex flex-col gap-2 pl-4">
+        {list.map((t) => (
+          <li key={t.id}>
+            <span className="font-bold text-ink">{t.name}</span>
+            {t.state.status === "blocked" && `: ${t.state.reason.message}`}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

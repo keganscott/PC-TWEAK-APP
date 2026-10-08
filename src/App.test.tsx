@@ -475,9 +475,15 @@ describe("review regressions", () => {
     renderApp({ ...base, listTweaks, rescan: listTweaks });
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
-    const card = (await screen.findByText("Sample setting A")).closest("li") as HTMLElement;
-    expect(within(card).getByText(reason.message, { exact: false })).toBeTruthy();
-    expect((within(card).getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+    // Listed apart, folded, with the engine's reason and nothing to press.
+    const folded = (await screen.findByText("Sample setting A")).closest("details") as HTMLElement;
+    expect(folded.open).toBe(false);
+    expect(within(folded).getByText("1 change does not apply to this PC")).toBeTruthy();
+    expect(within(folded).getByText(`: ${reason.message}`, { exact: false })).toBeTruthy();
+    expect(within(folded).queryByRole("button")).toBeNull();
+    // Not counted: Sample setting A and D (blocked in the sample) cannot be made here.
+    const count = screen.getByText(/already optimized on this PC\.$/).textContent ?? "";
+    expect(count).toMatch(new RegExp(` of ${(await base.listTweaks()).length - 2} already`));
   });
 
   it("a failed Undo on Backups shows why", async () => {

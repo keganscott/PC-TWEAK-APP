@@ -74,6 +74,12 @@ export function PlaySection() {
             )}
           </p>
         )}
+        {play?.game && play.onWifi && (
+          <Callout tone="info" title="This game is running over Wi-Fi.">
+            Wi-Fi shares the air with other devices and walls get in its way, so it can lose packets where a network cable
+            does not. If a cable can reach this PC, plugging it in takes that out of the picture.
+          </Callout>
+        )}
         {play?.problem && (
           <Callout tone="warn" title="Not everything you turned on is in effect.">
             {play.problem}

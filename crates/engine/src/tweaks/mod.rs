@@ -2,6 +2,7 @@
 
 use crate::types::Tweak;
 
+pub mod cable;
 pub mod dns;
 pub mod fullscreen;
 pub mod ifeo_priority;
@@ -21,6 +22,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     all.extend(registry_values::all());
     all.push(Box::new(nagle::Nagle));
     all.push(Box::new(dns::CloudflareDns));
+    all.push(Box::new(cable::PreferCable));
     all.extend(power::all());
     all.extend(services::all());
     all.extend(tasks::all());

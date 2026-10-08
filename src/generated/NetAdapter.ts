@@ -16,4 +16,9 @@ name: string,
 /**
  * Connected now.
  */
-up: boolean, wireless: boolean, };
+up: boolean, wireless: boolean, 
+/**
+ * A network cable (Ethernet). Neither this nor `wireless` for others,
+ * such as Bluetooth.
+ */
+wired: boolean, };

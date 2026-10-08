@@ -135,6 +135,23 @@ describe("App", () => {
     expect(within(section).getAllByText("On now")).toHaveLength(2);
   });
 
+  it("Tools says when the running game is on Wi-Fi only", async () => {
+    renderApp(createMockBackend({ playing: "roblox", onWifi: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(await within(section).findByText("This game is running over Wi-Fi.")).toBeTruthy();
+  });
+
+  it("Tools says nothing about Wi-Fi while no game runs", async () => {
+    renderApp(createMockBackend({ onWifi: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    await within(section).findByText(/Watching for/);
+    expect(within(section).queryByText("This game is running over Wi-Fi.")).toBeNull();
+  });
+
   it("Tools says why Gaming Mode is not in effect without a restore point", async () => {
     renderApp(createMockBackend({ playing: "roblox" }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

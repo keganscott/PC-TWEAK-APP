@@ -23,6 +23,11 @@ timerHeld: number | null,
  */
 problem: string | null, 
 /**
+ * The running game's PC was on Wi-Fi only when it started (catalogue E5:
+ * the app says so; it changes nothing by itself).
+ */
+onWifi: boolean, 
+/**
  * Ids of the games watched for (`game_processes`), each once.
  */
 watched: Array<string>, };

@@ -268,6 +268,14 @@ jobs:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 startup_apps_turn_off_and_back_on_on_this_pc
 
+      # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
+      # set by hand and put back (same gate). The runner has no Wi-Fi, so the
+      # tool itself is not offered there.
+      - name: Network adapter metric on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc
+
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the
       # .reg backups (scratch keys under HKCU only).

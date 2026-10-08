@@ -52,6 +52,11 @@ pub enum SysItem {
     /// DNS servers of one network adapter, by interface GUID. State:
     /// `List` (empty means automatic, from the router).
     DnsServers { interface: String },
+    /// A network adapter's interface metric for IPv4 or IPv6, by interface
+    /// GUID: Windows sends traffic over the connected adapter with the lowest.
+    /// State: `Dword(metric)`, `Dword(0)` for Windows' automatic metric (from
+    /// the link speed), `Absent` when the protocol is not on the adapter.
+    InterfaceMetric { interface: String, ipv6: bool },
     /// One `netsh interface tcp global` setting. State: `Text`.
     TcpGlobal { name: String },
     /// One NVIDIA driver profile setting (NvAPI DRS). `profile` is empty for
@@ -109,6 +114,15 @@ impl SysItem {
                 format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{interface}}}"),
                 "NameServer",
             )],
+            // VERIFY (NOTES N83): where Windows keeps a metric set with
+            // Set-NetIPInterface; the legacy TCP/IP keys are exported.
+            Self::InterfaceMetric { interface, ipv6 } => vec![(
+                format!(
+                    r"SYSTEM\CurrentControlSet\Services\{}\Parameters\Interfaces\{{{interface}}}",
+                    if *ipv6 { "Tcpip6" } else { "Tcpip" }
+                ),
+                "InterfaceMetric",
+            )],
             Self::ActivePowerScheme => vec![(SCHEMES.to_owned(), "ActivePowerScheme")],
             Self::PowerSetting {
                 scheme,
@@ -145,6 +159,10 @@ impl SysItem {
             Self::Service { name } => format!("service {name}"),
             Self::ScheduledTask { path } => format!("scheduled task {path}"),
             Self::DnsServers { interface } => format!("DNS servers of adapter {interface}"),
+            Self::InterfaceMetric { interface, ipv6 } => format!(
+                "{} interface metric of adapter {interface}",
+                if *ipv6 { "IPv6" } else { "IPv4" }
+            ),
             Self::TcpGlobal { name } => format!("TCP setting {name}"),
             Self::NvidiaSetting { profile, setting } => {
                 let p = if profile.is_empty() { "global" } else { profile };
@@ -248,6 +266,9 @@ pub struct NetAdapter {
     /// Connected now.
     pub up: bool,
     pub wireless: bool,
+    /// A network cable (Ethernet). Neither this nor `wireless` for others,
+    /// such as Bluetooth.
+    pub wired: bool,
 }
 
 /// The operations on Windows for non-registry changes, and no more.

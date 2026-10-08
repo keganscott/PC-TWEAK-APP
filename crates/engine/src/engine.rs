@@ -698,6 +698,14 @@ impl Engine {
             .collect()
     }
 
+    /// This PC is connected over Wi-Fi only (`play::wifi_only`). False when
+    /// the adapters cannot be listed: nothing is said then.
+    pub fn on_wifi_only(&self) -> bool {
+        self.resolver
+            .network_adapters()
+            .is_ok_and(|a| crate::play::wifi_only(&a))
+    }
+
     /// Some Gaming Mode change is in effect.
     pub fn play_session_open(&self) -> bool {
         crate::tweaks::session::SESSION_IDS

@@ -22,6 +22,8 @@ export function describeItem(item: SysItem): string {
       return `scheduled task ${item.path}`;
     case "dns_servers":
       return `DNS servers of adapter ${item.interface}`;
+    case "interface_metric":
+      return `${item.ipv6 ? "IPv6" : "IPv4"} interface metric of adapter ${item.interface}`;
     case "tcp_global":
       return `TCP setting ${item.name}`;
     case "nvidia_setting":
@@ -31,7 +33,10 @@ export function describeItem(item: SysItem): string {
   }
 }
 
-export function describeState(state: SysState): string {
+/** `item`, when given, says what a number means: 0 is Windows' automatic
+ * interface metric. */
+export function describeState(state: SysState, item?: SysItem): string {
+  if (item?.kind === "interface_metric" && state.state === "dword" && state.value === 0) return "automatic";
   switch (state.state) {
     case "absent":
       return "not present";

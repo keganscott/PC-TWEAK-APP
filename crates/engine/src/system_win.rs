@@ -33,6 +33,9 @@ pub struct WinSystem {
     /// rather than by starting PowerShell on every refresh.
     reg: WinRegistry,
     adapters: std::sync::Mutex<Option<(std::time::Instant, Vec<NetAdapter>)>>,
+    /// Every physical adapter's interface metrics, from one PowerShell run;
+    /// dropped on every metric write.
+    metrics: std::sync::Mutex<Option<(std::time::Instant, Vec<Metric>)>>,
 }
 
 impl WinSystem {
@@ -40,8 +43,59 @@ impl WinSystem {
         Self {
             reg: WinRegistry::new(),
             adapters: std::sync::Mutex::new(None),
+            metrics: std::sync::Mutex::new(None),
         }
     }
+
+    fn metrics(&self) -> Result<Vec<Metric>> {
+        let mut cache = self.metrics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, list)) = cache.as_ref() {
+            if at.elapsed() < ADAPTER_CACHE {
+                return Ok(list.clone());
+            }
+        }
+        let out = powershell(
+            "interface metrics",
+            "Get-NetAdapter -Physical | ForEach-Object { $g = $_.InterfaceGuid; Get-NetIPInterface -InterfaceIndex \
+             $_.ifIndex -ErrorAction SilentlyContinue | ForEach-Object { '{0}|{1}|{2}|{3}' -f $g, $_.AddressFamily, \
+             $_.AutomaticMetric, $_.InterfaceMetric } }",
+            &[],
+        )?;
+        let list = parse_metrics(&out);
+        *cache = Some((std::time::Instant::now(), list.clone()));
+        Ok(list)
+    }
+}
+
+/// One adapter's interface metric for one protocol; `0` when automatic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Metric {
+    pub guid: String,
+    pub ipv6: bool,
+    pub value: u32,
+}
+
+/// `guid|IPv4|Enabled|25` lines (AutomaticMetric, InterfaceMetric) from
+/// `Get-NetIPInterface`. An automatic metric reads as 0.
+pub(crate) fn parse_metrics(out: &str) -> Vec<Metric> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.trim().splitn(4, '|');
+            let g = guid(parts.next()?)?;
+            let ipv6 = match parts.next()? {
+                "IPv4" => false,
+                "IPv6" => true,
+                _ => return None,
+            };
+            let automatic = parts.next()?.eq_ignore_ascii_case("Enabled");
+            let metric: u32 = parts.next()?.trim().parse().ok()?;
+            Some(Metric {
+                guid: g,
+                ipv6,
+                value: if automatic { 0 } else { metric },
+            })
+        })
+        .collect()
 }
 
 impl Default for WinSystem {
@@ -66,6 +120,7 @@ pub(crate) fn parse_adapters(out: &str) -> Vec<NetAdapter> {
                 name,
                 up: status.eq_ignore_ascii_case("Up"),
                 wireless: media.contains("802.11"),
+                wired: media.trim() == "802.3",
             })
         })
         .collect()
@@ -278,6 +333,14 @@ impl SystemBackend for WinSystem {
                     .collect();
                 Ok(SysState::List { items })
             }
+            SysItem::InterfaceMetric { interface, ipv6 } => {
+                let g = need_guid(interface, "network adapter")?;
+                Ok(self
+                    .metrics()?
+                    .into_iter()
+                    .find(|m| m.guid == g && m.ipv6 == *ipv6)
+                    .map_or(SysState::Absent, |m| SysState::Dword { value: m.value }))
+            }
             SysItem::TcpGlobal { .. } | SysItem::NvidiaSetting { .. } => Err(EngineError::Internal {
                 detail: format!("this version cannot change the {} yet", item.describe()),
             }),
@@ -357,6 +420,29 @@ impl SystemBackend for WinSystem {
                      ($env:PT_DNS -split ',') -ErrorAction Stop } else { Set-DnsClientServerAddress -InterfaceIndex \
                      $a.ifIndex -ResetServerAddresses -ErrorAction Stop }",
                     &[("PT_GUID", &g), ("PT_DNS", &joined)],
+                )
+                .map(drop)
+            }
+            (SysItem::InterfaceMetric { interface, ipv6 }, SysState::Dword { value }) => {
+                let g = need_guid(interface, "network adapter")?;
+                if *value > 9999 {
+                    return Err(fail("interface metric", format!("{value} is above 9999")));
+                }
+                *self.metrics.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                // 0 is Windows' automatic metric. VERIFY (NOTES N83): that
+                // Set-NetIPInterface keeps the metric after a restart.
+                powershell(
+                    "interface metric",
+                    "$a = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq ('{' + $env:PT_GUID + \
+                     '}') }; if (-not $a) { throw 'adapter not found' }; if ($env:PT_METRIC -eq '0') { \
+                     Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $env:PT_FAMILY -AutomaticMetric \
+                     Enabled -ErrorAction Stop } else { Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily \
+                     $env:PT_FAMILY -AutomaticMetric Disabled -InterfaceMetric ([int]$env:PT_METRIC) -ErrorAction Stop }",
+                    &[
+                        ("PT_GUID", &g),
+                        ("PT_FAMILY", if *ipv6 { "IPv6" } else { "IPv4" }),
+                        ("PT_METRIC", &value.to_string()),
+                    ],
                 )
                 .map(drop)
             }
@@ -715,8 +801,32 @@ mod tests {
         let a = parse_adapters(out);
         assert_eq!(a.len(), 2);
         assert_eq!(a[0].guid, "4d86b570-2994-4eb0-a004-914ef65ff05a");
-        assert!(a[0].wireless && !a[0].up);
-        assert!(!a[1].wireless && a[1].up && a[1].name == "Ethernet");
+        assert!(a[0].wireless && !a[0].wired && !a[0].up);
+        assert!(!a[1].wireless && a[1].wired && a[1].up && a[1].name == "Ethernet");
+    }
+
+    #[test]
+    fn interface_metrics_are_parsed_with_automatic_as_zero() {
+        let out = "{3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv6|Enabled|25\r\n\
+                   {3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv4|Disabled|5\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|IPv4|Enabled|abc\r\n\
+                   garbage\r\n";
+        let m = parse_metrics(out);
+        assert_eq!(
+            m,
+            [
+                Metric {
+                    guid: "3f504232-cecb-4118-b4d8-5a5e72d677c3".into(),
+                    ipv6: true,
+                    value: 0
+                },
+                Metric {
+                    guid: "3f504232-cecb-4118-b4d8-5a5e72d677c3".into(),
+                    ipv6: false,
+                    value: 5
+                },
+            ]
+        );
     }
 
     /// Read-only, against this PC: the active plan and a service everyone has.
@@ -1136,5 +1246,49 @@ mod tests {
         assert_eq!(switched_off(&during), Some(true));
         assert_eq!(during.bytes.len(), 12);
         assert_eq!(after, before, "the switch reads back differently after Undo");
+    }
+
+    /// The interface metric (CATALOGUE E5) of this PC's first physical adapter,
+    /// set by hand and put back through the real backend, IPv4 and IPv6, with
+    /// the registry values Windows may keep it in printed alongside. Gated
+    /// like the tests above.
+    #[test]
+    fn an_interface_metric_is_set_and_put_back_on_this_pc() {
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change a network adapter's metric for real");
+            return;
+        }
+        let s = WinSystem::new();
+        let adapters = s.network_adapters().unwrap();
+        println!("adapters: {adapters:?}");
+        let a = adapters.first().expect("a physical adapter");
+        for ipv6 in [false, true] {
+            let item = SysItem::InterfaceMetric {
+                interface: a.guid.clone(),
+                ipv6,
+            };
+            let backing = || {
+                item.registry_backing()
+                    .iter()
+                    .map(|(key, name)| format!("{key}\\{name} = {:?}", s.reg.read_value(Hive::LocalMachine, key, name)))
+                    .collect::<Vec<_>>()
+            };
+            let before = s.read(&item).unwrap();
+            println!("{}: before {before:?}; registry {:?}", item.describe(), backing());
+            if before == SysState::Absent {
+                continue;
+            }
+            let set = SysState::Dword { value: 7 };
+            let wrote = s.write(&item, &set);
+            let during = s.read(&item);
+            println!("set 7: {wrote:?}; now {during:?}; registry {:?}", backing());
+            let put_back = s.write(&item, &before);
+            let after = s.read(&item);
+            println!("put back: {put_back:?}; now {after:?}; registry {:?}", backing());
+            wrote.unwrap();
+            put_back.unwrap();
+            assert_eq!(during.unwrap(), set);
+            assert_eq!(after.unwrap(), before);
+        }
     }
 }

@@ -1734,6 +1734,13 @@ mod system_changes {
         )]);
         t.declared = vec![SysItem::DnsServers { interface: "*".into() }];
         let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set_adapters(vec![crate::system::NetAdapter {
+            guid: "{9F2-AA}".into(),
+            name: "Ethernet".into(),
+            up: true,
+            wireless: false,
+            wired: true,
+        }]);
         h.engine.apply("sys").unwrap();
         h.engine.revert("sys").unwrap();
         assert_eq!(h.sys.get(&dns), SysState::Absent);
@@ -2064,12 +2071,14 @@ mod nagle {
                 name: "Ethernet".into(),
                 up: eth_up,
                 wireless: false,
+                wired: true,
             },
             NetAdapter {
                 guid: WIFI.into(),
                 name: "Wi-Fi".into(),
                 up: false,
                 wireless: true,
+                wired: false,
             },
         ]
     }
@@ -2150,6 +2159,7 @@ mod dns {
             name: g.into(),
             up,
             wireless: false,
+            wired: true,
         }
     }
 
@@ -2212,6 +2222,160 @@ mod dns {
         assert!(matches!(state(&h), TweakState::Blocked { .. }));
         assert!(h.engine.apply(ID).is_err());
         assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+}
+
+/// CATALOGUE E5 (tweaks/cable.rs).
+mod prefer_cable {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::system::{NetAdapter, SysItem, SysState};
+    use crate::tweaks::cable::{PreferCable, ID, WIFI_METRIC, WIRED_METRIC};
+    use crate::types::BlockedCode;
+
+    fn adapter(g: &str, kind: &str, up: bool) -> NetAdapter {
+        NetAdapter {
+            guid: g.into(),
+            name: kind.into(),
+            up,
+            wireless: kind == "wifi",
+            wired: kind == "cable",
+        }
+    }
+
+    fn metric(g: &str, ipv6: bool) -> SysItem {
+        SysItem::InterfaceMetric {
+            interface: g.into(),
+            ipv6,
+        }
+    }
+
+    const AUTO: SysState = SysState::Dword { value: 0 };
+    const fn m(value: u32) -> SysState {
+        SysState::Dword { value }
+    }
+
+    fn state(h: &Harness) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == ID)
+            .unwrap()
+            .state
+    }
+
+    /// Kegan's PC: a cable (connected) and Wi-Fi (not), plus Bluetooth. The
+    /// cable has IPv4 and IPv6, Wi-Fi only IPv4 with a metric set by hand.
+    fn pc() -> Harness {
+        let h = Harness::new(vec![Box::new(PreferCable)]);
+        h.sys.set_adapters(vec![
+            adapter("cab", "cable", true),
+            adapter("wif", "wifi", false),
+            adapter("blu", "bluetooth", false),
+        ]);
+        h.sys.set(&metric("cab", false), AUTO);
+        h.sys.set(&metric("cab", true), AUTO);
+        h.sys.set(&metric("wif", false), m(20));
+        h.sys.set(&metric("blu", false), AUTO);
+        h
+    }
+
+    #[test]
+    fn sets_the_cable_low_and_wifi_high_and_undo_puts_each_back() {
+        let mut h = pc();
+        assert_eq!(state(&h), TweakState::Default);
+
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("cab", false)), m(WIRED_METRIC));
+        assert_eq!(h.sys.get(&metric("cab", true)), m(WIRED_METRIC));
+        assert_eq!(h.sys.get(&metric("wif", false)), m(WIFI_METRIC));
+        assert_eq!(
+            h.sys.get(&metric("wif", true)),
+            SysState::Absent,
+            "a protocol that is not on the adapter is left alone"
+        );
+        assert_eq!(h.sys.get(&metric("blu", false)), AUTO, "Bluetooth is neither");
+        assert_eq!(state(&h), TweakState::Applied);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("cab", false)), AUTO, "automatic stays automatic");
+        assert_eq!(h.sys.get(&metric("cab", true)), AUTO);
+        assert_eq!(
+            h.sys.get(&metric("wif", false)),
+            m(20),
+            "a metric set by hand comes back"
+        );
+        assert_eq!(state(&h), TweakState::Default);
+    }
+
+    #[test]
+    fn a_new_adapter_after_apply_reads_as_changed_and_apply_again_covers_it() {
+        let mut h = pc();
+        h.engine.apply(ID).unwrap();
+        let mut adapters = vec![
+            adapter("cab", "cable", true),
+            adapter("wif", "wifi", false),
+            adapter("usb", "wifi", true),
+        ];
+        h.sys.set_adapters(adapters.clone());
+        h.sys.set(&metric("usb", false), AUTO);
+        assert_eq!(state(&h), TweakState::Drifted);
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("usb", false)), m(WIFI_METRIC));
+        assert_eq!(state(&h), TweakState::Applied);
+
+        // The USB Wi-Fi is unplugged: Undo still finishes, and leaves it be.
+        adapters.pop();
+        h.sys.set_adapters(adapters);
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("wif", false)), m(20));
+        assert_eq!(h.sys.get(&metric("cab", false)), AUTO);
+        assert_eq!(
+            h.sys.get(&metric("usb", false)),
+            m(WIFI_METRIC),
+            "not written for a removed adapter"
+        );
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn already_set_this_way_reads_as_already_optimized() {
+        let h = pc();
+        h.sys.set(&metric("cab", false), m(WIRED_METRIC));
+        h.sys.set(&metric("cab", true), m(WIRED_METRIC));
+        h.sys.set(&metric("wif", false), m(WIFI_METRIC));
+        assert_eq!(state(&h), TweakState::Foreign);
+    }
+
+    #[test]
+    fn a_pc_without_both_a_cable_port_and_wifi_is_not_offered() {
+        for adapters in [
+            vec![adapter("cab", "cable", true)],
+            vec![adapter("wif", "wifi", true), adapter("blu", "bluetooth", true)],
+            Vec::new(),
+        ] {
+            let mut h = Harness::new(vec![Box::new(PreferCable)]);
+            h.sys.set_adapters(adapters);
+            match state(&h) {
+                TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::HardwareUnsupported),
+                other => panic!("{other:?}"),
+            }
+            assert!(matches!(h.engine.apply(ID), Err(EngineError::Blocked { .. })));
+            assert!(h.engine.applied_tweak_ids().is_empty());
+        }
+    }
+
+    #[test]
+    fn its_registry_backing_names_each_protocols_key() {
+        assert_eq!(
+            metric("ab", true).registry_backing(),
+            [(
+                r"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\{ab}".to_owned(),
+                "InterfaceMetric"
+            )]
+        );
+        assert_eq!(metric("ab", false).describe(), "IPv4 interface metric of adapter ab");
     }
 }
 

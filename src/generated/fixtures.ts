@@ -923,6 +923,7 @@ export const playStatus = {
   "gamingModeActive": true,
   "timerHeld": 5000,
   "problem": null,
+  "onWifi": false,
   "watched": [
     "fortnite",
     "roblox",

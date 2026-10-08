@@ -45,6 +45,8 @@ export interface MockOptions {
   firstRun?: boolean;
   /** The known game the SAMPLE watcher sees running. Default: none. */
   playing?: string;
+  /** The SAMPLE PC is on Wi-Fi only while that game runs. */
+  onWifi?: boolean;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -188,6 +190,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       gamingModeActive: wanted && gateOpen,
       timerHeld: game !== null && settings.gameTimer ? fx.playStatus.timerHeld : null,
       problem: wanted && !gateOpen ? "Gaming Mode is not fully on: There is no verified restore point, so there is nothing to roll back to." : null,
+      onWifi: game !== null && (options.onWifi ?? false),
     };
   };
   let shownPlay = JSON.stringify(playStatus());

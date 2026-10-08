@@ -22,7 +22,9 @@ use super::journal::{
 };
 use super::offline;
 use super::reg_export::{write_reg_backup, write_session_backup};
-use super::registry::{components, is_ancestor_or_equal, path_eq, pattern_eq, pattern_is_ancestor_or_equal, WILDCARD};
+use super::registry::{
+    components, is_ancestor_or_equal, path_eq, pattern_eq, pattern_is_ancestor_or_equal, value_name_matches, WILDCARD,
+};
 use super::system::{SideEffect, SysItem, SysState};
 use super::types::{ExecutionContext, RawValue, RegRoot, RegTarget, Tweak};
 
@@ -697,7 +699,7 @@ impl<'a> Transaction<'a> {
         let allowed = self
             .allowlist
             .iter()
-            .any(|t| Self::target_matches(t, root, key) && t.values.iter().any(|v| v.eq_ignore_ascii_case(name)));
+            .any(|t| Self::target_matches(t, root, key) && t.values.iter().any(|v| value_name_matches(v, name)));
         if allowed {
             Ok(())
         } else {

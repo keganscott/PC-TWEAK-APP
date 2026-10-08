@@ -3,6 +3,7 @@
 use crate::types::Tweak;
 
 pub mod dns;
+pub mod fullscreen;
 pub mod ifeo_priority;
 pub mod mouse_accel;
 pub mod nagle;
@@ -21,7 +22,14 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     all.extend(power::all());
     all.extend(services::all());
     all.extend(tasks::all());
-    all.push(Box::new(ifeo_priority::IfeoPriority::fortnite()));
+    all.push(Box::new(ifeo_priority::CsrssPriority));
+    // Per game, for each offered game (`env::KNOWN_GAMES`).
+    for t in ifeo_priority::IfeoPriority::offered() {
+        all.push(Box::new(t));
+    }
+    for t in fullscreen::FullscreenOptimizations::offered() {
+        all.push(Box::new(t));
+    }
     all
 }
 

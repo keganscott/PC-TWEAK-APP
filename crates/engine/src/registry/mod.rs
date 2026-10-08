@@ -90,6 +90,29 @@ pub fn pattern_is_ancestor_or_equal(ancestor: &str, pattern: &str) -> bool {
     wildcards(&p) <= 1 && a.len() <= p.len() && p.iter().zip(&a).all(|(x, y)| component_matches(x, y))
 }
 
+/// Does the value name `name` match the declared value name `pattern`? A
+/// pattern `*\<file>` stands for that file's full path on a local drive, the
+/// value names Windows keys some per-program settings by (fullscreen
+/// optimizations under `AppCompatFlags\Layers`): it matches `X:\...\<file>`
+/// with no empty, `.` or `..` component and no `/`, and nothing else. Any other
+/// pattern matches only itself. Case is ignored either way.
+pub fn value_name_matches(pattern: &str, name: &str) -> bool {
+    let Some(file) = pattern.strip_prefix("*\\") else {
+        return pattern.eq_ignore_ascii_case(name);
+    };
+    let b = name.as_bytes();
+    if file.is_empty() || file.contains(['\\', '/', '*']) {
+        return false;
+    }
+    if !(b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\') || name.contains('/') {
+        return false;
+    }
+    // The first three bytes are ASCII, so this slices on a char boundary.
+    let parts: Vec<&str> = name[3..].split('\\').collect();
+    parts.iter().all(|p| !p.is_empty() && *p != "." && *p != "..")
+        && parts.last().is_some_and(|last| last.eq_ignore_ascii_case(file))
+}
+
 /// The operations the engine needs, and no more. All methods take `&self`;
 /// implementations synchronise internally, which lets tests keep a handle to the
 /// fake and change it "externally" between engine calls.
@@ -129,6 +152,38 @@ mod tests {
         assert!(is_ancestor_or_equal(r"A\B", r"a\b"));
         assert!(!is_ancestor_or_equal(r"A\B\C", r"a\b"));
         assert!(!is_ancestor_or_equal(r"A\BX", r"a\b\c"));
+    }
+
+    #[test]
+    fn a_value_name_pattern_stands_for_one_file_on_any_local_drive() {
+        let p = r"*\cs2.exe";
+        assert!(value_name_matches(
+            p,
+            r"D:\SteamLibrary\steamapps\common\cs2\game\bin\win64\cs2.exe"
+        ));
+        assert!(value_name_matches(p, r"c:\CS2.EXE"));
+        for bad in [
+            r"cs2.exe",
+            r"\\server\share\cs2.exe",
+            r"D:cs2.exe",
+            r"D:\cs2.exe.bak",
+            r"D:\games\notcs2.exe",
+            r"D:\games\..\cs2.exe",
+            r"D:\games\.\cs2.exe",
+            r"D:\games\\cs2.exe",
+            r"D:\games/x\cs2.exe",
+            r"D:\",
+            "",
+        ] {
+            assert!(!value_name_matches(p, bad), "{bad:?}");
+        }
+        // Any other pattern is a plain name.
+        assert!(value_name_matches("CpuPriorityClass", "cpupriorityclass"));
+        assert!(!value_name_matches("CpuPriorityClass", "IoPriority"));
+        assert!(!value_name_matches("*", "anything"));
+        for pattern in [r"*\", r"*\a\b.exe", r"*\*"] {
+            assert!(!value_name_matches(pattern, r"C:\a\b.exe"), "{pattern:?}");
+        }
     }
 
     #[test]

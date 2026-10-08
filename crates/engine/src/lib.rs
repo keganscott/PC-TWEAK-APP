@@ -13,6 +13,7 @@ pub mod env;
 pub mod error;
 pub mod fsutil;
 pub mod game_installs;
+pub mod games;
 pub mod gpu_choice;
 pub mod gpu_driver;
 pub mod hardware;
@@ -63,6 +64,8 @@ mod model_tests;
 mod network_audit;
 #[cfg(test)]
 mod never_do_audit;
+#[cfg(test)]
+mod per_game_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

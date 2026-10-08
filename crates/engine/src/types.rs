@@ -241,6 +241,9 @@ pub enum BlockedCode {
     /// An app installed on this PC relies on what this would change (the Xbox
     /// app on Xbox sign-in). `message` names the app.
     NeededByInstalledApp,
+    /// A per-game change for a game, or a program file of it, that is not on
+    /// this PC. The trigger is the game id.
+    GameNotInstalled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

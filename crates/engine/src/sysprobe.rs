@@ -160,6 +160,25 @@ fn interactive_user_root() -> Option<(Hive, String)> {
 }
 
 impl SystemProbe {
+    /// The launcher folders the game finder needs from the registry (VERIFY,
+    /// NOTES N75). A value that is missing or not text leaves its launcher out.
+    fn launchers(&self) -> crate::game_installs::Launchers {
+        let folder = |keys: &[&str], name: &str| {
+            keys.iter().find_map(|key| {
+                let v = self.reg.read_value(Hive::LocalMachine, key, name).ok()??;
+                let s = v.as_sz()?;
+                (!s.trim().is_empty()).then(|| std::path::PathBuf::from(s.trim()))
+            })
+        };
+        crate::game_installs::Launchers {
+            steam: folder(
+                &[r"SOFTWARE\WOW6432Node\Valve\Steam", r"SOFTWARE\Valve\Steam"],
+                "InstallPath",
+            ),
+            apex_ea: folder(&[r"SOFTWARE\Respawn\Apex"], "Install Dir"),
+        }
+    }
+
     fn gpu_choices(&self, installs: &[crate::game_installs::GameInstall]) -> Vec<crate::gpu_choice::GameGpuChoice> {
         let Some((hive, prefix)) = &self.user_root else {
             return crate::gpu_choice::probe_gpu_choices(installs, None);
@@ -184,10 +203,12 @@ impl EnvProbe for SystemProbe {
             _ => {
                 let h = probe_hardware(self.wmi.as_ref(), self.facts.as_ref());
                 // Installs rarely move, so they share the hardware cache.
-                let g =
-                    crate::game_installs::probe_game_installs(&self.program_data, self.profile.as_deref(), &|drive| {
-                        crate::hardware::probe_drive(self.wmi.as_ref(), drive)
-                    });
+                let g = crate::game_installs::probe_game_installs(
+                    &self.program_data,
+                    self.profile.as_deref(),
+                    &self.launchers(),
+                    &|drive| crate::hardware::probe_drive(self.wmi.as_ref(), drive),
+                );
                 cache.hardware = Some((now, h.clone(), g.clone()));
                 (h, g)
             }

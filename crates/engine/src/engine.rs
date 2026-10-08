@@ -244,6 +244,8 @@ impl Engine {
     pub fn rescan(&mut self) {
         let mut env = self.probe.probe(self.resolver.elevated());
         env.target_game = self.target_game.clone();
+        // Per-game tweaks read where the game is through the resolver.
+        self.resolver.set_game_installs(env.game_installs.clone());
         self.env = env;
     }
 

@@ -114,19 +114,50 @@ pub struct GameInfo {
     pub name: &'static str,
 }
 
-/// Titles named in the plan's game cards. More are added only when Kegan
-/// decides which anti-cheat titles to support (plan section 11, item 5).
-pub const KNOWN_GAMES: &[GameInfo] = &[
-    GameInfo {
-        id: "fortnite",
-        name: "Fortnite",
-    },
-    GameInfo {
-        id: "minecraft",
-        name: "Minecraft",
-    },
-    GameInfo {
-        id: "roblox",
-        name: "Roblox",
-    },
-];
+/// Kegan's answer to "Add Valorant, CS2 and Apex Legends to PeakTweaks' game
+/// list?" (plan section 11, item 5; NOTES N75). Until he answers, they are
+/// recognised but not offered: not listed, not selectable, no per-game tools,
+/// not reported as found. Flip to `true` to offer them.
+pub const OFFER_VALORANT_CS2_APEX: bool = false;
+
+const FORTNITE: GameInfo = GameInfo {
+    id: "fortnite",
+    name: "Fortnite",
+};
+const MINECRAFT: GameInfo = GameInfo {
+    id: "minecraft",
+    name: "Minecraft",
+};
+const ROBLOX: GameInfo = GameInfo {
+    id: "roblox",
+    name: "Roblox",
+};
+const VALORANT: GameInfo = GameInfo {
+    id: "valorant",
+    name: "Valorant",
+};
+const CS2: GameInfo = GameInfo {
+    id: "cs2",
+    name: "Counter-Strike 2",
+};
+const APEX: GameInfo = GameInfo {
+    id: "apex",
+    name: "Apex Legends",
+};
+
+/// Every game PeakTweaks can recognise, offered or not (`games.rs` has their
+/// anti-cheat and program files).
+pub const ALL_GAMES: &[GameInfo] = &[FORTNITE, MINECRAFT, ROBLOX, VALORANT, CS2, APEX];
+
+/// The games offered: the titles named in the plan's game cards, and the three
+/// above once Kegan says so. Ids are validated against this list.
+pub const KNOWN_GAMES: &[GameInfo] = if OFFER_VALORANT_CS2_APEX {
+    ALL_GAMES
+} else {
+    &[FORTNITE, MINECRAFT, ROBLOX]
+};
+
+/// True for a game in `KNOWN_GAMES`.
+pub fn is_offered(game_id: &str) -> bool {
+    KNOWN_GAMES.iter().any(|g| g.id == game_id)
+}

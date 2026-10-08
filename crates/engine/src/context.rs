@@ -18,9 +18,10 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::error::{EngineError, Result};
+use super::game_installs::GameInstall;
 use super::registry::{Hive, RegistryBackend};
 use super::system::{SysItem, SysState, SystemBackend, Unavailable};
-use super::types::{RawValue, RegRoot};
+use super::types::{BlockedCode, BlockedReason, RawValue, RegRoot};
 
 /// How we found the interactive user. Surfaced to the UI, because "which hive
 /// did you write to" is the first question during a support escalation.
@@ -52,6 +53,10 @@ pub struct ContextResolver {
     backend: Arc<dyn RegistryBackend>,
     /// Non-registry changes (`system.rs`). `Unavailable` unless one is given.
     system: Arc<dyn SystemBackend>,
+    /// The games found on this PC at the engine's last probe; `None` until
+    /// they were looked for. The engine sets this (`set_game_installs`), so a
+    /// per-game tweak reads the same installs its predicate saw.
+    games: Option<Vec<GameInstall>>,
 }
 
 impl ContextResolver {
@@ -61,6 +66,7 @@ impl ContextResolver {
             elevated,
             backend,
             system: Arc::new(Unavailable),
+            games: None,
         }
     }
 
@@ -89,6 +95,33 @@ impl ContextResolver {
     /// A file's bytes, `None` when absent (safe for tweaks).
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         self.system.read_file(path)
+    }
+
+    /// The engine's latest game installs (`Engine::rescan`).
+    pub(crate) fn set_game_installs(&mut self, games: Option<Vec<GameInstall>>) {
+        self.games = games;
+    }
+
+    /// The full path of the program file a found game runs, as Windows
+    /// writes it (safe for tweaks). Blocked when the games were not looked
+    /// for yet, the game was not found, or its program file was not.
+    pub fn game_program(&self, game_id: &str) -> Result<String> {
+        let not_found = |message: String| EngineError::Blocked {
+            reason: BlockedReason::new(BlockedCode::GameNotInstalled, message).with_trigger(game_id),
+        };
+        let name = crate::games::name(game_id);
+        let games = self
+            .games
+            .as_ref()
+            .ok_or_else(|| not_found(format!("PeakTweaks has not looked for {name} on this PC yet.")))?;
+        let install = games
+            .iter()
+            .find(|g| g.game_id == game_id)
+            .ok_or_else(|| not_found(format!("PeakTweaks did not find {name} on this PC.")))?;
+        install
+            .exe
+            .clone()
+            .ok_or_else(|| not_found(crate::game_installs::program_file_missing(install)))
     }
 
     /// Resolve the interactive user with Win32 and bind the real registry.

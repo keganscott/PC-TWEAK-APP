@@ -14,7 +14,7 @@ use crate::probe::Probe;
 use crate::registry::fake::FakeRegistry;
 use crate::registry::{Hive, RegistryBackend};
 use crate::secure_dir::TrustedDir;
-use crate::system::{FakeSystem, SideEffect};
+use crate::system::FakeSystem;
 use crate::testutil::{hklm_dword, user};
 use crate::tweaks::fullscreen::{FullscreenOptimizations, LAYERS};
 use crate::tweaks::ifeo_priority::{CsrssPriority, IfeoPriority};
@@ -308,7 +308,8 @@ fn fullscreen_leaves_settings_it_does_not_recognise_and_writes_only_a_declared_p
 /// H26: game traffic priority (`tweaks/qos.rs`).
 mod game_qos {
     use super::*;
-    use crate::tweaks::qos::{policy_key, GameQos, ID, NO_NLA, TCPIP_QOS};
+    use crate::system::{SysItem, SysState};
+    use crate::tweaks::qos::{policy, wanted, GameQos, ID};
 
     const FORTNITE: &str = r"D:\Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe";
     const ROBLOX: &str = r"C:\Users\KFS\AppData\Local\Roblox\Versions\version-1\RobloxPlayerBeta.exe";
@@ -317,16 +318,8 @@ mod game_qos {
         crate::games::facts(game_id).unwrap().programs[0]
     }
 
-    fn policy(r: &Rig, game_id: &str, name: &str) -> Option<String> {
-        r.fake
-            .read_value_for_test(Hive::LocalMachine, &policy_key(program(game_id)), name)
-            .and_then(|v| v.as_sz())
-    }
-
-    fn nla(r: &Rig) -> Option<String> {
-        r.fake
-            .read_value_for_test(Hive::LocalMachine, TCPIP_QOS, NO_NLA)
-            .and_then(|v| v.as_sz())
+    fn on_pc(r: &Rig, game_id: &str) -> SysState {
+        r.sys.get(&policy(program(game_id)))
     }
 
     fn blocked(r: &Rig) -> (BlockedCode, String) {
@@ -354,7 +347,7 @@ mod game_qos {
             )
         );
         assert!(matches!(r.engine.apply(ID), Err(EngineError::Blocked { .. })));
-        assert!(r.fake.snapshot().is_empty());
+        assert_eq!(on_pc(&r, "fortnite"), SysState::Absent);
 
         let r = rig(shipped(), Some(vec![install("roblox", Some(ROBLOX))]));
         let (code, message) = blocked(&r);
@@ -378,25 +371,20 @@ mod game_qos {
 
         r.engine.apply(ID).unwrap();
         assert_eq!(
-            policy(&r, "fortnite", "Application Name").as_deref(),
-            Some("FortniteClient-Win64-Shipping.exe"),
+            on_pc(&r, "fortnite"),
+            SysState::QosPolicy {
+                program: "FortniteClient-Win64-Shipping.exe".into(),
+                dscp: 46
+            },
             "matched by name, wherever the game is"
         );
-        assert_eq!(policy(&r, "fortnite", "DSCP Value").as_deref(), Some("46"));
-        assert_eq!(policy(&r, "fortnite", "Throttle Rate").as_deref(), Some("-1"));
-        assert_eq!(policy(&r, "roblox", "DSCP Value"), None, "not found here");
-        assert_eq!(nla(&r).as_deref(), Some("1"));
-        assert_eq!(r.sys.effects(), [SideEffect::RefreshPolicy]);
+        assert_eq!(on_pc(&r, "roblox"), SysState::Absent, "not found here");
+        assert!(r.fake.snapshot().is_empty(), "no registry value is written");
         assert_eq!(state(&r, ID), TweakState::Applied);
 
         r.engine.revert(ID).unwrap();
-        assert!(r.fake.snapshot().is_empty(), "{:?}", r.fake.snapshot());
-        assert!(
-            !r.fake
-                .key_exists_for_test(Hive::LocalMachine, r"SOFTWARE\Policies\Microsoft\Windows\QoS"),
-            "the keys it made are gone too"
-        );
-        assert_eq!(r.sys.effects(), [SideEffect::RefreshPolicy, SideEffect::RefreshPolicy]);
+        assert_eq!(on_pc(&r, "fortnite"), SysState::Absent);
+        assert_eq!(state(&r, ID), TweakState::Default);
     }
 
     #[test]
@@ -413,48 +401,66 @@ mod game_qos {
         r.engine.rescan();
         assert_eq!(state(&r, ID), TweakState::Drifted);
         r.engine.apply(ID).unwrap();
-        assert_eq!(policy(&r, "roblox", "DSCP Value").as_deref(), Some("46"));
+        assert_eq!(on_pc(&r, "roblox"), wanted(program("roblox")));
         assert_eq!(state(&r, ID), TweakState::Applied);
 
         r.engine.revert(ID).unwrap();
-        assert!(r.fake.snapshot().is_empty());
+        assert_eq!(on_pc(&r, "fortnite"), SysState::Absent);
+        assert_eq!(on_pc(&r, "roblox"), SysState::Absent);
     }
 
     #[test]
-    fn values_set_before_come_back_on_undo() {
+    fn a_policy_of_the_same_name_set_before_comes_back_on_undo() {
         let mut r = rig(
             vec![Box::new(GameQos::cleared_for_tests())],
             Some(vec![install("fortnite", Some(FORTNITE))]),
         );
-        let key = policy_key(program("fortnite"));
-        r.fake
-            .write_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA, &RawValue::sz("1"))
-            .unwrap();
-        r.fake
-            .write_value(Hive::LocalMachine, &key, "DSCP Value", &RawValue::sz("40"))
-            .unwrap();
-        let before = r.fake.snapshot();
+        let theirs = SysState::QosPolicy {
+            program: program("fortnite").into(),
+            dscp: 40,
+        };
+        r.sys.set(&policy(program("fortnite")), theirs.clone());
         assert_eq!(state(&r, ID), TweakState::Default, "a different tag is not ours");
 
         r.engine.apply(ID).unwrap();
-        assert_eq!(policy(&r, "fortnite", "DSCP Value").as_deref(), Some("46"));
+        assert_eq!(on_pc(&r, "fortnite"), wanted(program("fortnite")));
         r.engine.revert(ID).unwrap();
-        assert_eq!(r.fake.snapshot(), before);
-        assert_eq!(nla(&r).as_deref(), Some("1"), "set before, so kept");
+        assert_eq!(on_pc(&r, "fortnite"), theirs);
     }
 
     #[test]
-    fn it_may_write_only_its_own_policies_and_the_nla_switch() {
+    fn a_policy_already_there_with_the_tag_reads_as_already_set() {
+        let r = rig(
+            vec![Box::new(GameQos::cleared_for_tests())],
+            Some(vec![install("fortnite", Some(FORTNITE))]),
+        );
+        r.sys.set(&policy(program("fortnite")), wanted(program("fortnite")));
+        assert_eq!(state(&r, ID), TweakState::Foreign);
+    }
+
+    #[test]
+    fn it_may_change_only_its_own_policies() {
         let t = GameQos::new();
-        let keys: Vec<String> = t.touches().into_iter().map(|t| t.key).collect();
-        let mut expected: Vec<String> = crate::env::KNOWN_GAMES
+        assert!(t.touches().is_empty());
+        assert!(t.effect_targets().is_empty());
+        let names: Vec<String> = t
+            .system_targets()
+            .into_iter()
+            .map(|i| match i {
+                SysItem::QosPolicy { name } => name,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let expected: Vec<String> = crate::env::KNOWN_GAMES
             .iter()
             .filter_map(|g| crate::games::facts(g.id))
-            .flat_map(|f| f.programs.iter().map(|p| policy_key(p)))
+            .flat_map(|f| {
+                f.programs
+                    .iter()
+                    .map(|p| format!("PeakTweaks {}", p.trim_end_matches(".exe")))
+            })
             .collect();
-        expected.push(TCPIP_QOS.into());
-        assert_eq!(keys, expected);
-        assert!(keys.iter().all(|k| !k.contains('*')));
-        assert_eq!(t.effect_targets(), [SideEffect::RefreshPolicy]);
+        assert_eq!(names, expected);
+        assert!(names.iter().all(|n| !n.contains('*')));
     }
 }

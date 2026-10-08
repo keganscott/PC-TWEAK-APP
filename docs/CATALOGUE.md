@@ -39,7 +39,7 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | H23 | TCP settings | `netsh int tcp set global` (autotuning, RSS, ECN) | New undo type: previous `show global` values |
 | H24 | Network adapter settings (interrupt moderation, energy-efficient Ethernet, flow control, power saving) | Adapter advanced properties under `Class\{4d36e972-...}\00xx`, then adapter restart | Per-device keys + restart side effect |
 | H25 | DNS (Cloudflare / Google) | Adapter DNS servers | New undo type: previous DNS servers per adapter |
-| H26 | QoS for game traffic | Policy-based QoS: DSCP 46 for the game's exe | Registry policy + policy refresh; see E3 |
+| H26 | QoS for game traffic | Policy-based QoS: DSCP 46 for the game's exe | ~~Registry policy + policy refresh~~ Windows' own `New-NetQosPolicy`, journalled as a non-registry change (N91); see E3 |
 | H27 | Explorer and quality-of-life (file extensions, classic context menu, web results off in Start, wallpaper quality 100) | `Explorer\Advanced`, `CLSID` override, `Search`, `Desktop\JPEGImportQuality` | ValueTweak |
 | H28 | Boost-Ups: junk cleaner (temp, Windows Update cache, thumbnail and DirectX shader caches, crash dumps) | File deletion | Cleanup action: shows sizes, asks once, cannot be undone (says so), journalled as an action |
 | H29 | Boost-Ups: drive optimisation | Windows' own `defrag /O` (TRIM on SSD) | Runs Windows' tool; nothing to undo |

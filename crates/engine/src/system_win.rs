@@ -44,6 +44,9 @@ pub struct WinSystem {
     /// The global TCP settings, from one PowerShell run; dropped on every
     /// TCP setting write.
     tcp: std::sync::Mutex<Option<(std::time::Instant, TcpGlobals)>>,
+    /// The QoS policies in this computer's policy store, from one PowerShell
+    /// run; dropped on every QoS policy write.
+    qos: std::sync::Mutex<Option<(std::time::Instant, Vec<QosPolicy>)>>,
     nvapi: crate::nvapi::NvApi,
     adlx: crate::adlx::Adlx,
 }
@@ -55,6 +58,7 @@ impl WinSystem {
             adapters: std::sync::Mutex::new(None),
             metrics: std::sync::Mutex::new(None),
             tcp: std::sync::Mutex::new(None),
+            qos: std::sync::Mutex::new(None),
             nvapi: crate::nvapi::NvApi::new(),
             adlx: crate::adlx::Adlx::new(),
         }
@@ -89,10 +93,82 @@ impl WinSystem {
             .map(|(_, v)| v)
             .ok_or_else(|| fail("TCP settings", format!("Windows did not report {name}")))
     }
+
+    /// After a QoS policy write: does Windows now list what was written?
+    fn check_qos(&self, item: &SysItem, wanted: &SysState) -> Result<()> {
+        *self.qos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        let now = self.read(item)?;
+        if &now == wanted {
+            Ok(())
+        } else {
+            Err(fail(
+                "QoS policy",
+                format!("{} reads {now:?} after it was set to {wanted:?}", item.describe()),
+            ))
+        }
+    }
+
+    /// The QoS policy called `name` in this computer's policy store.
+    fn qos_policy(&self, name: &str) -> Result<Option<QosPolicy>> {
+        let mut cache = self.qos.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fresh = cache.as_ref().filter(|(at, _)| at.elapsed() < ADAPTER_CACHE);
+        let list = match fresh {
+            Some((_, list)) => list.clone(),
+            None => {
+                let list = parse_qos_policies(&powershell("QoS policies", QOS_SCRIPT, &[])?);
+                *cache = Some((std::time::Instant::now(), list.clone()));
+                list
+            }
+        };
+        Ok(list.into_iter().find(|q| q.name.eq_ignore_ascii_case(name)))
+    }
 }
 
 /// Each global TCP setting by its `netsh` name, with its value.
 type TcpGlobals = Vec<(String, String)>;
+
+/// One QoS policy as `Get-NetQosPolicy` lists it: its name, the program it
+/// matches (empty for none) and its DSCP tag (-1 for none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QosPolicy {
+    name: String,
+    program: String,
+    dscp: i16,
+}
+
+/// The policies `New-NetQosPolicy` adds to without `-PolicyStore`, which
+/// Windows keeps across restarts. VERIFY (NOTES N91): that this store is the
+/// one Windows applies.
+const QOS_SCRIPT: &str = "Get-NetQosPolicy -ErrorAction SilentlyContinue | ForEach-Object { '{0}|{1}|{2}' -f \
+                          $_.Name, $_.AppPathNameMatchCondition, $_.DSCPAction }; exit 0";
+
+/// `Name|Program|DSCP` lines from `QOS_SCRIPT`. A line that does not parse
+/// is skipped.
+pub(crate) fn parse_qos_policies(out: &str) -> Vec<QosPolicy> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.trim().rsplitn(3, '|');
+            let dscp = parts.next()?.trim().parse().ok()?;
+            let program = parts.next()?.trim().to_owned();
+            let name = parts.next()?.trim().to_owned();
+            (!name.is_empty()).then_some(QosPolicy { name, program, dscp })
+        })
+        .collect()
+}
+
+/// A program file name a QoS policy may match: a name only, ending `.exe`.
+fn need_program(s: &str) -> Result<()> {
+    let ok = s.len() <= 260
+        && s.len() > 4
+        && s.to_ascii_lowercase().ends_with(".exe")
+        && !s.starts_with(['-', '.'])
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c));
+    if ok {
+        Ok(())
+    } else {
+        Err(fail("QoS policy", format!("{s:?} is not a program file name")))
+    }
+}
 
 /// The settings `netsh interface tcp set global` changes, read where Windows
 /// keeps them as names that are never translated (`netsh`'s own output is).
@@ -513,6 +589,24 @@ impl SystemBackend for WinSystem {
             SysItem::TcpGlobal { name } => Ok(SysState::Text {
                 text: self.tcp_global(name)?,
             }),
+            SysItem::QosPolicy { name } => {
+                need_name(name, "QoS policy")?;
+                match self.qos_policy(name)? {
+                    None => Ok(SysState::Absent),
+                    Some(q) => match u8::try_from(q.dscp).ok().filter(|d| *d <= 63) {
+                        Some(dscp) if !q.program.is_empty() => Ok(SysState::QosPolicy {
+                            program: q.program,
+                            dscp,
+                        }),
+                        // Not one PeakTweaks could have made, and not one it
+                        // could put back as it was.
+                        _ => Err(fail(
+                            "QoS policy",
+                            format!("a policy called {name} is there without a program and a DSCP tag"),
+                        )),
+                    },
+                }
+            }
             SysItem::File { .. } => Err(EngineError::Internal {
                 detail: "files are read with read_file".into(),
             }),
@@ -655,6 +749,39 @@ impl SystemBackend for WinSystem {
                         format!("netsh set {name} to {value}, but Windows reports {now}"),
                     ))
                 }
+            }
+            (SysItem::QosPolicy { name }, SysState::QosPolicy { program, dscp }) => {
+                need_name(name, "QoS policy")?;
+                need_program(program)?;
+                if *dscp > 63 {
+                    return Err(fail("QoS policy", format!("DSCP {dscp} is above 63")));
+                }
+                *self.qos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                // One name, one policy: one there already is replaced.
+                powershell(
+                    "QoS policy",
+                    "Get-NetQosPolicy -Name $env:PT_NAME -ErrorAction SilentlyContinue | Remove-NetQosPolicy \
+                     -Confirm:$false -ErrorAction Stop; New-NetQosPolicy -Name $env:PT_NAME \
+                     -AppPathNameMatchCondition $env:PT_PROGRAM -DSCPAction ([sbyte]$env:PT_DSCP) -NetworkProfile \
+                     All -IPProtocolMatchCondition Both -ErrorAction Stop | Out-Null",
+                    &[
+                        ("PT_NAME", name),
+                        ("PT_PROGRAM", program),
+                        ("PT_DSCP", &dscp.to_string()),
+                    ],
+                )?;
+                self.check_qos(item, state)
+            }
+            (SysItem::QosPolicy { name }, SysState::Absent) => {
+                need_name(name, "QoS policy")?;
+                *self.qos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                powershell(
+                    "QoS policy",
+                    "Get-NetQosPolicy -Name $env:PT_NAME -ErrorAction SilentlyContinue | Remove-NetQosPolicy \
+                     -Confirm:$false -ErrorAction Stop",
+                    &[("PT_NAME", name)],
+                )?;
+                self.check_qos(item, state)
             }
             (item, state) => Err(wrong_state(item, state)),
         }
@@ -1280,31 +1407,24 @@ mod tests {
         println!("netsh after: {:?}", show());
     }
 
-    /// Game traffic priority (catalogue H26) on this PC, two ways to add a
-    /// policy for a program that does not exist, each reported, then removed:
-    /// (a) the tool's way, the values written where Group Policy keeps them
-    /// and a policy refresh; (b) `New-NetQosPolicy`, Windows' own command.
-    /// Run 37783028224 showed (a) absent from `Get-NetQosPolicy -PolicyStore
-    /// ActiveStore` after `gpupdate` (NOTES N91), so this reports what each
-    /// way leaves in Windows' QoS stores and in the registry rather than
-    /// failing on it; it fails only if anything of its own is left behind.
-    /// Run only with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1.
+    /// Game traffic priority (catalogue H26) on this PC, through this
+    /// backend as the tool uses it: a policy for a program that does not
+    /// exist is added, must read back and show in Windows' active QoS
+    /// policies with DSCP 46, and is removed again. Where Windows keeps it in
+    /// the registry is printed (for the offline undo, NOTES N91). Run only
+    /// with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1.
     #[test]
-    fn qos_policies_added_two_ways_on_this_pc() {
-        use crate::tweaks::qos::{APPLICATION, FIXED, NO_NLA, POLICIES, TCPIP_QOS};
-        use crate::types::RawValue;
-
+    fn a_qos_policy_is_added_and_removed_on_this_pc() {
         if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
-            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to add QoS policies for real");
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to add a QoS policy for real");
             return;
         }
-        const LIST: &str = "foreach ($store in 'ActiveStore', $null) { \
-             $p = if ($store) { Get-NetQosPolicy -PolicyStore $store -ErrorAction SilentlyContinue } \
-                  else { Get-NetQosPolicy -ErrorAction SilentlyContinue }; \
-             foreach ($q in $p) { '{0}: {1}|{2}|{3}|{4}|{5}' -f $(if ($store) { $store } else { 'default' }), \
-                 $q.Name, $q.AppPathNameMatchCondition, $q.DSCPAction, $q.NetworkProfile, $q.Owner } }; exit 0";
-        // Where Windows keeps a policy: every registry key under these whose
-        // name, value names or data mention ours (reg.exe exits 1 on none).
+        const ACTIVE: &str = "Get-NetQosPolicy -PolicyStore ActiveStore -ErrorAction SilentlyContinue | \
+             ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Name, $_.AppPathNameMatchCondition, $_.DSCPAction, \
+             $_.NetworkProfile }; exit 0";
+        let active = || powershell("active QoS policies", ACTIVE, &[]).unwrap();
+        // Every registry key under these whose name, value names or data
+        // mention the policy (reg.exe exits 1 on none).
         let find = || -> Vec<String> {
             let mut keys = Vec::new();
             for root in [
@@ -1320,110 +1440,74 @@ mod tests {
             }
             keys
         };
-        let list = || powershell("QoS policies", LIST, &[]);
-        let ours = |out: &Result<String>, name: &str| -> Option<String> {
-            out.as_ref()
-                .ok()?
-                .lines()
-                .find(|l| l.split(": ").nth(1).is_some_and(|r| r.starts_with(&format!("{name}|"))))
-                .map(str::to_owned)
+        let s = WinSystem::new();
+        let item = SysItem::QosPolicy {
+            name: "PeakTweaks CI check".into(),
         };
-        println!("before: {:?}", list());
+        let wanted = SysState::QosPolicy {
+            program: "peaktweaks-ci-check.exe".into(),
+            dscp: 46,
+        };
+        let before = s.read(&item);
+        println!("before: {before:?}; active: {:?}", active());
+        assert_eq!(before.unwrap(), SysState::Absent);
 
-        // (a) The tool's way.
-        let reg = WinRegistry::new();
-        let key = format!(r"{POLICIES}\PeakTweaks CI check A");
-        let qos_key_existed = reg.key_exists(Hive::LocalMachine, POLICIES).unwrap();
-        let nla_before = reg.read_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA).unwrap();
-        println!("(a) {NO_NLA} before: {nla_before:?}; QoS policy key existed: {qos_key_existed}");
-        reg.write_value(
-            Hive::LocalMachine,
-            &key,
-            APPLICATION,
-            &RawValue::sz("peaktweaks-ci-check-a.exe"),
-        )
-        .unwrap();
-        for (name, value) in FIXED {
-            reg.write_value(Hive::LocalMachine, &key, name, &RawValue::sz(value))
-                .unwrap();
-        }
-        reg.write_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA, &RawValue::sz("1"))
-            .unwrap();
-        println!(
-            "(a) policy refresh: {:?}",
-            WinSystem::new().run(&SideEffect::RefreshPolicy)
-        );
-        let a_listed = list();
-        println!("(a) listed: {a_listed:?}");
-        println!("(a) in the registry: {:?}", find());
-        for (name, _) in FIXED {
-            reg.delete_value(Hive::LocalMachine, &key, name).unwrap();
-        }
-        reg.delete_value(Hive::LocalMachine, &key, APPLICATION).unwrap();
-        reg.delete_key_if_empty(Hive::LocalMachine, &key).unwrap();
-        if !qos_key_existed {
-            reg.delete_key_if_empty(Hive::LocalMachine, POLICIES).unwrap();
-        }
-        match &nla_before {
-            Some(v) => reg.write_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA, v).unwrap(),
-            None => drop(reg.delete_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA).unwrap()),
-        }
-        println!(
-            "(a) policy refresh after: {:?}",
-            WinSystem::new().run(&SideEffect::RefreshPolicy)
-        );
-
-        // (b) Windows' own command, every network type, TCP and UDP.
-        let added = powershell(
-            "New-NetQosPolicy",
-            "New-NetQosPolicy -Name 'PeakTweaks CI check B' -AppPathNameMatchCondition 'peaktweaks-ci-check-b.exe' \
-             -DSCPAction 46 -NetworkProfile All -IPProtocolMatchCondition Both -ErrorAction Stop | \
-             ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Name, $_.DSCPAction, $_.NetworkProfile, $_.Owner }",
-            &[],
-        );
-        println!("(b) New-NetQosPolicy: {added:?}");
-        let b_listed = list();
-        println!("(b) listed: {b_listed:?}");
-        println!("(b) in the registry: {:?}", find());
-        println!(
-            "(b) removed: {:?}",
-            powershell(
-                "Remove-NetQosPolicy",
-                "Get-NetQosPolicy -Name 'PeakTweaks CI check B' -ErrorAction SilentlyContinue | \
-                 Remove-NetQosPolicy -Confirm:$false -ErrorAction Stop",
-                &[],
-            )
-        );
-
-        let after = list();
-        println!("after: {after:?}");
+        let added = s.write(&item, &wanted);
+        let read = s.read(&item);
+        let listed = active();
+        println!("added: {added:?}; reads {read:?}");
+        println!("active with it: {listed:?}");
+        println!("in the registry: {:?}", find());
+        let removed = s.write(&item, &SysState::Absent);
+        let after = s.read(&item);
+        let listed_after = active();
+        println!("removed: {removed:?}; reads {after:?}; active: {listed_after:?}");
         let left = find();
         println!("in the registry after: {left:?}");
-        for (way, listed, name) in [
-            (
-                "(a) the tool's registry values and a policy refresh",
-                &a_listed,
-                "PeakTweaks CI check A",
-            ),
-            ("(b) New-NetQosPolicy", &b_listed, "PeakTweaks CI check B"),
-        ] {
-            let active = ours(listed, name).filter(|l| l.starts_with("ActiveStore: "));
-            println!(
-                "VERDICT {way}: {}",
-                match &active {
-                    Some(l) if l.contains("|46|") => format!("active with DSCP 46 ({l})"),
-                    Some(l) => format!("active, but not with DSCP 46 ({l})"),
-                    None => "NOT in Windows' active QoS policies".to_owned(),
-                }
-            );
-        }
-        for name in ["PeakTweaks CI check A", "PeakTweaks CI check B"] {
-            assert!(ours(&after, name).is_none(), "{name} is still listed: {after:?}");
-        }
-        assert!(
-            left.is_empty(),
-            "a policy of this test is left in the registry: {left:?}"
+
+        added.unwrap();
+        assert_eq!(read.unwrap(), wanted);
+        let line = listed.lines().find(|l| l.starts_with("PeakTweaks CI check|"));
+        let line = line.expect("Windows applies the policy");
+        assert!(line.contains("peaktweaks-ci-check.exe|46|"), "{line}");
+        removed.unwrap();
+        assert_eq!(after.unwrap(), SysState::Absent);
+        assert!(!listed_after.contains("PeakTweaks CI check|"), "{listed_after}");
+        assert!(left.is_empty(), "left in the registry: {left:?}");
+    }
+
+    #[test]
+    fn qos_policies_are_parsed_with_their_program_and_tag() {
+        let out = "PeakTweaks RobloxPlayerBeta|RobloxPlayerBeta.exe|46\r\n\
+                   Throttle only||-1\r\n\
+                   odd line\r\n\
+                   A|B|C|x.exe|10\r\n";
+        let list = parse_qos_policies(out);
+        assert_eq!(
+            list,
+            [
+                QosPolicy {
+                    name: "PeakTweaks RobloxPlayerBeta".into(),
+                    program: "RobloxPlayerBeta.exe".into(),
+                    dscp: 46
+                },
+                QosPolicy {
+                    name: "Throttle only".into(),
+                    program: String::new(),
+                    dscp: -1
+                },
+                QosPolicy {
+                    name: "A|B|C".into(),
+                    program: "x.exe".into(),
+                    dscp: 10
+                },
+            ]
         );
+        assert!(need_program("RobloxPlayerBeta.exe").is_ok());
+        assert!(need_program("FortniteClient-Win64-Shipping.exe").is_ok());
+        for bad in [r"C:\Games\x.exe", "x.bat", "-x.exe", "a;b.exe", "$env:x.exe", ".exe"] {
+            assert!(need_program(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

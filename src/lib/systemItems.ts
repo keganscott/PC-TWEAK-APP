@@ -30,6 +30,8 @@ export function describeItem(item: SysItem): string {
       return `NVIDIA setting 0x${item.setting.toString(16).toUpperCase().padStart(8, "0")} (${item.profile || "global"} profile)`;
     case "amd_setting":
       return `AMD ${AMD_LABELS[item.setting] ?? item.setting} of graphics card ${item.gpu}`;
+    case "qos_policy":
+      return `QoS policy ${item.name}`;
     case "file":
       return `file ${item.path}`;
   }
@@ -78,6 +80,8 @@ export function describeState(state: SysState, item?: SysItem): string {
       return `${state.start.replace("_", " ")}, ${state.running ? "running" : "stopped"}`;
     case "scheme":
       return `copy of ${state.source}`;
+    case "qos_policy":
+      return `${state.program}, DSCP ${state.dscp}`;
     case "file":
       return `saved copy ${state.backup}`;
   }

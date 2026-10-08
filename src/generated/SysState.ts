@@ -4,4 +4,4 @@ import type { ServiceStart } from "./ServiceStart";
 /**
  * The state of a `SysItem`, before or after a change.
  */
-export type SysState = { "state": "absent" } | { "state": "bool", on: boolean, } | { "state": "text", text: string, } | { "state": "dword", value: number, } | { "state": "list", items: Array<string>, } | { "state": "service", start: ServiceStart, running: boolean, } | { "state": "scheme", source: string, } | { "state": "file", backup: string, sha256: string, };
+export type SysState = { "state": "absent" } | { "state": "bool", on: boolean, } | { "state": "text", text: string, } | { "state": "dword", value: number, } | { "state": "list", items: Array<string>, } | { "state": "service", start: ServiceStart, running: boolean, } | { "state": "scheme", source: string, } | { "state": "qos_policy", program: string, dscp: number, } | { "state": "file", backup: string, sha256: string, };

@@ -29,6 +29,12 @@ describe("system item wording", () => {
     expect(describeState({ state: "service", start: "delayed_automatic", running: true })).toBe(
       "delayed automatic, running",
     );
+    expect(describeItem({ kind: "qos_policy", name: "PeakTweaks RobloxPlayerBeta" })).toBe(
+      "QoS policy PeakTweaks RobloxPlayerBeta",
+    );
+    expect(describeState({ state: "qos_policy", program: "RobloxPlayerBeta.exe", dscp: 46 })).toBe(
+      "RobloxPlayerBeta.exe, DSCP 46",
+    );
     expect(describeEffect({ effect: "refresh_policy" })).toBe("refresh Windows policy");
   });
 });

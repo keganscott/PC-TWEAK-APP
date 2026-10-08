@@ -67,6 +67,9 @@ pub enum SysItem {
     /// Plug and Play id `gpu`. State: `Dword` (Anti-Lag 1 on / 0 off; a
     /// vertical refresh mode), or `Absent` where the card lacks the setting.
     AmdSetting { gpu: String, setting: String },
+    /// A Windows QoS policy in this computer's own policy store, the one
+    /// `New-NetQosPolicy` adds to, by name. State: `QosPolicy`, or `Absent`.
+    QosPolicy { name: String },
     /// A whole file. State: `File` (a copy kept with the backups) or `Absent`.
     File { path: String },
 }
@@ -142,6 +145,7 @@ impl SysItem {
             | Self::TcpGlobal { .. }
             | Self::NvidiaSetting { .. }
             | Self::AmdSetting { .. }
+            | Self::QosPolicy { .. }
             | Self::File { .. } => Vec::new(),
         }
     }
@@ -177,6 +181,7 @@ impl SysItem {
                 let label = crate::adlx::Setting::from_key(setting).map_or(setting.as_str(), |s| s.label());
                 format!("AMD {label} of graphics card {gpu}")
             }
+            Self::QosPolicy { name } => format!("QoS policy {name}"),
             Self::File { path } => format!("file {path}"),
         }
     }
@@ -223,6 +228,12 @@ pub enum SysState {
     /// A power plan copied from `source`.
     Scheme {
         source: String,
+    },
+    /// A QoS policy for every program file named `program`, on every network
+    /// type, tagging its traffic with `dscp`.
+    QosPolicy {
+        program: String,
+        dscp: u8,
     },
     /// A file's whole content, kept as a copy with the backups (`backup`,
     /// relative to the journal directory) and checked by its SHA-256.

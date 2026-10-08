@@ -1,14 +1,15 @@
-//! Game traffic priority (CATALOGUE H26, and E3's game half): a Windows
-//! Policy-based QoS policy per game that marks the game's network traffic
-//! with DSCP 46 (Expedited Forwarding), the tag for traffic to send first.
+//! Game traffic priority (CATALOGUE H26, and E3's game half): a Windows QoS
+//! policy per game program that tags the game's network traffic with DSCP 46
+//! (Expedited Forwarding), the tag for traffic to send first.
 //!
-//! The policies are the ones Group Policy's "Policy-based QoS" writes, under
-//! `HKLM\SOFTWARE\Policies\Microsoft\Windows\QoS\<name>`, all text values,
-//! matched by the game's program file name, so a game whose folder moves on
-//! update (Roblox) is still matched. Windows applies such policies only on a
-//! domain network unless `Tcpip\QoS` `Do not use NLA` is "1", so that is set
-//! too. Windows reads them on a policy refresh, which runs after the change
-//! and after Undo.
+//! Each policy is added with Windows' own `New-NetQosPolicy` to this
+//! computer's policy store, matched by the program file name on every network
+//! type (`-NetworkProfile All`), so a game whose folder moves on update
+//! (Roblox) is still matched and no domain-only switch is needed. Undo
+//! removes it with `Remove-NetQosPolicy`, or puts back a policy of the same
+//! name that was there before. The first version wrote the values Group
+//! Policy keeps under `SOFTWARE\Policies\Microsoft\Windows\QoS` and refreshed
+//! policy; CI showed Windows did not apply such a policy (NOTES N91).
 //!
 //! The tag only matters to routers and networks that honour it; many home
 //! routers and internet providers ignore or clear it. Nothing in the game is
@@ -16,12 +17,8 @@
 //! is cleared (`games::anti_cheat_block`, NOTES N75), and only games found
 //! on this PC.
 //!
-//! One tool for every game, not one per game: the `Do not use NLA` value is
-//! shared, and per-game tools would undo it under each other.
-//!
-//! VERIFY (NOTES N91): the value names and `Version` "1.0" against a policy
-//! made in the Group Policy editor; `Do not use NLA` on Windows 10 and 11;
-//! that a program file name alone matches.
+//! VERIFY (NOTES N91): that a policy matched by a program file name tags that
+//! program's packets on Windows 10 and 11.
 
 use std::borrow::Cow;
 
@@ -29,34 +26,15 @@ use crate::context::ContextResolver;
 use crate::env::KNOWN_GAMES;
 use crate::error::{EngineError, Result};
 use crate::games;
-use crate::system::SideEffect;
+use crate::system::{SysItem, SysState};
 use crate::transaction::Transaction;
 use crate::types::{
-    BlockedCode, BlockedReason, ExecutionContext, Impact, RegRoot, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata,
-    TweakState,
+    BlockedCode, BlockedReason, ExecutionContext, Impact, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState,
 };
 
 pub const ID: &str = "network.qos.games";
-pub const POLICIES: &str = r"SOFTWARE\Policies\Microsoft\Windows\QoS";
-pub const TCPIP_QOS: &str = r"SYSTEM\CurrentControlSet\Services\Tcpip\QoS";
-pub const NO_NLA: &str = "Do not use NLA";
 /// Expedited Forwarding (RFC 3246).
-pub const DSCP: &str = "46";
-
-/// Every value of one policy, the program name aside.
-pub const FIXED: [(&str, &str); 10] = [
-    ("Version", "1.0"),
-    ("Protocol", "*"),
-    ("Local Port", "*"),
-    ("Local IP", "*"),
-    ("Local IP Prefix Length", "*"),
-    ("Remote Port", "*"),
-    ("Remote IP", "*"),
-    ("Remote IP Prefix Length", "*"),
-    ("DSCP Value", DSCP),
-    ("Throttle Rate", "-1"),
-];
-pub const APPLICATION: &str = "Application Name";
+pub const DSCP: u8 = 46;
 
 /// A game with its own program file, one policy for each of its programs.
 struct Game {
@@ -77,10 +55,24 @@ fn games_with_programs() -> Vec<Game> {
         .collect()
 }
 
-/// The policy key for one program: `PeakTweaks <program without .exe>`.
-pub fn policy_key(program: &str) -> String {
+/// The policy for one program: `PeakTweaks <program without .exe>`.
+pub fn policy(program: &str) -> SysItem {
     let stem = program.strip_suffix(".exe").unwrap_or(program);
-    format!(r"{POLICIES}\PeakTweaks {stem}")
+    SysItem::QosPolicy {
+        name: format!("PeakTweaks {stem}"),
+    }
+}
+
+/// What the policy for `program` holds once this tool has added it.
+pub fn wanted(program: &str) -> SysState {
+    SysState::QosPolicy {
+        program: program.to_owned(),
+        dscp: DSCP,
+    }
+}
+
+fn is_ours(now: &SysState, program: &str) -> bool {
+    matches!(now, SysState::QosPolicy { program: p, dscp } if *dscp == DSCP && p.eq_ignore_ascii_case(program))
 }
 
 pub struct GameQos {
@@ -131,25 +123,6 @@ impl GameQos {
             ),
         )))
     }
-
-    /// Does this program's policy hold exactly our values?
-    fn has_policy(res: &ContextResolver, program: &str) -> Result<bool> {
-        let key = policy_key(program);
-        let read = |name: &str| res.read_string(RegRoot::LocalMachine, &key, name);
-        if !read(APPLICATION)?.is_some_and(|v| v.eq_ignore_ascii_case(program)) {
-            return Ok(false);
-        }
-        for (name, value) in FIXED {
-            if read(name)?.as_deref() != Some(value) {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    fn nla_off(res: &ContextResolver) -> Result<bool> {
-        Ok(res.read_string(RegRoot::LocalMachine, TCPIP_QOS, NO_NLA)?.as_deref() == Some("1"))
-    }
 }
 
 impl Default for GameQos {
@@ -177,7 +150,8 @@ impl Tweak for GameQos {
                  the tag treat it differently; many home routers and internet providers ignore it.",
             ),
             target: Cow::Owned(format!(
-                r"HKLM\{POLICIES}\PeakTweaks <game> (DSCP Value = {DSCP}); HKLM\{TCPIP_QOS}\{NO_NLA} = 1"
+                "New-NetQosPolicy \"PeakTweaks <game>\" -AppPathNameMatchCondition <game>.exe -DSCPAction {DSCP} \
+                 -NetworkProfile All"
             )),
             category: Cow::Borrowed("network"),
             tier: Tier::Pro,
@@ -193,19 +167,15 @@ impl Tweak for GameQos {
     }
 
     fn touches(&self) -> Vec<RegTarget> {
-        let mut names: Vec<&str> = FIXED.iter().map(|(n, _)| *n).collect();
-        names.push(APPLICATION);
-        let mut out: Vec<RegTarget> = games_with_programs()
-            .iter()
-            .flat_map(|g| g.programs.iter())
-            .map(|p| RegTarget::new(RegRoot::LocalMachine, policy_key(p), &names))
-            .collect();
-        out.push(RegTarget::new(RegRoot::LocalMachine, TCPIP_QOS, &[NO_NLA]));
-        out
+        Vec::new()
     }
 
-    fn effect_targets(&self) -> Vec<SideEffect> {
-        vec![SideEffect::RefreshPolicy]
+    fn system_targets(&self) -> Vec<SysItem> {
+        games_with_programs()
+            .iter()
+            .flat_map(|g| g.programs.iter())
+            .map(|p| policy(p))
+            .collect()
     }
 
     fn read_state(&self, res: &ContextResolver, has_journal_entry: bool) -> Result<TweakState> {
@@ -215,12 +185,9 @@ impl Tweak for GameQos {
             Err(e) => return Err(e),
         };
         for p in games.iter().flat_map(|g| g.programs.iter()) {
-            if !Self::has_policy(res, p)? {
+            if !is_ours(&res.read_system(&policy(p))?, p) {
                 return Ok(TweakState::Default);
             }
-        }
-        if !Self::nla_off(res)? {
-            return Ok(TweakState::Default);
         }
         Ok(if has_journal_entry {
             TweakState::Applied
@@ -231,30 +198,11 @@ impl Tweak for GameQos {
 
     fn apply(&self, tx: &mut Transaction) -> Result<()> {
         let games = self.covered(tx.resolver())?;
-        let mut changed = false;
         for p in games.iter().flat_map(|g| g.programs.iter()) {
-            if Self::has_policy(tx.resolver(), p)? {
-                continue;
+            if !is_ours(&tx.resolver().read_system(&policy(p))?, p) {
+                tx.set_system(policy(p), wanted(p))?;
             }
-            let key = policy_key(p);
-            tx.set_string(RegRoot::LocalMachine, &key, APPLICATION, p)?;
-            for (name, value) in FIXED {
-                tx.set_string(RegRoot::LocalMachine, &key, name, value)?;
-            }
-            changed = true;
-        }
-        if !Self::nla_off(tx.resolver())? {
-            tx.set_string(RegRoot::LocalMachine, TCPIP_QOS, NO_NLA, "1")?;
-            changed = true;
-        }
-        if changed {
-            tx.after_commit(SideEffect::RefreshPolicy)?;
         }
         Ok(())
-    }
-
-    fn revert(&self, tx: &mut Transaction) -> Result<()> {
-        tx.restore_journalled()?;
-        tx.after_commit(SideEffect::RefreshPolicy)
     }
 }

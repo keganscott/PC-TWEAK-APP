@@ -20,27 +20,32 @@ is a Pro change. Everything that keeps the PC safe is the real thing:
 - It never touches the BIOS, drivers, game files or anti-cheat, and it collects
   no data.
 
-The top bar says **Tester build** on every screen. Tools lists 12 Windows
-settings: five in the main view (Pointer precision, Game Mode, Background game
-recording, Sticky Keys pop-ups, Transparency effects) and seven more under
-Tools > Advanced. Settings this PC already has are listed as
-**Already optimized**, not hidden. Fortnite process priority stays "Not
-available" until it has been tested against Fortnite's anti-cheat.
+The top bar says **Tester build** on every screen. **Tools** lists about 50
+changes in sections (gaming, input, appearance, privacy, network, power,
+services, graphics and more); the main view shows the Safe ones, and the
+**Advanced** switch at the top shows the rest, plus MSI mode per device.
+Below them: **While you play** (Gaming Mode and the game timer), **Startup
+apps**, **Connection** (a check of your connection) and **One-time actions**
+(empty the standby list, clear junk files, optimize the Windows drive).
+Settings this PC already has are listed as **Already optimized**, not hidden.
+Changes that need hardware this PC does not have (an NVIDIA or AMD card, Wi-Fi
+and a cable) are folded under "... do not apply to this PC" in their section. The per-game changes
+(Fortnite and Roblox process priority, game traffic priority) stay "Not
+available" until they have been tried with each game's anti-cheat (NOTES N75).
 
 ## 1. Get the two programs
 
 You need `peaktweaks-tester.exe`, and `peaktweaks-field-check.exe` for step 9.
 
-**Option A (simplest, once GitHub runs jobs again).** GitHub stopped running our
-builds on 2026-10-03 because of a billing problem on the account (NOTES N58).
-Fix it under GitHub > Settings > Billing and plans. After that, every push builds
-and tests everything on Windows. Then:
+**Option A (simplest).** Every push builds and tests everything on Windows
+(the repository is public, so GitHub runs it for free).
 
-1. Open the repository on GitHub, **Actions** tab, the newest green **ci** run.
+1. Open the repository on GitHub, **Actions** tab, the newest green **ci** run
+   for the branch `claude/peaktweaks-windows-setup-sw5aub-ax2mx0`.
 2. Under **Artifacts**, download **peaktweaks-tester-exe** and
    **peaktweaks-field-check**, and unzip both.
 
-**Option B (build it yourself, works today).** It needs about 10 GB of downloads
+**Option B (build it yourself).** It needs about 10 GB of downloads
 the first time.
 
 1. Install, with the default options:
@@ -49,8 +54,8 @@ the first time.
    - Build Tools for Visual Studio: https://visualstudio.microsoft.com/downloads/.
      In the installer, tick **Desktop development with C++**.
 2. Get the code. On GitHub, switch to the branch
-   `claude/peaktweaks-windows-setup-sw5aub`, then **Code > Download ZIP**, and unzip it.
-   Or, with Git: `git clone -b claude/peaktweaks-windows-setup-sw5aub https://github.com/keganscott/PC-TWEAK-APP`.
+   `claude/peaktweaks-windows-setup-sw5aub-ax2mx0`, then **Code > Download ZIP**, and unzip it.
+   Or, with Git: `git clone -b claude/peaktweaks-windows-setup-sw5aub-ax2mx0 https://github.com/keganscott/PC-TWEAK-APP`.
 3. Open PowerShell (not as administrator) in that folder and run:
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\build-tester.ps1
@@ -123,10 +128,30 @@ in Backups and is undone by Undo all.
 
 If you prefer acceleration off, apply it again and keep it. It stays undoable.
 
+## 5b. A few more changes
+
+Each of these is recorded and undone the same way. Note anything that fails,
+reads wrong afterwards, or is confusing.
+
+1. **Tools**, any section: **Apply recommended** applies that section's
+   recommended changes in one click. Check a couple of them in Windows, for
+   example Settings > Gaming > **Game Mode** or Settings > Personalization >
+   Colors > **Transparency effects**.
+2. Turn on **Advanced**. Apply **PeakTweaks power plan**, then check Control
+   Panel > Power Options: "PeakTweaks" should be the selected plan. Apply
+   **Search indexing** (Services) and check `services.msc`: Windows Search
+   should be Disabled and stopped.
+3. **Connection**: click **Check now**. It pings your router and two public
+   DNS servers 20 times each and says where packets were lost, if anywhere. Note
+   what it says and whether that matches your connection.
+4. **One-time actions**: open **Clear out junk files**. It shows the size of
+   each area first and asks once before deleting; you can cancel there.
+5. **While you play**: switch **Gaming Mode** on and off once.
+
 ## 6. Backups and Undo all
 
-1. Open **Backups**. **Applied now** lists what is in effect, including "Allow a
-   restore point on demand" if step 4 made a restore point.
+1. Open **Backups**. **Applied now** lists what is in effect from step 5b, and
+   "Allow a restore point on demand" if step 4 made a restore point.
 2. Click **Undo all** and confirm. **Applied now** should become empty.
 
 ## 7. Close and reopen
@@ -161,7 +186,7 @@ optional extra steps (frame capture with a game running).
 
 ## 10. What to send back
 
-- Your notes from steps 2 to 8, and screenshots of anything wrong or confusing.
+- Your notes from steps 2 to 8 (including 5b), and screenshots of anything wrong or confusing.
 - `report.json` from step 9. It can identify the PC (hardware IDs, your Windows
   account's ID), so send it only to whoever works on PeakTweaks.
 - `%LOCALAPPDATA%\PeakTweaks\startup-error.log`, if it exists.

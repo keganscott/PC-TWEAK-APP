@@ -278,7 +278,17 @@ jobs:
       - name: Every registry tool applied and undone on this runner
         env:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_registry_tool_applies_and_undoes_on_this_pc
+        shell: pwsh
+        run: |
+          # The runner image already has four of these set the tools' way, so
+          # they would be skipped as already optimized (run 37818812213). Set
+          # them the other way first; the runner is thrown away.
+          reg add 'HKCU\Software\Microsoft\GameBar' /v AutoGameModeEnabled /t REG_DWORD /d 0 /f
+          reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\kernel' /v GlobalTimerResolutionRequests /t REG_DWORD /d 0 /f
+          reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power' /v HiberbootEnabled /t REG_DWORD /d 1 /f
+          reg add 'HKCU\Control Panel\Desktop\WindowMetrics' /v MinAnimate /t REG_SZ /d 1 /f
+          reg add 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' /v TaskbarAnimations /t REG_DWORD /d 1 /f
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_registry_tool_applies_and_undoes_on_this_pc
 
       # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
       # set by hand and put back (same gate). The runner has no Wi-Fi, so the

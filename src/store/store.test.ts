@@ -277,6 +277,14 @@ describe("recommended changes", () => {
     const tweaks = store.getState().tweaks.map((t) => (t.id === "fixture.default" ? { ...t, category: "appearance" } : t));
     expect(recommendedIds(tweaks)).toEqual([]);
   });
+
+  it("leave out changes with a cost, which are applied one at a time where their line shows", async () => {
+    const { store } = await booted({ gateOpen: true });
+    const tweaks = store
+      .getState()
+      .tweaks.map((t) => (t.id === "fixture.default" ? { ...t, tradeoff: "Uses more power." } : t));
+    expect(recommendedIds(tweaks)).toEqual([]);
+  });
 });
 
 describe("one-time actions", () => {

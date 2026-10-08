@@ -163,11 +163,20 @@ export function initialState(sample: boolean): State {
  * not yet in effect, not refused by the engine. A setting the PC already has
  * (foreign) or one changed after we applied it (drifted) is left alone.
  * DECISIONS 15.22: "recommended" stands in for evidence grades A and B until
- * the tweak dictionary gives grades (N2). Look-and-feel changes are left out.
+ * the tweak dictionary gives grades (N2). Look-and-feel changes are left out,
+ * and so are changes with a cost line: a one-click set shows no lines, so
+ * those are applied one at a time in Tools, where the line is read first.
  */
 export function recommendedIds(tweaks: readonly TweakView[]): string[] {
   return tweaks
-    .filter((t) => t.safety === "safe" && t.category !== APPEARANCE && !t.blocked && t.state.status === "default")
+    .filter(
+      (t) =>
+        t.safety === "safe" &&
+        t.category !== APPEARANCE &&
+        !t.tradeoff &&
+        !t.blocked &&
+        t.state.status === "default",
+    )
     .map((t) => t.id);
 }
 

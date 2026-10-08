@@ -1,6 +1,6 @@
 // Settings inside each game, for the Starter game cards (plan 6.4: "in-game
 // guidance and OS-level items only"). PeakTweaks never changes these; the
-// player does, in the game's own menu. Sources and limits are in NOTES.md N57.
+// player does, in the game's own menu. Each entry names its source.
 
 export interface GameGuidance {
   /** Who gives this advice. `null` when there is none yet. */
@@ -10,14 +10,15 @@ export interface GameGuidance {
 }
 
 export const GAME_GUIDANCE: Record<string, GameGuidance> = {
-  // Plan section 8, "Sourced base (Epic's own low-FPS guidance)". VERIFY
-  // against Epic's player-support article (N57).
+  // Plan section 8, "Sourced base (Epic's own low-FPS guidance)". Checked
+  // 2026-10-08 against Epic's "Troubleshooting low frame rate (FPS) in
+  // Fortnite" (epicgames.com/help, a000084818), including where each is set.
   fortnite: {
     source: "Epic Games' own advice for PCs that struggle to run Fortnite",
-    intro: "Epic suggests these. Change them in Fortnite's Settings menu and in the graphics driver's control panel.",
+    intro: "Epic suggests these. Change them in Fortnite's settings unless the step says where.",
     steps: [
       "Rendering mode: Performance.",
-      "High-resolution textures: off.",
+      "High-resolution textures: off, in the Epic Games Launcher (Library, the three dots next to Fortnite, Options).",
       "V-Sync: off.",
       "Install Fortnite on an SSD if the PC has one.",
       "Close programs you do not need while playing.",
@@ -25,10 +26,11 @@ export const GAME_GUIDANCE: Record<string, GameGuidance> = {
     ],
   },
   // Plan section 8: Roblox gets a guide to its own graphics-quality setting
-  // only. Menu names from memory; VERIFY (N57).
+  // only. Checked 2026-10-08 against Roblox's "Graphics Quality" help article
+  // (en.help.roblox.com, 203314310).
   roblox: {
     source: "Roblox's own graphics setting",
-    intro: "Roblox picks its graphics quality itself unless you set it.",
+    intro: "Roblox can pick its graphics quality itself (Automatic), or you can set it.",
     steps: [
       "In a Roblox game, open the menu (Esc) and choose Settings.",
       "Set Graphics Mode to Manual.",

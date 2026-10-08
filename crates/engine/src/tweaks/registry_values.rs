@@ -440,7 +440,11 @@ pub const NETWORK_THROTTLING: ValueTweak = ValueTweak {
 };
 
 /// Multimedia Class Scheduler: the "Games" task profile. Windows' defaults are
-/// Priority 2, Scheduling Category "Medium", SFIO Priority "Normal".
+/// Priority 2, Scheduling Category "Medium", SFIO Priority "Normal". The
+/// category is what changes anything: Microsoft's MMCSS page says Priority
+/// "for tasks with a Scheduling Category of High ... is always treated as 2"
+/// and SFIO Priority "is not used" (checked 2026-10-08). The other two are
+/// written as Hone writes them, and kept so Undo of earlier changes works.
 pub const GAMES_TASK: ValueTweak = ValueTweak {
     id: "scheduling.gamestask",
     name: "Game task priority",
@@ -510,7 +514,8 @@ pub const TAILORED: ValueTweak = ValueTweak {
 
 /// Group Policy "Allow publishing of User Activities" and "Allow upload of User
 /// Activities" (Computer Configuration > Administrative Templates > System >
-/// OS Policies).
+/// OS Policies). Microsoft's Windows Backup page: "If any of these policies
+/// are disabled, Windows Backup will not occur" (checked 2026-10-08).
 pub const ACTIVITY_HISTORY: ValueTweak = ValueTweak {
     id: "privacy.activityhistory",
     name: "Activity history",
@@ -518,7 +523,7 @@ pub const ACTIVITY_HISTORY: ValueTweak = ValueTweak {
     category: "privacy",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Safe,
-    tradeoff: Some("Settings shows \"Some settings are managed by your organization\" while this is on."),
+    tradeoff: Some("Windows Backup stops saving your Windows settings while this is on."),
     requires_reboot: false,
     settings: &[
         dword(SYSTEM_POLICY, "PublishUserActivities", 0),
@@ -535,10 +540,9 @@ pub const TELEMETRY: ValueTweak = ValueTweak {
     category: "privacy",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Safe,
-    tradeoff: Some(
-        "Settings shows \"Some settings are managed by your organization\" while this is on, and Windows Insider \
-         builds stop arriving.",
-    ),
+    // Microsoft: Required "disables the Optional diagnostic data control in
+    // the Settings app", and joining Windows Insider asks for optional data.
+    tradeoff: Some("Windows Insider asks for optional diagnostic data, which cannot be turned on while this is on."),
     requires_reboot: false,
     settings: &[dword(DATA_COLLECTION, "AllowTelemetry", 1)],
 };
@@ -560,7 +564,10 @@ pub const FILE_EXTENSIONS: ValueTweak = ValueTweak {
 
 /// Group Policy "Turn off display of recent search entries in the File
 /// Explorer search box" (DisableSearchBoxSuggestions) plus the per-user Bing
-/// switch: Start and the taskbar search show local results only.
+/// switch: Start and the taskbar search show local results only. VERIFY on a
+/// real PC (NOTES N67): Microsoft documents this policy for File Explorer's
+/// search box only, and documents `ConnectedSearchUseWeb` and
+/// `DisableWebSearch` (HKLM Windows Search policies) for web results.
 pub const WEB_SEARCH: ValueTweak = ValueTweak {
     id: "explorer.websearch",
     name: "Web results in Start search",
@@ -648,13 +655,16 @@ pub const FAST_STARTUP: ValueTweak = ValueTweak {
 
 // ---- Timer (catalogue H2, registry half) ------------------------------------
 
-/// Windows 11 limits a program's timer-resolution request to that program.
-/// This value restores the system-wide behaviour of Windows 10; earlier
-/// versions ignore it. The timer itself is held by the timer-resolution tool.
+/// Since Windows 10 version 2004 a program's timer-resolution request no
+/// longer changes the global timer resolution (Microsoft's `timeBeginPeriod`
+/// page, checked 2026-10-08). This value restores the system-wide behaviour
+/// (VERIFY: undocumented, and which versions honour it is from memory). The
+/// timer itself is held by the timer-resolution tool.
 pub const TIMER_REQUESTS: ValueTweak = ValueTweak {
     id: "scheduling.timerrequests",
     name: "System-wide timer requests",
-    summary: "Lets a program's timer-resolution request apply to the whole system again, as before Windows 11.",
+    summary: "Lets a program's timer-resolution request apply to the whole system again, as before Windows 10 \
+              version 2004.",
     category: "scheduling",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Moderate,

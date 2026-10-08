@@ -44,7 +44,8 @@
             "allow-cleanup-run",
             "allow-optimize-drive",
             "allow-list-startup-apps",
-            "allow-list-msi-devices"
+            "allow-list-msi-devices",
+            "allow-check-connection"
           ]
         }
       ]

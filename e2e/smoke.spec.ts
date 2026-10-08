@@ -39,6 +39,10 @@ test("every screen loads and passes an accessibility scan", async ({ page }) => 
   await page.getByRole("switch", { name: /Advanced/ }).check();
   await expect(page.getByText("MSI mode: Sample graphics card")).toBeVisible();
   await expectNoSeriousA11yIssues(page);
+  // A connection check's results: the reading and the table of targets.
+  await page.getByRole("button", { name: "Check now" }).click();
+  await expect(page.getByRole("rowheader", { name: /Your router/ })).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
 });
 
 test("changes stay locked until a restore point exists, then apply and undo", async ({ page }) => {

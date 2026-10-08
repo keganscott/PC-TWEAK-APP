@@ -355,6 +355,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       }),
     listStartupApps: () => reply("listStartupApps", [], () => clone(startup)),
     listMsiDevices: () => reply("listMsiDevices", [], () => clone(msi)),
+    checkConnection: () =>
+      reply("checkConnection", [], () => {
+        emit("netcheck", "Checking the connection");
+        return { ...clone(fx.networkCheck), unixMs: Date.now() };
+      }),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {
         emit("drive", "Optimizing the Windows drive");

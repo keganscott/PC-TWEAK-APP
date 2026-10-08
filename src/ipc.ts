@@ -20,6 +20,7 @@ import type { GameInfo } from "./generated/GameInfo";
 import type { JournalEntry } from "./generated/JournalEntry";
 import type { JournalView } from "./generated/JournalView";
 import type { MsiDeviceList } from "./generated/MsiDeviceList";
+import type { NetworkCheck } from "./generated/NetworkCheck";
 import type { PlayStatus } from "./generated/PlayStatus";
 import type { Progress } from "./generated/Progress";
 import type { ProofRun } from "./generated/ProofRun";
@@ -114,6 +115,8 @@ export const engine = {
   listStartupApps: () => call<StartupList>("list_startup_apps"),
   /** MSI mode for each graphics card and network adapter (catalogue H6). Reads only; apply with applyTweak(its id). */
   listMsiDevices: () => call<MsiDeviceList>("list_msi_devices"),
+  /** Echoes to the router and two public DNS servers (catalogue E4). Sends only echo requests; changes nothing. */
+  checkConnection: () => call<NetworkCheck>("check_connection"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

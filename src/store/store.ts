@@ -22,6 +22,7 @@ import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalView } from "../generated/JournalView";
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
+import type { NetworkCheck } from "../generated/NetworkCheck";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
@@ -103,6 +104,8 @@ export interface State {
   cleanupOp: Op<CleanupReport>;
   /** "Optimize the Windows drive" (catalogue H29); keeps the last run for its card. */
   driveOp: Op<DriveOptimization>;
+  /** "Check the connection" (catalogue E4); keeps the last check for its card. */
+  netcheckOp: Op<NetworkCheck>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   /** The game watcher (catalogue step 5); null until it first answers. */
@@ -143,6 +146,7 @@ export function initialState(sample: boolean): State {
     cleanupSizesOp: IDLE,
     cleanupOp: IDLE,
     driveOp: IDLE,
+    netcheckOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     play: null,
@@ -459,6 +463,19 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       }
       // The engine keeps a line in the change record whether it worked or not.
       await refreshJournal();
+    },
+
+    /** Echoes to the router and two public DNS servers. Changes nothing and
+     * leaves no line in the change record. */
+    async checkConnection() {
+      if (state.netcheckOp.status === "running") return;
+      set((s) => ({ ...s, netcheckOp: RUNNING }));
+      try {
+        const result = await backend.checkConnection();
+        set((s) => ({ ...s, netcheckOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, netcheckOp: failed(e) }));
+      }
     },
 
     /** Run Windows' own drive optimisation. Changes no setting, so nothing to undo. */

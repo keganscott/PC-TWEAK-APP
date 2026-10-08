@@ -27,6 +27,7 @@ const COMMANDS: &[&str] = &[
     "optimize_drive",
     "list_startup_apps",
     "list_msi_devices",
+    "check_connection",
 ];
 
 fn main() {

@@ -289,6 +289,27 @@ describe("one-time actions", () => {
     expect(op.value.before.cachedBytes).toBeGreaterThan(op.value.after.cachedBytes);
   });
 
+  it("checks the connection and keeps each target's figures for the card", async () => {
+    const { store } = await booted();
+    await store.actions.checkConnection();
+    const op = store.getState().netcheckOp;
+    expect(op.status).toBe("done");
+    if (op.status !== "done") return;
+    expect(op.value.results.map((r) => r.target)).toEqual(["router", "cloudflare", "google"]);
+    expect(op.value.reading).toBe("loss_past_router");
+  });
+
+  it("a refused connection check is reported with the engine's reason", async () => {
+    const { store } = await booted({
+      failures: { checkConnection: { kind: "internal", detail: "a Proof recording is running" } },
+    });
+    await store.actions.checkConnection();
+    expect(store.getState().netcheckOp).toMatchObject({
+      status: "failed",
+      error: { kind: "internal", detail: "a Proof recording is running" },
+    });
+  });
+
   it("a refused purge is reported with the engine's reason, not dropped", async () => {
     const { store } = await booted({ failures: { purgeStandbyMemory: { kind: "internal", detail: "no privilege" } } });
     await store.actions.purgeStandby();

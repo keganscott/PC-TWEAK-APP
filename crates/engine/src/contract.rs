@@ -23,6 +23,7 @@ use crate::journal::{
     OneTimeAction, Record, RestoreMethod, RestorePointRecord,
 };
 use crate::memory::{MemoryUse, StandbyPurge};
+use crate::netcheck::{read, summarize, NetworkCheck, PingTarget};
 use crate::play::PlayStatus;
 use crate::proof::metrics::compute_stats;
 use crate::proof::nvml::{ThrottleReason, ThrottleSeen, ThrottleSummary};
@@ -76,6 +77,28 @@ fn views() -> Vec<crate::engine::TweakView> {
 }
 
 const MIB: u64 = 1024 * 1024;
+
+/// A check as `netcheck` reads it, from illustrative round trips: the router
+/// answers all 20 echoes, Cloudflare loses one (SAMPLE in the UI).
+fn network_check_fixture() -> NetworkCheck {
+    let rtts = |base: u32, lost: Option<usize>| -> Vec<Option<u32>> {
+        (0..20)
+            .map(|i| (Some(i) != lost).then_some(base + [0, 1, 0, 2, 1][i % 5]))
+            .collect()
+    };
+    let mut router = summarize(PingTarget::Router, &rtts(1, None));
+    router.address = Some("192.168.1.1".into());
+    let results = vec![
+        router,
+        summarize(PingTarget::Cloudflare, &rtts(14, Some(7))),
+        summarize(PingTarget::Google, &rtts(17, None)),
+    ];
+    NetworkCheck {
+        reading: read(&results),
+        results,
+        unix_ms: 1_791_332_400_000,
+    }
+}
 
 /// The shape of real results; the numbers are illustrative (SAMPLE in the UI).
 fn cleanup_sizes() -> Vec<AreaSize> {
@@ -622,6 +645,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { EngineError } from \"./EngineError\";\n\
          import type { JournalView } from \"./JournalView\";\n\
          import type { MsiDeviceList } from \"./MsiDeviceList\";\n\
+         import type { NetworkCheck } from \"./NetworkCheck\";\n\
          import type { PlayStatus } from \"./PlayStatus\";\n\
          import type { Progress } from \"./Progress\";\n\
          import type { ProofRun } from \"./ProofRun\";\n\
@@ -705,6 +729,9 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             unix_ms: 1_791_331_200_000,
         },
     );
+    // A real check's shape from a scripted network: the router answers every
+    // echo, one public server loses one (SAMPLE in the UI).
+    ts_const(&mut out, "networkCheck", "NetworkCheck", &network_check_fixture());
     ts_const(&mut out, "cleanupSizes", "AreaSize[]", &cleanup_sizes());
     ts_const(
         &mut out,

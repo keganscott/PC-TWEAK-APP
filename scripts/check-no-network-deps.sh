@@ -3,6 +3,11 @@
 # (plan section 6.4: "collects nothing"; Store copy may say so only while this
 # holds). Fails on any crate from the deny list, or on tokio's `net` feature.
 #
+# The app is not network-free: the connection check (catalogue E4, DECISIONS
+# 15.22) sends ICMP echo requests, what `ping` sends, when the user starts it.
+# It uses Windows' IP Helper, not a networking crate, so this check still
+# holds; `network_audit.rs` keeps that the only network code in the source.
+#
 # Anything that needs the network later (licence server, AI Rig Engineer) must
 # sit behind a non-default Cargo feature so this check keeps passing on the
 # default build.

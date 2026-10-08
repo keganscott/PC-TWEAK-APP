@@ -107,6 +107,22 @@ describe("App", () => {
     expect(await within(card).findByText(/6\.0 GB before, 1\.0 GB after/)).toBeTruthy();
   });
 
+  it("Tools checks the connection and says where echoes were lost", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = await screen.findByRole("region", { name: "Check the connection" });
+    expect(within(card).getByText("SAMPLE")).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Check now" }));
+    expect(await within(card).findByText("Your router answered every echo, but some sent past it were lost.")).toBeTruthy();
+    const router = within(card).getByRole("rowheader", { name: /Your router/ }).closest("tr") as HTMLElement;
+    expect(within(router).getByText("20 of 20")).toBeTruthy();
+    expect(within(router).getByText("1.8 ms")).toBeTruthy();
+    const cloudflare = within(card).getByRole("rowheader", { name: /Cloudflare DNS/ }).closest("tr") as HTMLElement;
+    expect(within(cloudflare).getByText("19 of 20")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Check again" })).toBeTruthy();
+  });
+
   it("Tools says which games it watches for, before any runs", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

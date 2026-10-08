@@ -19,6 +19,7 @@ use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
 use peaktweaks_engine::journal::{now_ms, ActionDone, JournalEntry, OneTimeAction};
 use peaktweaks_engine::memory::{self, StandbyPurge};
+use peaktweaks_engine::netcheck::{self, NetworkCheck};
 use peaktweaks_engine::play::PlayStatus;
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
@@ -477,6 +478,40 @@ pub async fn purge_standby_memory(app: AppHandle, engine: State<'_, EngineHandle
     progress(
         &app,
         if out.is_ok() { "standby_done" } else { "standby_failed" },
+        None,
+        "",
+    );
+    out
+}
+
+/// Ask this PC's router and two public DNS servers for echoes and report the
+/// round trips, jitter and lost echoes (catalogue E4). Sends only ICMP echo
+/// requests, only when the user starts it, and changes nothing. Refused while
+/// a Proof capture records, so the measurement has the network to itself.
+#[tauri::command]
+pub async fn check_connection(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<NetworkCheck> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "check the connection")?;
+    progress(&app, "netcheck", None, "Checking the connection");
+    let out = tauri::async_runtime::spawn_blocking(|| {
+        netcheck::run(
+            netcheck::system().as_ref(),
+            netcheck::ECHOES,
+            std::time::Duration::from_millis(netcheck::GAP_MS),
+            now_ms(),
+        )
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("connection check worker failed: {e}"),
+    });
+    progress(
+        &app,
+        if out.is_ok() {
+            "netcheck_done"
+        } else {
+            "netcheck_failed"
+        },
         None,
         "",
     );

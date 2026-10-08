@@ -8,6 +8,7 @@ import type { DriveOptimization } from "./DriveOptimization";
 import type { EngineError } from "./EngineError";
 import type { JournalView } from "./JournalView";
 import type { MsiDeviceList } from "./MsiDeviceList";
+import type { NetworkCheck } from "./NetworkCheck";
 import type { PlayStatus } from "./PlayStatus";
 import type { Progress } from "./Progress";
 import type { ProofRun } from "./ProofRun";
@@ -829,6 +830,46 @@ export const standbyPurge = {
   },
   "unixMs": 1791331200000
 } satisfies StandbyPurge;
+
+export const networkCheck = {
+  "results": [
+    {
+      "target": "router",
+      "address": "192.168.1.1",
+      "sent": 20,
+      "received": 20,
+      "minMs": 1,
+      "avgMs": 1.8,
+      "maxMs": 3,
+      "jitterMs": 1.2,
+      "problem": null
+    },
+    {
+      "target": "cloudflare",
+      "address": "1.1.1.1",
+      "sent": 20,
+      "received": 19,
+      "minMs": 14,
+      "avgMs": 14.8,
+      "maxMs": 16,
+      "jitterMs": 1.2,
+      "problem": null
+    },
+    {
+      "target": "google",
+      "address": "8.8.8.8",
+      "sent": 20,
+      "received": 20,
+      "minMs": 17,
+      "avgMs": 17.8,
+      "maxMs": 19,
+      "jitterMs": 1.2,
+      "problem": null
+    }
+  ],
+  "reading": "loss_past_router",
+  "unixMs": 1791332400000
+} satisfies NetworkCheck;
 
 export const cleanupSizes = [
   {

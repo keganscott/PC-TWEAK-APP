@@ -10,6 +10,7 @@ import { formatBytes, formatDateTime, formatDuration, formatNumber, probeValue }
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { otherLongWork, recommendedIds, type LongWork } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
+import { ConnectionSection } from "./ConnectionSection";
 import { PlaySection } from "./PlaySection";
 import { StartupSection } from "./StartupSection";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
@@ -117,6 +118,7 @@ export function ToolsView() {
         {advanced && <DevicesSection gateOpen={gateOpen} />}
         <PlaySection />
         <StartupSection />
+        <ConnectionSection />
         <OneTimeActions />
       </div>
     </>

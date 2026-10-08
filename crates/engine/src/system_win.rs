@@ -1489,10 +1489,13 @@ mod tests {
         assert_eq!(after, before, "the switch reads back differently after Undo");
     }
 
-    /// The interface metric (CATALOGUE E5) of this PC's first physical adapter,
-    /// set by hand and put back through the real backend, IPv4 and IPv6, with
-    /// the registry values Windows may keep it in printed alongside. Gated
-    /// like the tests above.
+    /// The interface metric (CATALOGUE E5) of this PC's first connected
+    /// physical adapter that carries IP, set by hand and put back through the
+    /// real backend, IPv4 and IPv6, with the registry values Windows may keep
+    /// it in and the settings Windows applies at start-up (its persistent
+    /// store) printed alongside. Gated like the tests above. A physical
+    /// adapter bound to a virtual switch carries no IP itself (run
+    /// 37750100174): its metric reads as absent and the tool leaves it out.
     #[test]
     fn an_interface_metric_is_set_and_put_back_on_this_pc() {
         if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
@@ -1515,7 +1518,27 @@ mod tests {
                 &[]
             )
         );
-        let a = adapters.iter().find(|a| a.up).expect("a connected physical adapter");
+        let ipv4 = |a: &NetAdapter| {
+            s.read(&SysItem::InterfaceMetric {
+                interface: a.guid.clone(),
+                ipv6: false,
+            })
+        };
+        let a = adapters
+            .iter()
+            .find(|a| a.up && matches!(ipv4(a), Ok(SysState::Dword { .. })))
+            .expect("a connected physical adapter with an IPv4 metric");
+        println!("adapter checked: {} ({})", a.name, a.guid);
+        let persistent = |ipv6: bool| {
+            powershell(
+                "persistent interface",
+                "$a = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq ('{' + $env:PT_GUID + '}') }; \
+                 Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $env:PT_FAMILY -PolicyStore \
+                 PersistentStore -ErrorAction SilentlyContinue | ForEach-Object { '{0}|{1}' -f $_.AutomaticMetric, \
+                 $_.InterfaceMetric }",
+                &[("PT_GUID", &a.guid), ("PT_FAMILY", if ipv6 { "IPv6" } else { "IPv4" })],
+            )
+        };
         for ipv6 in [false, true] {
             let item = SysItem::InterfaceMetric {
                 interface: a.guid.clone(),
@@ -1528,22 +1551,31 @@ mod tests {
                     .collect::<Vec<_>>()
             };
             let before = s.read(&item).unwrap();
-            println!("{}: before {before:?}; registry {:?}", item.describe(), backing());
-            // A connected adapter has IPv4; IPv6 may be unbound.
-            assert!(
-                ipv6 || before != SysState::Absent,
-                "the connected adapter's IPv4 metric was not read"
+            println!(
+                "{}: before {before:?}; registry {:?}; at start-up {:?}",
+                item.describe(),
+                backing(),
+                persistent(ipv6)
             );
+            // IPv6 may be unbound.
             if before == SysState::Absent {
                 continue;
             }
             let set = SysState::Dword { value: 7 };
             let wrote = s.write(&item, &set);
             let during = s.read(&item);
-            println!("set 7: {wrote:?}; now {during:?}; registry {:?}", backing());
+            println!(
+                "set 7: {wrote:?}; now {during:?}; registry {:?}; at start-up {:?}",
+                backing(),
+                persistent(ipv6)
+            );
             let put_back = s.write(&item, &before);
             let after = s.read(&item);
-            println!("put back: {put_back:?}; now {after:?}; registry {:?}", backing());
+            println!(
+                "put back: {put_back:?}; now {after:?}; registry {:?}; at start-up {:?}",
+                backing(),
+                persistent(ipv6)
+            );
             wrote.unwrap();
             put_back.unwrap();
             assert_eq!(during.unwrap(), set);

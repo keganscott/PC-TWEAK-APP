@@ -1114,6 +1114,32 @@ mod tests {
         (resolver(), engine)
     }
 
+    /// Read-only, against this PC: the state of every tool in the catalogue,
+    /// read the way the Tools screen reads it. A tool whose read fails shows
+    /// "could not be read" there, so none may.
+    #[test]
+    fn every_tool_reads_its_state_on_this_pc() {
+        use crate::types::TweakState;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (_, engine) = real_engine(dir.path(), crate::tweaks::catalogue());
+        let list = engine.list().unwrap();
+        let mut unread = Vec::new();
+        for v in &list {
+            let id = &v.metadata.id;
+            match &v.state {
+                TweakState::Blocked { reason } => println!("{id}: blocked ({:?}) {}", reason.code, reason.message),
+                TweakState::Unknown { detail } => {
+                    println!("{id}: COULD NOT BE READ: {detail}");
+                    unread.push(id.to_string());
+                }
+                other => println!("{id}: {other:?}"),
+            }
+        }
+        println!("{} tools, {} could not be read", list.len(), unread.len());
+        assert!(unread.is_empty(), "could not be read here: {unread:?}");
+    }
+
     /// Read-only, against this PC: the graphics cards and network adapters
     /// MSI mode would be offered for, each with its state.
     #[test]

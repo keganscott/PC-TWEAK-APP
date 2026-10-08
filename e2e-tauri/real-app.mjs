@@ -129,8 +129,20 @@ try {
   await step("Tools lists the real catalogue", async () => {
     await open("Tools");
     await driver.wait(until.elementLocated(text("Pointer precision")), 15_000);
+    await driver.wait(until.elementLocated(text("TCP settings: auto-tuning and RSS on, ECN off")), 15_000);
   });
   await show("Tools");
+
+  await step("every tool's state is read on this machine", async () => {
+    const tweaks = await ipc("list_tweaks");
+    assert.ok(tweaks.ok, `list_tweaks failed: ${JSON.stringify(tweaks.error)}`);
+    const why = (s) =>
+      s.status === "blocked" ? ` (${s.reason.code}) ${s.reason.message}` : s.status === "unknown" ? `: ${s.detail}` : "";
+    const lines = tweaks.value.map((t) => `${t.id}: ${t.state.status}${why(t.state)}`);
+    console.log(`\n===== Tool states (${tweaks.value.length}) =====\n${lines.join("\n")}\n`);
+    const unread = tweaks.value.filter((t) => t.state.status === "unknown").map((t) => t.id);
+    assert.deepEqual(unread, [], "these tools could not be read on this machine");
+  });
 
   await step("Games shows the firmware security features", async () => {
     await open("Games");

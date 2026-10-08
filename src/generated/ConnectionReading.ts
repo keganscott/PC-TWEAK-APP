@@ -3,4 +3,4 @@
 /**
  * Where the trouble seems to be, from the pattern of answers.
  */
-export type ConnectionReading = "all_answered" | "loss_to_router" | "loss_past_router" | "no_internet_answers" | "router_silent" | "unclear";
+export type ConnectionReading = "all_answered" | "loss_to_router" | "loss_past_router" | "no_internet_answers" | "router_silent" | "router_skipped" | "unclear";

@@ -8,7 +8,12 @@ export type PingResult = { target: PingTarget,
 /**
  * The address asked; for the router, the one Windows uses, when found.
  */
-address: string | null, sent: number, received: number, 
+address: string | null, 
+/**
+ * For the router: Windows' name for the network connection internet
+ * traffic leaves through ("Wi-Fi", "Ethernet", a VPN's), when known.
+ */
+via: string | null, sent: number, received: number, 
 /**
  * Round trips of the answered echoes, in milliseconds (Windows counts
  * whole milliseconds, so 0 means under 1 ms).

@@ -836,6 +836,7 @@ export const networkCheck = {
     {
       "target": "router",
       "address": "192.168.1.1",
+      "via": "Wi-Fi",
       "sent": 20,
       "received": 20,
       "minMs": 1,
@@ -847,6 +848,7 @@ export const networkCheck = {
     {
       "target": "cloudflare",
       "address": "1.1.1.1",
+      "via": null,
       "sent": 20,
       "received": 19,
       "minMs": 14,
@@ -858,6 +860,7 @@ export const networkCheck = {
     {
       "target": "google",
       "address": "8.8.8.8",
+      "via": null,
       "sent": 20,
       "received": 20,
       "minMs": 17,

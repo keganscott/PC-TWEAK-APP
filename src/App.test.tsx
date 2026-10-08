@@ -118,6 +118,7 @@ describe("App", () => {
     const router = within(card).getByRole("rowheader", { name: /Your router/ }).closest("tr") as HTMLElement;
     expect(within(router).getByText("20 of 20")).toBeTruthy();
     expect(within(router).getByText("1.8 ms")).toBeTruthy();
+    expect(within(router).getByText("Through Wi-Fi")).toBeTruthy();
     const cloudflare = within(card).getByRole("rowheader", { name: /Cloudflare DNS/ }).closest("tr") as HTMLElement;
     expect(within(cloudflare).getByText("19 of 20")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Check again" })).toBeTruthy();

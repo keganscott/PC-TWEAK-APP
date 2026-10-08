@@ -41,6 +41,11 @@ export const READING: Record<ConnectionReading, { tone: Tone; title: string; tex
     title: "Your router did not answer any echo, but the public servers did.",
     text: "Many routers are set not to answer echoes, so that alone is not a problem. The servers' figures are below.",
   },
+  router_skipped: {
+    tone: "neutral",
+    title: "Your router skipped some echoes, but every echo to the public servers came back.",
+    text: "Those echoes went through your router too, so nothing was lost on the way. Routers answer echoes to themselves last when they are busy.",
+  },
   unclear: {
     tone: "neutral",
     title: "Not every target could be checked.",
@@ -62,6 +67,7 @@ function Row({ r }: { r: PingResult }) {
       <th scope="row" className="py-2 pr-3 text-left font-semibold">
         {TARGET[r.target]}
         {r.address && <span className="block font-mono text-xs font-normal text-ink-muted">{r.address}</span>}
+        {r.via && <span className="block text-xs font-normal text-ink-muted">Through {r.via}</span>}
         {r.problem && <span className="block text-xs font-normal text-ink-muted">{r.problem}</span>}
       </th>
       <td className="py-2 pr-3">{answered}</td>

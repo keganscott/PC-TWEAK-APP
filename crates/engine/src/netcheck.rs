@@ -66,6 +66,9 @@ pub struct PingResult {
     pub target: PingTarget,
     /// The address asked; for the router, the one Windows uses, when found.
     pub address: Option<String>,
+    /// For the router: Windows' name for the network connection internet
+    /// traffic leaves through ("Wi-Fi", "Ethernet", a VPN's), when known.
+    pub via: Option<String>,
     pub sent: u32,
     pub received: u32,
     /// Round trips of the answered echoes, in milliseconds (Windows counts
@@ -98,6 +101,10 @@ pub enum ConnectionReading {
     /// The router answered no echo but the public servers did: many routers
     /// are set not to answer, so that alone points at nothing.
     RouterSilent,
+    /// The router skipped some echoes but every echo to the public servers,
+    /// which all went through it, came back: routers answer echoes to
+    /// themselves last when busy, so that points at nothing either.
+    RouterSkipped,
     /// Not enough answered to tell (no router found, a target not asked).
     Unclear,
 }
@@ -111,11 +118,23 @@ pub struct NetworkCheck {
     pub unix_ms: u64,
 }
 
+/// How this PC sends traffic towards an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    /// No route at all: no network.
+    Unreachable,
+    /// Through the router at `address`, out of the connection Windows names
+    /// `via`.
+    Router { address: Ipv4Addr, via: Option<String> },
+    /// Straight out of a connection with no router address, as through many
+    /// VPNs: there is no router of this PC's to ask.
+    Direct { via: Option<String> },
+}
+
 /// What the check needs from the operating system.
 pub trait Pinger: Send + Sync {
-    /// The router traffic to `towards` goes through, or `None` when there is
-    /// none (no network, or the address is on this network).
-    fn router(&self, towards: Ipv4Addr) -> Result<Option<Ipv4Addr>>;
+    /// How traffic to `towards` leaves this PC.
+    fn route(&self, towards: Ipv4Addr) -> Result<Route>;
     /// One echo: its round trip in milliseconds, or `None` when no answer came
     /// (timed out, unreachable). `Err` only when the echo could not be sent.
     fn echo(&self, to: Ipv4Addr, timeout_ms: u32) -> Result<Option<u32>>;
@@ -129,13 +148,28 @@ pub fn run(pinger: &dyn Pinger, echoes: u32, gap: Duration, unix_ms: u64) -> Net
             .into_iter()
             .map(|target| {
                 scope.spawn(move || {
-                    let address = match target.address() {
-                        Some(a) => Ok(Some(a)),
-                        None => pinger.router(first_public),
-                    };
-                    match address {
-                        Ok(Some(a)) => ask(pinger, target, a, echoes, gap),
-                        Ok(None) => not_asked(target, "This PC has no router to the internet right now."),
+                    if let Some(a) = target.address() {
+                        return ask(pinger, target, a, echoes, gap);
+                    }
+                    match pinger.route(first_public) {
+                        Ok(Route::Router { address, via }) => PingResult {
+                            via,
+                            ..ask(pinger, target, address, echoes, gap)
+                        },
+                        Ok(Route::Direct { via }) => {
+                            let through = via.as_deref().map_or("a connection".to_owned(), |v| format!("\"{v}\""));
+                            PingResult {
+                                via,
+                                ..not_asked(
+                                    target,
+                                    &format!(
+                                        "Internet traffic leaves this PC through {through}, which has no router \
+                                         address (many VPNs work this way), so there is no router to ask."
+                                    ),
+                                )
+                            }
+                        }
+                        Ok(Route::Unreachable) => not_asked(target, "This PC has no router to the internet right now."),
                         Err(e) => not_asked(target, &format!("The router could not be found: {e}")),
                     }
                 })
@@ -162,6 +196,7 @@ fn not_asked(target: PingTarget, why: &str) -> PingResult {
     PingResult {
         target,
         address: None,
+        via: None,
         sent: 0,
         received: 0,
         min_ms: None,
@@ -210,6 +245,7 @@ pub fn summarize(target: PingTarget, rtts: &[Option<u32>]) -> PingResult {
     PingResult {
         target,
         address: target.address().map(|a| a.to_string()),
+        via: None,
         sent: rtts.len() as u32,
         received: n as u32,
         min_ms: answered.iter().min().copied(),
@@ -245,13 +281,15 @@ pub fn read(results: &[PingResult]) -> ConnectionReading {
     if router.received == 0 {
         return ConnectionReading::RouterSilent;
     }
-    if !all(router) {
-        return ConnectionReading::LossToRouter;
+    let lost_past = publics.iter().any(|r| !all(r));
+    match (all(router), lost_past) {
+        // Echoes to the servers went through the router too: only when some
+        // of those were lost as well does a miss at the router mean loss.
+        (false, true) => ConnectionReading::LossToRouter,
+        (false, false) => ConnectionReading::RouterSkipped,
+        (true, true) => ConnectionReading::LossPastRouter,
+        (true, false) => ConnectionReading::AllAnswered,
     }
-    if publics.iter().any(|r| !all(r)) {
-        return ConnectionReading::LossPastRouter;
-    }
-    ConnectionReading::AllAnswered
 }
 
 /// The real thing on Windows; elsewhere, a refusal.
@@ -271,7 +309,7 @@ struct Unavailable;
 
 #[cfg(not(windows))]
 impl Pinger for Unavailable {
-    fn router(&self, _: Ipv4Addr) -> Result<Option<Ipv4Addr>> {
+    fn route(&self, _: Ipv4Addr) -> Result<Route> {
         Err(unavailable())
     }
     fn echo(&self, _: Ipv4Addr, _: u32) -> Result<Option<u32>> {
@@ -293,10 +331,11 @@ mod imp {
 
     use windows::Win32::Foundation::{GetLastError, ERROR_NETWORK_UNREACHABLE, NO_ERROR};
     use windows::Win32::NetworkManagement::IpHelper::{
-        GetBestRoute, IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, MIB_IPFORWARDROW,
+        GetBestRoute, GetIfEntry2, IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, MIB_IF_ROW2,
+        MIB_IPFORWARDROW, MIB_IPROUTE_TYPE_DIRECT,
     };
 
-    use super::{EngineError, Pinger, Result};
+    use super::{EngineError, Pinger, Result, Route};
 
     /// What every echo carries: the letters Windows' `ping` sends.
     const PAYLOAD: &[u8; 32] = b"abcdefghijklmnopqrstuvwabcdefghi";
@@ -314,20 +353,43 @@ mod imp {
 
     pub struct WinPinger;
 
+    /// Windows' name for the connection with this interface index ("Wi-Fi").
+    fn alias(index: u32) -> Option<String> {
+        let mut row = MIB_IF_ROW2 {
+            InterfaceIndex: index,
+            ..Default::default()
+        };
+        if unsafe { GetIfEntry2(&mut row) } != NO_ERROR {
+            return None;
+        }
+        let end = row.Alias.iter().position(|&c| c == 0).unwrap_or(row.Alias.len());
+        let name = String::from_utf16_lossy(&row.Alias[..end]);
+        (!name.is_empty()).then_some(name)
+    }
+
     impl Pinger for WinPinger {
-        fn router(&self, towards: Ipv4Addr) -> Result<Option<Ipv4Addr>> {
+        fn route(&self, towards: Ipv4Addr) -> Result<Route> {
             let mut row = MIB_IPFORWARDROW::default();
             let rc = unsafe { GetBestRoute(raw(towards), 0, &mut row) };
             if rc == ERROR_NETWORK_UNREACHABLE.0 || rc == ERROR_HOST_UNREACHABLE {
-                return Ok(None);
+                return Ok(Route::Unreachable);
             }
             if rc != NO_ERROR.0 {
                 return Err(EngineError::Internal {
                     detail: format!("GetBestRoute failed with Windows error {rc}"),
                 });
             }
+            let via = alias(row.dwForwardIfIndex);
             let hop = Ipv4Addr::from(row.dwForwardNextHop.to_ne_bytes());
-            Ok((!hop.is_unspecified() && hop != towards).then_some(hop))
+            // A direct route has no router: its next hop is unset or this
+            // PC's own address on that connection (a VPN tunnel, say).
+            // VERIFY (NOTES N88): what Windows reports for a VPN's route.
+            let direct = unsafe { row.Anonymous1.ForwardType } == MIB_IPROUTE_TYPE_DIRECT;
+            Ok(if direct || hop.is_unspecified() || hop == towards {
+                Route::Direct { via }
+            } else {
+                Route::Router { address: hop, via }
+            })
         }
 
         fn echo(&self, to: Ipv4Addr, timeout_ms: u32) -> Result<Option<u32>> {
@@ -388,7 +450,7 @@ mod imp {
         #[test]
         fn the_connection_check_runs_on_this_pc() {
             let p = WinPinger;
-            println!("router: {:?}", p.router(PingTarget::Cloudflare.address().unwrap()));
+            println!("route: {:?}", p.route(PingTarget::Cloudflare.address().unwrap()));
             let check = run(&p, ECHOES, std::time::Duration::from_millis(GAP_MS), 0);
             for r in &check.results {
                 println!("{r:?}");
@@ -409,14 +471,20 @@ mod tests {
 
     /// Answers from a script: per address, the round trips in order.
     struct Scripted {
-        router: Result<Option<Ipv4Addr>>,
+        route: Result<Route>,
         answers: Mutex<HashMap<Ipv4Addr, Vec<Result<Option<u32>>>>>,
     }
 
     impl Scripted {
         fn new(router: Option<Ipv4Addr>) -> Self {
+            Self::via(router.map_or(Route::Unreachable, |address| Route::Router {
+                address,
+                via: Some("Wi-Fi".into()),
+            }))
+        }
+        fn via(route: Route) -> Self {
             Self {
-                router: Ok(router),
+                route: Ok(route),
                 answers: Mutex::new(HashMap::new()),
             }
         }
@@ -430,8 +498,8 @@ mod tests {
     }
 
     impl Pinger for Scripted {
-        fn router(&self, _: Ipv4Addr) -> Result<Option<Ipv4Addr>> {
-            self.router.clone()
+        fn route(&self, _: Ipv4Addr) -> Result<Route> {
+            self.route.clone()
         }
         fn echo(&self, to: Ipv4Addr, _: u32) -> Result<Option<u32>> {
             self.answers
@@ -524,6 +592,45 @@ mod tests {
             .answers(CF, &[Some(12), None, Some(13)])
             .answers(G, &[Some(15), Some(15), Some(16)]);
         assert_eq!(check(&p, 3).reading, ConnectionReading::RouterSilent);
+    }
+
+    #[test]
+    fn a_router_that_skips_echoes_while_the_servers_lose_none_is_not_read_as_loss() {
+        // Every echo to the servers went through the router and came back.
+        let p = Scripted::new(Some(ROUTER))
+            .answers(ROUTER, &[Some(1), None, Some(2)])
+            .answers(CF, &[Some(12), Some(12), Some(13)])
+            .answers(G, &[Some(15), Some(15), Some(16)]);
+        assert_eq!(check(&p, 3).reading, ConnectionReading::RouterSkipped);
+    }
+
+    #[test]
+    fn the_router_row_names_the_connection_traffic_leaves_through() {
+        let p = Scripted::new(Some(ROUTER))
+            .answers(ROUTER, &[Some(1)])
+            .answers(CF, &[Some(12)])
+            .answers(G, &[Some(15)]);
+        let c = check(&p, 1);
+        assert_eq!(c.results[0].via.as_deref(), Some("Wi-Fi"));
+        assert_eq!(c.results[1].via, None);
+    }
+
+    #[test]
+    fn a_route_with_no_router_says_so_and_names_the_connection() {
+        // As through a VPN tunnel: the servers answer, there is no router to ask.
+        let p = Scripted::via(Route::Direct {
+            via: Some("wg0".into()),
+        })
+        .answers(CF, &[Some(30)])
+        .answers(G, &[Some(31)]);
+        let c = check(&p, 1);
+        let router = &c.results[0];
+        assert_eq!((router.sent, router.via.as_deref()), (0, Some("wg0")));
+        let why = router.problem.as_deref().unwrap();
+        assert!(why.contains("\"wg0\"") && why.contains("VPN"), "{why}");
+        assert!(!why.contains("no router to the internet"), "{why}");
+        assert_eq!(c.results[1].received, 1);
+        assert_eq!(c.reading, ConnectionReading::Unclear);
     }
 
     #[test]

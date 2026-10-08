@@ -57,6 +57,13 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "Win32_Networking",
         "\"Win32_Networking_WinSock\",",
     ),
+    // NDIS's types only: `MIB_IF_ROW2`, which GetIfEntry2 (IP Helper) fills
+    // with the name of the connection the router is reached through.
+    (
+        "crates/engine/Cargo.toml",
+        "Win32_NetworkManagement",
+        "\"Win32_NetworkManagement_Ndis\",",
+    ),
 ];
 
 /// UI code: every way a page can talk to the network. The CSP blocks these at

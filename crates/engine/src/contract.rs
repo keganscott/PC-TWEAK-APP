@@ -88,6 +88,7 @@ fn network_check_fixture() -> NetworkCheck {
     };
     let mut router = summarize(PingTarget::Router, &rtts(1, None));
     router.address = Some("192.168.1.1".into());
+    router.via = Some("Wi-Fi".into());
     let results = vec![
         router,
         summarize(PingTarget::Cloudflare, &rtts(14, Some(7))),

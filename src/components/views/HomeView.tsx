@@ -179,18 +179,18 @@ function NextStep() {
       </VioletCard>
     );
   }
-  if (!audit || !restore) {
-    return (
-      <VioletCard label="Next step">
-        <Eyebrow className="text-white">Next step</Eyebrow>
-        <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight">Checking this PC.</h2>
-        <p className="mt-2 max-w-md text-sm">The scan reads settings only. Nothing is changed.</p>
-      </VioletCard>
-    );
-  }
+  const checking = (
+    <VioletCard label="Next step">
+      <Eyebrow className="text-white">Next step</Eyebrow>
+      <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight">Checking this PC.</h2>
+      <p className="mt-2 max-w-md text-sm">The scan reads settings only. Nothing is changed.</p>
+    </VioletCard>
+  );
+  if (!audit) return checking;
 
   // The engine verified a new point before answering, so success counts at
-  // once, not only after the (slower) audit re-read agrees.
+  // once, not only after the (slower) audit re-read agrees. An open gate is
+  // all this card needs, with or without the restore status read.
   if (gateOpen || restoreOp.status === "done") {
     return (
       <VioletCard label="Next step">
@@ -239,6 +239,7 @@ function NextStep() {
     );
   }
 
+  if (!restore) return checking;
   if (restore.supported.state === "no") {
     return (
       <VioletCard label="Next step">

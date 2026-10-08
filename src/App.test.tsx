@@ -88,6 +88,19 @@ describe("App", () => {
     expect(await screen.findByText("Undid: Sample setting A")).toBeTruthy();
   });
 
+  it("Home offers the safe set whenever the gate is open, also before the restore status is read", async () => {
+    // A dev-stubs build opens the gate without reading System Restore (real
+    // app e2e, Windows CI run 37841431870): Home stayed on "Checking this PC".
+    const backend = createMockBackend({ gateOpen: true });
+    const auditSystem = backend.auditSystem.bind(backend);
+    backend.auditSystem = async () => {
+      const a = await auditSystem();
+      return { ...a, env: { ...a.env, restore: null } };
+    };
+    renderApp(backend);
+    expect(await screen.findByRole("button", { name: "Apply the safe set (1)" })).toBeTruthy();
+  });
+
   it("each Tools category has Apply recommended", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

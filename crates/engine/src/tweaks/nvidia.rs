@@ -11,14 +11,14 @@
 //! Low latency mode and power management are what Epic's Fortnite guidance
 //! names (plan 8); the others are Hone's.
 //!
-//! Not offered on a PC without an NVIDIA card and driver. Not built: shader
-//! cache size (its values are not checked; NOTES N86).
+//! Not offered on a PC without an NVIDIA card and driver.
 //!
 //! The setting ids and values were checked against NVIDIA's public
 //! `NvApiDriverSettings.h` (github.com/NVIDIA/nvapi, main, 2026-10-08), all
 //! but the two Low Latency Mode values NVIDIA does not publish there.
 //! VERIFY (NOTES N86): those two, as NVIDIA Profile Inspector names them, and
-//! that Control Panel shows "Ultra" with them set.
+//! that Control Panel shows "Ultra" with them set; that it shows "Unlimited"
+//! for the shader cache's largest size.
 
 use std::borrow::Cow;
 
@@ -47,6 +47,12 @@ pub const TEXTURE_QUALITY: u32 = 0x00CE_2691;
 pub const THREADED_OPTIMIZATION: u32 = 0x20C1_221E;
 /// Vertical sync (`VSYNCMODE_ID`): 0x08416747 force off.
 pub const VERTICAL_SYNC: u32 = 0x00A8_79CF;
+/// Shader Cache (`PS_SHADERDISKCACHE_ID`): 1 on, the driver's default.
+pub const SHADER_CACHE: u32 = 0x0019_8FFF;
+/// Shader disk cache maximum size (`PS_SHADERDISKCACHE_MAX_SIZE_ID`): from 0
+/// to 0xFFFFFFFF (`PS_SHADERDISKCACHE_MAX_SIZE_MAX`); the driver's default is
+/// 0x4000.
+pub const SHADER_CACHE_SIZE: u32 = 0x00AC_8497;
 
 pub struct NvidiaSetting {
     pub id: &'static str,
@@ -187,10 +193,23 @@ pub const VSYNC_OFF: NvidiaSetting = NvidiaSetting {
     values: &[(VERTICAL_SYNC, 0x0841_6747)],
 };
 
+pub const SHADER_CACHE_UNLIMITED: NvidiaSetting = NvidiaSetting {
+    id: "nvidia.shadercache",
+    name: "NVIDIA shader cache size: unlimited",
+    summary: "Sets Shader Cache Size to Unlimited in NVIDIA Control Panel's global settings, with the shader cache \
+              on, so the driver keeps the shaders it has compiled for games on disk instead of deleting older ones \
+              once the cache reaches its default size.",
+    target: "Manage 3D settings > Shader Cache Size: Unlimited",
+    safety: SafetyTier::Safe,
+    tradeoff: Some("The cache can grow to use several gigabytes of disk space."),
+    values: &[(SHADER_CACHE, 1), (SHADER_CACHE_SIZE, 0xFFFF_FFFF)],
+};
+
 pub fn all() -> Vec<Box<dyn Tweak>> {
     vec![
         Box::new(LOW_LATENCY),
         Box::new(POWER),
+        Box::new(SHADER_CACHE_UNLIMITED),
         Box::new(TEXTURES),
         Box::new(THREADED),
         Box::new(VSYNC_OFF),

@@ -3005,7 +3005,9 @@ mod nvidia_tools {
     use crate::error::EngineError;
     use crate::journal::Record;
     use crate::system::{SysItem, SysState};
-    use crate::tweaks::nvidia::{self, LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, POWER_MANAGEMENT, PRERENDER_LIMIT};
+    use crate::tweaks::nvidia::{
+        self, LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, POWER_MANAGEMENT, PRERENDER_LIMIT, SHADER_CACHE, SHADER_CACHE_SIZE,
+    };
     use crate::types::BlockedCode;
 
     fn setting(id: u32) -> SysItem {
@@ -3061,6 +3063,24 @@ mod nvidia_tools {
         assert_eq!(h.sys.get(&setting(POWER_MANAGEMENT)), v(1));
         h.engine.revert_all();
         assert_eq!(h.sys.get(&setting(POWER_MANAGEMENT)), v(5));
+    }
+
+    #[test]
+    fn shader_cache_unlimited_turns_a_cache_turned_off_back_on_and_undo_turns_it_off_again() {
+        let mut h = pc(true);
+        h.sys.set(&setting(SHADER_CACHE), v(0));
+        h.engine.apply("nvidia.shadercache").unwrap();
+        assert_eq!(h.sys.get(&setting(SHADER_CACHE)), v(1));
+        assert_eq!(h.sys.get(&setting(SHADER_CACHE_SIZE)), v(0xFFFF_FFFF));
+        assert_eq!(state(&h, "nvidia.shadercache"), TweakState::Applied);
+
+        h.engine.revert("nvidia.shadercache").unwrap();
+        assert_eq!(h.sys.get(&setting(SHADER_CACHE)), v(0), "off, as the user had it");
+        assert_eq!(
+            h.sys.get(&setting(SHADER_CACHE_SIZE)),
+            SysState::Absent,
+            "the driver's default size"
+        );
     }
 
     #[test]

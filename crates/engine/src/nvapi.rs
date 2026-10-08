@@ -9,15 +9,17 @@
 //!
 //! NvAPI checks every structure's version, which carries its size: a layout
 //! that does not match the driver's is refused with an error, not written
-//! past. The function ids, status codes and the structure layout are from
-//! NVIDIA's public NvAPI headers as recalled; VERIFY (NOTES N86).
+//! past. The function ids, status codes, enums and the structure layout were
+//! checked against NVIDIA's public headers (github.com/NVIDIA/nvapi, main,
+//! 2026-10-08: `nvapi_interface.h`, `nvapi_lite_common.h`, `nvapi.h`).
+//! Not yet run against a real NVIDIA driver (NOTES N86).
 
 /// A setting's state in the base profile: a value set there (by PeakTweaks,
 /// Control Panel or another tool), or `None` when it has none of its own
 /// and the driver's default applies.
 pub type Stored = Option<u32>;
 
-/// `NvAPI_Status` codes this module tells apart. VERIFY (nvapi.h).
+/// `NvAPI_Status` codes this module tells apart (`nvapi_lite_common.h`).
 pub mod status {
     pub const OK: i32 = 0;
     pub const NVIDIA_DEVICE_NOT_FOUND: i32 = -6;
@@ -26,7 +28,7 @@ pub mod status {
     pub const SETTING_NOT_FOUND: i32 = -160;
 }
 
-/// Function ids for `nvapi_QueryInterface`. VERIFY (nvapi_interface.h).
+/// Function ids for `nvapi_QueryInterface` (`nvapi_interface.h`).
 pub mod func {
     pub const INITIALIZE: u32 = 0x0150_E828;
     pub const DRS_CREATE_SESSION: u32 = 0x0694_D52E;
@@ -39,8 +41,9 @@ pub mod func {
     pub const DRS_RESTORE_PROFILE_DEFAULT_SETTING: u32 = 0x53F0_381E;
 }
 
-/// `NVDRS_SETTING_V1`. The two value unions are kept as bytes: a DWORD
-/// value is their first four.
+/// `NVDRS_SETTING_V1` (`nvapi.h`, packed to 4 bytes). The two value unions
+/// are kept as bytes: a DWORD value is their first four. The unions' QWORD
+/// member does not change the size, because of that packing.
 #[repr(C)]
 pub struct DrsSetting {
     pub version: u32,
@@ -318,13 +321,74 @@ mod real {
 mod tests {
     use super::*;
 
+    /// `NVDRS_SETTING_V1` as `nvapi.h` declares it, unions and all, under
+    /// its `#pragma pack(push, 4)`.
+    #[allow(dead_code)] // only its layout is used
+    #[repr(C, packed(4))]
+    struct HeaderSetting {
+        version: u32,
+        setting_name: [u16; 2048],
+        setting_id: u32,
+        setting_type: u32,
+        setting_location: u32,
+        is_current_predefined: u32,
+        is_predefined_valid: u32,
+        predefined: HeaderValue,
+        current: HeaderValue,
+    }
+
+    #[allow(dead_code)] // only its layout is used
+    #[repr(C, packed(4))]
+    struct HeaderBinary {
+        value_length: u32,
+        value_data: [u8; 4096],
+    }
+
+    #[allow(dead_code)] // only its layout is used
+    #[repr(C, packed(4))]
+    union HeaderValue {
+        u32_value: u32,
+        binary: std::mem::ManuallyDrop<HeaderBinary>,
+        wsz: [u16; 2048],
+        u64_value: u64,
+    }
+
     #[test]
-    fn the_setting_structure_has_nvapis_size_and_version() {
-        // 4 + 2048 * 2 + 5 * 4 + 2 * (4 + 4096) bytes; version 1 above it.
+    fn the_setting_structure_matches_nvapis_and_has_its_version() {
+        assert_eq!(std::mem::size_of::<DrsSetting>(), std::mem::size_of::<HeaderSetting>());
         assert_eq!(std::mem::size_of::<DrsSetting>(), 0x3020);
-        assert_eq!(DRS_SETTING_VERSION, 0x0001_3020);
-        assert_eq!(std::mem::offset_of!(DrsSetting, id), 4100);
-        assert_eq!(std::mem::offset_of!(DrsSetting, current), 8220);
+        assert_eq!(
+            DRS_SETTING_VERSION, 0x0001_3020,
+            "MAKE_NVAPI_VERSION(NVDRS_SETTING_V1, 1)"
+        );
+        for (ours, theirs) in [
+            (
+                std::mem::offset_of!(DrsSetting, id),
+                std::mem::offset_of!(HeaderSetting, setting_id),
+            ),
+            (
+                std::mem::offset_of!(DrsSetting, kind),
+                std::mem::offset_of!(HeaderSetting, setting_type),
+            ),
+            (
+                std::mem::offset_of!(DrsSetting, location),
+                std::mem::offset_of!(HeaderSetting, setting_location),
+            ),
+            (
+                std::mem::offset_of!(DrsSetting, is_current_predefined),
+                std::mem::offset_of!(HeaderSetting, is_current_predefined),
+            ),
+            (
+                std::mem::offset_of!(DrsSetting, predefined),
+                std::mem::offset_of!(HeaderSetting, predefined),
+            ),
+            (
+                std::mem::offset_of!(DrsSetting, current),
+                std::mem::offset_of!(HeaderSetting, current),
+            ),
+        ] {
+            assert_eq!(ours, theirs);
+        }
     }
 
     #[test]

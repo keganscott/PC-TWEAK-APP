@@ -14,9 +14,11 @@
 //! Not offered on a PC without an NVIDIA card and driver. Not built: shader
 //! cache size (its values are not checked; NOTES N86).
 //!
-//! VERIFY (NOTES N86): setting ids and values as recalled from NVIDIA's
-//! `NvApiDriverSettings.h` and NVIDIA Profile Inspector; which values Control
-//! Panel writes for Low Latency Mode "Ultra".
+//! The setting ids and values were checked against NVIDIA's public
+//! `NvApiDriverSettings.h` (github.com/NVIDIA/nvapi, main, 2026-10-08), all
+//! but the two Low Latency Mode values NVIDIA does not publish there.
+//! VERIFY (NOTES N86): those two, as NVIDIA Profile Inspector names them, and
+//! that Control Panel shows "Ultra" with them set.
 
 use std::borrow::Cow;
 
@@ -26,19 +28,24 @@ use crate::system::{SysItem, SysState};
 use crate::transaction::Transaction;
 use crate::types::{ExecutionContext, Impact, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState};
 
-/// Maximum pre-rendered frames.
+/// Maximum pre-rendered frames (`PRERENDERLIMIT_ID`); 1 is Low Latency
+/// Mode "On".
 pub const PRERENDER_LIMIT: u32 = 0x007B_A09E;
 /// Low Latency Mode as Control Panel shows it: 0 Off, 1 On, 2 Ultra.
+/// VERIFY: not in NVIDIA's public header.
 pub const LOW_LATENCY_STATE: u32 = 0x0005_F543;
 /// Ultra low latency (just-in-time frame submission): 0 off, 1 on.
+/// VERIFY: not in NVIDIA's public header.
 pub const LOW_LATENCY_ULTRA: u32 = 0x1083_5000;
-/// Power management mode (`PREFERRED_PSTATE`): 1 prefer maximum performance.
+/// Power management mode (`PREFERRED_PSTATE_ID`): 1 prefer maximum
+/// performance; the driver's default is 5, optimal power.
 pub const POWER_MANAGEMENT: u32 = 0x1057_EB71;
-/// Texture filtering - Quality (`QUALITY_ENHANCEMENTS`): 0x14 high performance.
+/// Texture filtering - Quality (`QUALITY_ENHANCEMENTS_ID`): 0x14 high
+/// performance.
 pub const TEXTURE_QUALITY: u32 = 0x00CE_2691;
-/// Threaded optimization (`OGL_THREAD_CONTROL`): 1 on, 2 off.
+/// Threaded optimization (`OGL_THREAD_CONTROL_ID`): 1 on, 2 off.
 pub const THREADED_OPTIMIZATION: u32 = 0x20C1_221E;
-/// Vertical sync (`VSYNCMODE`): 0x08416747 force off.
+/// Vertical sync (`VSYNCMODE_ID`): 0x08416747 force off.
 pub const VERTICAL_SYNC: u32 = 0x00A8_79CF;
 
 pub struct NvidiaSetting {

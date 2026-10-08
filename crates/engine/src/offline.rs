@@ -22,15 +22,25 @@
 //! other hive, a profile on another drive) gets no file and is named in
 //! `README.txt`. Removing keys PeakTweaks created is left out: a `.reg` file
 //! can only delete a key with everything under it.
+//!
+//! Changes that are not registry writes are covered where Windows reads the
+//! item from plain registry values at start-up: a service's start type
+//! (`Start`, `DelayedAutostart`) and an adapter's DNS servers (`NameServer`),
+//! put back from the values exported just before the change
+//! (`ChangeEntry::reg_backups`). Any other kind (power plans, scheduled tasks,
+//! interface metrics, TCP settings, graphics driver settings, files) makes
+//! its tool "not covered", named in `README.txt`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::error::{EngineError, Result};
 use super::fsutil;
-use super::journal::JournalEntry;
+use super::journal::{ChangeEntry, JournalEntry};
 use super::reg_export::reg_value_line;
 use super::registry::components;
+use super::system::SysItem;
+use super::types::RawValue;
 
 pub const DIR: &str = "offline";
 const USERS_FILE: &str = "users.txt";
@@ -151,25 +161,95 @@ pub fn remap(display_path: &str, facts: &Facts) -> std::result::Result<(String, 
     ))
 }
 
+/// What one applied tool has outstanding, each list oldest first.
+#[derive(Debug, Clone)]
+pub struct Outstanding {
+    pub tweak_id: String,
+    pub writes: Vec<JournalEntry>,
+    pub changes: Vec<ChangeEntry>,
+}
+
+impl Outstanding {
+    /// A tool that wrote only registry values.
+    pub fn registry(tweak_id: &str, writes: Vec<JournalEntry>) -> Self {
+        Self {
+            tweak_id: tweak_id.to_owned(),
+            writes,
+            changes: Vec::new(),
+        }
+    }
+}
+
+/// One value a file puts back: `(seq, display path, name, prior value)`.
+type Restore<'a> = (u64, &'a str, &'a str, Option<&'a RawValue>);
+
+/// The registry values that put a change back offline, or why there are none.
+fn change_values(c: &ChangeEntry) -> std::result::Result<Vec<Restore<'_>>, String> {
+    let kept_in_registry = matches!(c.item, SysItem::Service { .. } | SysItem::DnsServers { .. });
+    if !kept_in_registry || c.reg_backups.is_empty() {
+        return Err(format!(
+            "the {} is not kept in registry values this script can put back",
+            c.item.describe()
+        ));
+    }
+    Ok(c.reg_backups
+        .iter()
+        .map(|b| {
+            (
+                c.seq,
+                b.display_path.as_str(),
+                b.value_name.as_str(),
+                b.previous.as_ref(),
+            )
+        })
+        .collect())
+}
+
 /// One file per tweak with outstanding applies, in the order "Undo all" uses
-/// (`outstanding` is most recently applied first, each tweak's writes oldest
-/// first). Inside a file the newest write comes first, so when writes stacked
-/// on one value the oldest prior value is the one left, as in-app undo does.
-pub fn plan(outstanding: &[(String, Vec<JournalEntry>)], facts: &Facts) -> Plan {
+/// (`outstanding` is most recently applied first). Inside a file the newest
+/// write comes first, so when writes stacked on one value the oldest prior
+/// value is the one left, as in-app undo does.
+pub fn plan(outstanding: &[Outstanding], facts: &Facts) -> Plan {
     let mut files = Vec::new();
     let mut users: BTreeMap<String, String> = BTreeMap::new();
     let mut not_covered = Vec::new();
-    for (tweak_id, writes) in outstanding {
+    for Outstanding {
+        tweak_id,
+        writes,
+        changes,
+    } in outstanding
+    {
         let mut text = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
         let mut tweak_users = Vec::new();
         let mut failed = None;
-        for e in writes.iter().rev() {
-            match remap(&e.display_path, facts) {
+        let mut values: Vec<Restore> = writes
+            .iter()
+            .map(|e| {
+                (
+                    e.seq,
+                    e.display_path.as_str(),
+                    e.value_name.as_str(),
+                    e.previous.as_ref(),
+                )
+            })
+            .collect();
+        for c in changes {
+            match change_values(c) {
+                Ok(v) => values.extend(v),
+                Err(why) => {
+                    failed = Some(why);
+                    break;
+                }
+            }
+        }
+        values.sort_by_key(|v| std::cmp::Reverse(v.0));
+        if failed.is_some() {
+            values.clear();
+        }
+        for (_, display_path, name, previous) in &values {
+            match remap(display_path, facts) {
                 Ok((path, sid)) => {
-                    text.push_str(&format!(
-                        "[{path}]\r\n{}\r\n\r\n",
-                        reg_value_line(&e.value_name, e.previous.as_ref())
-                    ));
+                    text.push_str(&format!("[{path}]\r\n{}\r\n\r\n", reg_value_line(name, *previous)));
                     tweak_users.extend(sid);
                 }
                 Err(why) => {
@@ -249,7 +329,7 @@ pub fn refresh(root: &Path, plan: &Plan) -> Result<()> {
 
 fn readme(plan: &Plan) -> String {
     let mut s = String::from(
-        "PeakTweaks: undo its registry changes on a Windows installation that will not start.\r\n\
+        "PeakTweaks: undo its changes on a Windows installation that will not start.\r\n\
          \r\n\
          Use this only when Windows cannot start normally or in Safe Mode. If Windows starts, use\r\n\
          Undo in PeakTweaks instead, or import the session_*.reg files in the backups folder from\r\n\
@@ -339,8 +419,8 @@ exit /b 0
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::journal::JournalAction;
-    use crate::types::RawValue;
+    use crate::journal::{JournalAction, RegBackup};
+    use crate::system::{ServiceStart, SysState};
 
     const SID: &str = "S-1-5-21-1-2-3-1001";
 
@@ -462,15 +542,15 @@ mod tests {
     fn one_file_per_change_in_undo_all_order_with_the_oldest_prior_value_last() {
         let mouse = format!(r"HKEY_USERS\{SID}\Control Panel\Mouse");
         let outstanding = vec![
-            (
-                "input.mouseaccel".to_owned(),
+            Outstanding::registry(
+                "input.mouseaccel",
                 vec![
                     write(10, "input.mouseaccel", &mouse, "MouseSpeed", Some(RawValue::sz("1"))),
                     write(20, "input.mouseaccel", &mouse, "MouseSpeed", Some(RawValue::sz("0"))),
                 ],
             ),
-            (
-                "system.restore.frequency".to_owned(),
+            Outstanding::registry(
+                "system.restore.frequency",
                 vec![write(
                     5,
                     "system.restore.frequency",
@@ -479,10 +559,7 @@ mod tests {
                     None,
                 )],
             ),
-            (
-                "classes".to_owned(),
-                vec![write(3, "classes", r"HKEY_CLASSES_ROOT\x", "v", None)],
-            ),
+            Outstanding::registry("classes", vec![write(3, "classes", r"HKEY_CLASSES_ROOT\x", "v", None)]),
         ];
         let p = plan(&outstanding, &facts());
         assert_eq!(
@@ -500,10 +577,143 @@ mod tests {
         assert_eq!(p.not_covered[0].0, "classes");
     }
 
+    fn change(
+        seq: u64,
+        tweak: &str,
+        item: SysItem,
+        previous: SysState,
+        backups: &[(&str, &str, Option<RawValue>)],
+    ) -> ChangeEntry {
+        ChangeEntry {
+            seq,
+            tx_id: seq,
+            unix_ms: 0,
+            tweak_id: tweak.into(),
+            action: JournalAction::Apply,
+            item,
+            previous,
+            written: SysState::Absent,
+            reg_backups: backups
+                .iter()
+                .map(|(path, name, prev)| RegBackup {
+                    display_path: (*path).into(),
+                    value_name: (*name).into(),
+                    previous: prev.clone(),
+                    backup_file: format!("{seq}.reg"),
+                })
+                .collect(),
+        }
+    }
+
+    const SYSMAIN: &str = r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\SysMain";
+
+    fn sysmain(seq: u64, tweak: &str) -> ChangeEntry {
+        change(
+            seq,
+            tweak,
+            SysItem::Service { name: "SysMain".into() },
+            SysState::Service {
+                start: ServiceStart::Automatic,
+                running: true,
+            },
+            &[
+                (SYSMAIN, "Start", Some(RawValue::dword(2))),
+                (SYSMAIN, "DelayedAutostart", None),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_service_change_is_put_back_from_the_values_exported_before_it() {
+        let outstanding = vec![Outstanding {
+            tweak_id: "services.sysmain".into(),
+            writes: vec![write(
+                3,
+                "services.sysmain",
+                r"HKEY_LOCAL_MACHINE\SOFTWARE\PTTest",
+                "Note",
+                None,
+            )],
+            changes: vec![sysmain(5, "services.sysmain")],
+        }];
+        let p = plan(&outstanding, &facts());
+        assert!(p.not_covered.is_empty(), "{:?}", p.not_covered);
+        let text = &p.files[0].1;
+        assert!(
+            text.contains(
+                "[HKEY_LOCAL_MACHINE\\PT_OFFLINE_SYSTEM\\ControlSet001\\Services\\SysMain]\r\n\"Start\"=dword:00000002"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\"DelayedAutostart\"=-"), "{text}");
+        let service = text.find("SysMain").unwrap();
+        let older = text.find("PTTest").unwrap();
+        assert!(service < older, "newest first, across both kinds:\n{text}");
+    }
+
+    #[test]
+    fn a_change_windows_does_not_keep_in_plain_registry_values_is_named_not_covered() {
+        let plan_item = change(
+            7,
+            "power.plan",
+            SysItem::ActivePowerScheme,
+            SysState::Text {
+                text: "381b4222-f694-41f0-9685-ff5bb260df2e".into(),
+            },
+            &[],
+        );
+        let outstanding = vec![
+            Outstanding {
+                tweak_id: "power.plan".into(),
+                writes: Vec::new(),
+                changes: vec![plan_item],
+            },
+            // A service without its exported values (an older journal).
+            Outstanding {
+                tweak_id: "services.old".into(),
+                writes: Vec::new(),
+                changes: vec![{
+                    let mut c = sysmain(4, "services.old");
+                    c.reg_backups.clear();
+                    c
+                }],
+            },
+            // One kind it cannot put back makes the whole tool not covered.
+            Outstanding {
+                tweak_id: "mixed".into(),
+                writes: vec![write(1, "mixed", r"HKEY_LOCAL_MACHINE\SOFTWARE\A", "v", None)],
+                changes: vec![
+                    sysmain(2, "mixed"),
+                    change(
+                        3,
+                        "mixed",
+                        SysItem::ScheduledTask {
+                            path: r"\Microsoft\Windows\Application Experience\ProgramDataUpdater".into(),
+                        },
+                        SysState::Bool { on: true },
+                        &[],
+                    ),
+                ],
+            },
+        ];
+        let p = plan(&outstanding, &facts());
+        assert!(p.files.is_empty(), "{:?}", p.files);
+        let ids: Vec<&str> = p.not_covered.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["power.plan", "services.old", "mixed"]);
+        assert!(
+            p.not_covered[0].1.contains("active power plan"),
+            "{:?}",
+            p.not_covered[0]
+        );
+        let readme = readme(&p);
+        assert!(readme.contains("- mixed: the scheduled task"), "{readme}");
+        assert!(readme.starts_with("PeakTweaks: undo its changes"));
+    }
+
     #[test]
     fn a_change_with_one_unmappable_write_gets_no_file_at_all() {
-        let outstanding = vec![(
-            "mixed".to_owned(),
+        let outstanding = vec![Outstanding::registry(
+            "mixed",
             vec![
                 write(1, "mixed", r"HKEY_LOCAL_MACHINE\SOFTWARE\A", "v", None),
                 write(2, "mixed", r"HKEY_LOCAL_MACHINE\SAM\B", "v", None),

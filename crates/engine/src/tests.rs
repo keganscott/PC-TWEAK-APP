@@ -1684,6 +1684,40 @@ mod system_changes {
         SysState::Service { start, running }
     }
 
+    /// Offline recovery (N48) covers a service's start type from the values
+    /// exported before the change, and names a kind it cannot put back.
+    #[test]
+    fn the_offline_undo_set_covers_a_service_and_names_what_it_cannot() {
+        let services = r"SYSTEM\CurrentControlSet\Services\WSearch";
+        let t = SysTweak::new(vec![(svc(), running(ServiceStart::Disabled, false))]);
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set(&svc(), running(ServiceStart::DelayedAutomatic, true));
+        h.fake
+            .set_external(Hive::LocalMachine, services, "Start", RawValue::dword(2));
+        h.fake
+            .set_external(Hive::LocalMachine, services, "DelayedAutostart", RawValue::dword(1));
+        h.fake
+            .set_external(Hive::LocalMachine, r"SYSTEM\Select", "Current", RawValue::dword(1));
+        h.engine.apply("sys").unwrap();
+        let offline = h.dir.path().join(crate::offline::DIR);
+        let bytes = std::fs::read(offline.join("001_sys.reg")).unwrap();
+        let units: Vec<u16> = bytes[2..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let text = String::from_utf16(&units).unwrap();
+        assert!(
+            text.contains("ControlSet001\\Services\\WSearch]\r\n\"Start\"=dword:00000002"),
+            "{text}"
+        );
+        assert!(text.contains("\"DelayedAutostart\"=dword:00000001"), "{text}");
+        h.engine.revert("sys").unwrap();
+
+        let t = SysTweak::new(vec![(SysItem::Hibernation, SysState::Bool { on: false })]);
+        let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set(&SysItem::Hibernation, SysState::Bool { on: true });
+        h.engine.apply("sys").unwrap();
+        let readme = std::fs::read_to_string(h.dir.path().join(crate::offline::DIR).join("README.txt")).unwrap();
+        assert!(readme.contains("- sys: the hibernation"), "{readme}");
+    }
+
     #[test]
     fn a_service_change_is_journalled_before_it_is_made_and_undo_puts_it_back() {
         let t = SysTweak::new(vec![(svc(), running(ServiceStart::Disabled, false))]);

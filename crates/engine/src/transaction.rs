@@ -819,13 +819,14 @@ impl<'a> Transaction<'a> {
 /// leaving out `closing`, a tweak whose revert is about to commit. Also run at
 /// start-up, which catches up after an apply that a crash cut short.
 pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal, closing: Option<&str>) -> Result<()> {
-    let outstanding: Vec<(String, Vec<JournalEntry>)> = journal
+    let outstanding: Vec<offline::Outstanding> = journal
         .applied_tweaks_newest_first()
         .into_iter()
         .filter(|id| Some(id.as_str()) != closing)
-        .map(|id| {
-            let writes = journal.outstanding(&id).to_vec();
-            (id, writes)
+        .map(|id| offline::Outstanding {
+            writes: journal.outstanding(&id).to_vec(),
+            changes: journal.outstanding_changes(&id).to_vec(),
+            tweak_id: id,
         })
         .collect();
     let mut facts = offline::Facts {
@@ -836,7 +837,7 @@ pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal,
         system_drive: std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()),
         profiles: Default::default(),
     };
-    for e in outstanding.iter().flat_map(|(_, w)| w) {
+    for e in outstanding.iter().flat_map(|o| &o.writes) {
         if let Some(sid) = e
             .display_path
             .strip_prefix("HKEY_USERS\\")

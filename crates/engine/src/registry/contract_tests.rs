@@ -712,8 +712,8 @@ mod real {
             e
         };
         let outstanding = vec![
-            (
-                "t.user".to_owned(),
+            offline::Outstanding::registry(
+                "t.user",
                 vec![write(
                     5,
                     "t.user",
@@ -722,8 +722,8 @@ mod real {
                     Some(RawValue::sz("before")),
                 )],
             ),
-            (
-                "t.machine".to_owned(),
+            offline::Outstanding::registry(
+                "t.machine",
                 vec![
                     write(
                         1,

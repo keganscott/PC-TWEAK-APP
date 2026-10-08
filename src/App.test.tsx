@@ -451,6 +451,58 @@ describe("Starter scan (plan 6.4)", () => {
     expect(screen.queryByRole("heading", { name: /^PeakTweaks can fix/ })).toBeNull();
   });
 
+  it("a finding PeakTweaks can fix carries its tool, and Apply there applies it", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const a = await base.auditSystem();
+        const plan = {
+          id: "power.plan",
+          status: "attention" as const,
+          title: "The power plan is not a performance plan",
+          reading: "SAMPLE reading.",
+          remedy: "SAMPLE remedy.",
+          guidedOnly: false,
+          fixTweakId: "fixture.default",
+          fixBy: "us" as const,
+        };
+        return { ...a, scan: { findings: [plan, ...a.scan.findings.filter((f) => f.id !== plan.id)] } };
+      },
+    });
+    const us = await screen.findByRole("heading", { name: "PeakTweaks can fix (1)" });
+    const group = us.closest("section")!;
+    expect(within(group).getByText("The power plan is not a performance plan")).toBeTruthy();
+    expect(within(group).getByText("Sample setting A")).toBeTruthy();
+    await userEvent.click(within(group).getByRole("button", { name: "Apply" }));
+    expect(await within(group).findByRole("button", { name: "Undo" })).toBeTruthy();
+    expect(within(group).getByText("Optimized")).toBeTruthy();
+  });
+
+  it("a finding whose tool the engine does not list shows no card", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const a = await base.auditSystem();
+        const plan = {
+          id: "power.plan",
+          status: "attention" as const,
+          title: "The power plan is not a performance plan",
+          reading: "SAMPLE reading.",
+          remedy: "SAMPLE remedy.",
+          guidedOnly: false,
+          fixTweakId: "no.such.tool",
+          fixBy: "us" as const,
+        };
+        return { ...a, scan: { findings: [plan, ...a.scan.findings.filter((f) => f.id !== plan.id)] } };
+      },
+    });
+    const group = (await screen.findByRole("heading", { name: "PeakTweaks can fix (1)" })).closest("section")!;
+    expect(within(group).getByText("SAMPLE remedy.")).toBeTruthy();
+    expect(within(group).queryByRole("button")).toBeNull();
+  });
+
   it("Print opens the folded list first, and a printed demo scan says it is SAMPLE data", async () => {
     const print = vi.spyOn(window, "print").mockImplementation(() => {});
     renderApp();

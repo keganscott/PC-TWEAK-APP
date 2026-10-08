@@ -28,6 +28,7 @@ import { Facets } from "../brand/Facets";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
 import { Button, Callout, cx, ErrorCallout, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { TweakCard } from "./ToolsView";
 
 /** The small uppercase label used across the dashboard. */
 function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
@@ -791,7 +792,21 @@ function FindingRow({ finding, nested = false, showStatus = false }: { finding: 
         </div>
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">{finding.reading}</p>
         {finding.remedy && <p className="mt-1.5 text-xs leading-relaxed text-ink">{finding.remedy}</p>}
+        {finding.status === "attention" && finding.fixTweakId && <FixTool id={finding.fixTweakId} />}
       </div>
+    </div>
+  );
+}
+
+/** The tool a finding names as its one-click fix, the same card as in Tools.
+ * Nothing when the engine does not list it (yet). */
+function FixTool({ id }: { id: string }) {
+  const tool = useStore((s) => s.tweaks.find((t) => t.id === id));
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
+  if (!tool) return null;
+  return (
+    <div className="mt-3 print:hidden">
+      <TweakCard tweak={tool} gateOpen={gateOpen} />
     </div>
   );
 }

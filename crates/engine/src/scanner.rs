@@ -3,10 +3,11 @@
 //!
 //! A pure function of the engine's own `SystemEnv`. It reads nothing itself and
 //! changes nothing, so it runs unelevated and its results are reproducible from
-//! a saved `SystemEnv`. Every finding is `guided_only` for now: the one-click
-//! fixes the plan lists (refresh rate, power mode, per-app GPU choice) need
-//! tweaks that are not built yet, so a finding never names a fix that does not
-//! exist (`fix_tweak_id` is `None` until one does; NOTES.md N41).
+//! a saved `SystemEnv`. A finding names the tool that fixes it in one click
+//! (`fix_tweak_id`) only when that tool is in the catalogue: so far the power
+//! plan (the PeakTweaks power plan, CATALOGUE H7). The other one-click fixes
+//! the plan lists (refresh rate, per-app GPU choice) are not built, so those
+//! findings are guided only (NOTES.md N41, N42).
 //!
 //! Rules this file keeps, and `tests` below enforces:
 //! - A probe that could not tell produces a `Status::Unknown` finding that says
@@ -674,17 +675,21 @@ fn background_load(load: &Probe<BackgroundLoad>) -> Option<Finding> {
 
 /// Reads the power *plan*. Windows 11 also has a separate "power mode" setting
 /// that is not read here, so the copy names the plan and points at both places
-/// (NOTES.md N43). No one-click fix exists yet, so this is guided only.
+/// (NOTES.md N43). The PeakTweaks power plan tool is the one-click fix; Windows'
+/// own settings are named as well, for anyone who would rather pick a plan.
 fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
     const ID: &str = "power.plan";
     const TITLE: &str = "Power plan";
     let remedy = if laptop {
-        "In Windows Settings > System > Power & battery, the Power mode setting, or Control Panel > Power \
-         Options, you can pick a plan that favours performance. On a laptop that uses more battery and \
-         makes more heat, so many people only do this while plugged in."
+        "The PeakTweaks power plan below copies this plan and, while plugged in, keeps the processor and \
+         devices out of power saving, which uses more electricity and makes more heat; battery settings stay \
+         as they were. Undo switches back. Or pick a plan yourself in Windows Settings > System > Power & \
+         battery (Power mode) or Control Panel > Power Options; on battery a performance plan uses more \
+         battery."
     } else {
-        "In Windows Settings > System > Power & battery, the Power mode setting, or Control Panel > Power \
-         Options, you can pick a plan that favours performance. It uses more electricity."
+        "The PeakTweaks power plan below copies this plan and keeps the processor and devices out of power \
+         saving. It uses more electricity. Undo switches back. Or pick a plan yourself in Windows Settings > \
+         System > Power & battery (Power mode) or Control Panel > Power Options."
     };
     match plan {
         Probe::Unknown { reason } | Probe::No { reason } => unknown(ID, TITLE, reason),
@@ -722,14 +727,16 @@ fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
                 } else {
                     "Power saver"
                 };
-                finding(
+                let mut f = finding(
                     ID,
                     Status::Attention,
                     "The power plan is not a performance plan",
                     format!("The active power plan is {name}."),
                     Some(remedy),
-                    true,
-                )
+                    false,
+                );
+                f.fix_tweak_id = Some(crate::tweaks::power::PLAN_ID.to_owned());
+                f
             }
         },
     }
@@ -1022,10 +1029,26 @@ mod tests {
             let f = get(&r, "power.plan");
             assert_eq!(f.status, status, "{kind:?}");
             assert_eq!(f.remedy.is_some(), status == Status::Attention, "{kind:?}");
-            assert!(f.fix_tweak_id.is_none());
+            let fix = (status == Status::Attention).then_some(crate::tweaks::power::PLAN_ID);
+            assert_eq!(f.fix_tweak_id.as_deref(), fix, "{kind:?}");
+            assert!(!f.guided_only, "{kind:?}");
+            assert_eq!(f.fix_by, (status == Status::Attention).then_some(FixBy::Us), "{kind:?}");
         }
         let unknown = scan(&env_with_plan(Probe::unknown("no value"), false));
         assert_eq!(get(&unknown, "power.plan").status, Status::Unknown);
+    }
+
+    /// A finding may only name a tool the app ships; Home shows that tool's
+    /// card under the finding.
+    #[test]
+    fn a_fix_a_finding_names_is_a_tool_in_the_catalogue() {
+        let ids: Vec<String> = crate::tweaks::catalogue().iter().map(|t| t.id().to_owned()).collect();
+        let r = scan(&env_with_plan(plan(PowerPlanKind::Balanced), true));
+        let named: Vec<&str> = r.findings.iter().filter_map(|f| f.fix_tweak_id.as_deref()).collect();
+        assert!(!named.is_empty());
+        for id in named {
+            assert!(ids.iter().any(|t| t == id), "{id} is not in the catalogue");
+        }
     }
 
     #[test]

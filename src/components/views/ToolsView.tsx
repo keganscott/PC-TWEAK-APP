@@ -555,7 +555,9 @@ function ApplyRecommended({ ids, gateOpen }: { ids: string[]; gateOpen: boolean 
   );
 }
 
-function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | null }) {
+/** One tool with its state, Apply and Undo. Also shown under a scan finding
+ * that names it as the fix (Home), so both places share the same rules. */
+export function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | null }) {
   const op = useStore((s) => s.tweakOps[tweak.id]);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();

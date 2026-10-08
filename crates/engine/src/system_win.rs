@@ -98,7 +98,13 @@ impl WinSystem {
     fn check_qos(&self, item: &SysItem, wanted: &SysState) -> Result<()> {
         *self.qos.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         let now = self.read(item)?;
-        if &now == wanted {
+        let same = match (&now, wanted) {
+            (SysState::QosPolicy { program: a, dscp: x }, SysState::QosPolicy { program: b, dscp: y }) => {
+                x == y && a.eq_ignore_ascii_case(b)
+            }
+            (now, wanted) => now == wanted,
+        };
+        if same {
             Ok(())
         } else {
             Err(fail(
@@ -1458,6 +1464,18 @@ mod tests {
         println!("added: {added:?}; reads {read:?}");
         println!("active with it: {listed:?}");
         println!("in the registry: {:?}", find());
+        // The values Windows keeps for it (run 37785699537 found the policy
+        // under SOFTWARE\Policies\Microsoft\Windows\QoS\<name>).
+        println!(
+            "its values: {:?}",
+            tool(
+                "reg.exe",
+                &[
+                    "query",
+                    r"HKLM\SOFTWARE\Policies\Microsoft\Windows\QoS\PeakTweaks CI check"
+                ]
+            )
+        );
         let removed = s.write(&item, &SysState::Absent);
         let after = s.read(&item);
         let listed_after = active();
@@ -1467,12 +1485,17 @@ mod tests {
 
         added.unwrap();
         assert_eq!(read.unwrap(), wanted);
-        let line = listed.lines().find(|l| l.starts_with("PeakTweaks CI check|"));
-        let line = line.expect("Windows applies the policy");
+        // The active store lists names in lower case (run 37785699537).
+        let ours = |out: &str| {
+            out.lines()
+                .map(str::to_ascii_lowercase)
+                .find(|l| l.starts_with("peaktweaks ci check|"))
+        };
+        let line = ours(&listed).expect("Windows applies the policy");
         assert!(line.contains("peaktweaks-ci-check.exe|46|"), "{line}");
         removed.unwrap();
         assert_eq!(after.unwrap(), SysState::Absent);
-        assert!(!listed_after.contains("PeakTweaks CI check|"), "{listed_after}");
+        assert!(ours(&listed_after).is_none(), "{listed_after}");
         assert!(left.is_empty(), "left in the registry: {left:?}");
     }
 

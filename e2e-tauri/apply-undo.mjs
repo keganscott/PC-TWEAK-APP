@@ -2,9 +2,12 @@
 // check that the registry and the journal agree afterwards (agent brief,
 // Phase 3 "done when"). Windows CI only.
 //
+// Then Home's "Apply the safe set" and the result card's "Undo these", which
+// must leave nothing in effect.
+//
 // Runs against a `dev-stubs` test build: the restore gate is open (Windows
-// Server has no System Restore) and the licence covers Pro, because the only
-// change in the catalogue that a runner can make is the Pro mouse tweak. Every
+// Server has no System Restore) and the licence covers Pro, because every
+// change in the catalogue is Pro. Every
 // other part is the shipped code: user resolution, Transaction, journal, .reg
 // backups, WinRegistry. Such a build is never uploaded or shipped.
 //
@@ -121,6 +124,31 @@ try {
     console.log(
       `  journal: ${records.length - recordsBefore} new records for ${TWEAK}; last commit revert (tx ${lastRevertTx})`,
     );
+  });
+
+  await step("Home applies the safe set in one click and Undo these puts every change back", async () => {
+    await open("Home");
+    // The card from the steps above, so the next one read is this step's.
+    for (const dismiss of await driver.findElements(By.xpath("//button[normalize-space()='Dismiss']"))) {
+      await dismiss.click();
+    }
+    const button = await driver.wait(
+      until.elementLocated(By.xpath("//button[starts-with(normalize-space(), 'Apply the safe set (')]")),
+      30_000,
+    );
+    const label = await button.getText();
+    await button.click();
+    const result = (start) => By.xpath(`//*[starts-with(normalize-space(.), "${start}")]`);
+    const applied = await driver.wait(until.elementLocated(result("Applied: ")), 180_000);
+    console.log(`\n  ${label} -> ${(await applied.getText()).split("\n")[0]}`);
+    assert.equal((await driver.findElements(text("could not be applied"))).length, 0);
+    await driver.findElement(By.xpath("//button[normalize-space()='Undo these']")).click();
+    const undid = await driver.wait(until.elementLocated(result("Undid: ")), 180_000);
+    console.log(`  ${(await undid.getText()).split("\n")[0]}`);
+    assert.equal((await driver.findElements(text("could not be undone"))).length, 0);
+    await open("Backups");
+    await driver.wait(until.elementLocated(text("Nothing PeakTweaks changed is in effect.")), 30_000);
+    assert.deepEqual(snapshot(), before, "the mouse values, part of the safe set, are as before");
   });
 
   console.log("\nApply and Undo end to end: registry and journal agree.");

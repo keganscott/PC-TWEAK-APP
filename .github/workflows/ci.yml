@@ -425,10 +425,11 @@ jobs:
           }
 
       # Agent brief Phase 3 "done when": Apply and Undo through the real UI on
-      # the real registry, then registry and journal must agree. A third build,
-      # with dev-stubs (open restore gate, Pro licence: a runner has no System
-      # Restore and the only change it can make is the Pro mouse tweak). Never
-      # uploaded; the shipped exe was uploaded and copied aside above.
+      # the real registry, then registry and journal must agree; then Home's
+      # "Apply the safe set" and "Undo these" through the real UI. A third
+      # build, with dev-stubs (open restore gate, Pro licence: a runner has no
+      # System Restore and every catalogue change is Pro). Never uploaded; the
+      # shipped exe was uploaded and copied aside above.
       - name: Apply and Undo end to end on the real registry
         shell: pwsh
         run: |

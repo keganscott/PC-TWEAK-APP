@@ -107,6 +107,45 @@ describe("App", () => {
     expect(await within(card).findByText(/6\.0 GB before, 1\.0 GB after/)).toBeTruthy();
   });
 
+  it("Tools says which games it watches for, before any runs", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(await within(section).findByText("Watching for Fortnite, Roblox and Minecraft (Bedrock Edition).")).toBeTruthy();
+    expect((within(section).getByRole("switch", { name: "Gaming Mode" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("Tools turns Gaming Mode and the game timer on from their switches and says what is in effect", async () => {
+    const backend = createMockBackend({ playing: "fortnite", gateOpen: true });
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(await within(section).findByText("Fortnite is running.")).toBeTruthy();
+
+    await userEvent.click(within(section).getByRole("switch", { name: "Gaming Mode" }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true, gameTimer: false }));
+    expect(await within(section).findByText(/Gaming Mode is on\./)).toBeTruthy();
+
+    await userEvent.click(within(section).getByRole("switch", { name: "Game timer" }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true, gameTimer: true }));
+    expect(await within(section).findByText(/The game timer is held at 0\.5 ms\./)).toBeTruthy();
+    expect(within(section).getAllByText("On now")).toHaveLength(2);
+  });
+
+  it("Tools says why Gaming Mode is not in effect without a restore point", async () => {
+    renderApp(createMockBackend({ playing: "roblox" }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(within(section).getByText(/it needs a restore point first/)).toBeTruthy();
+    await userEvent.click(within(section).getByRole("switch", { name: "Gaming Mode" }));
+    expect(await within(section).findByText(/no verified restore point/)).toBeTruthy();
+    expect(within(section).queryByText("On now")).toBeNull();
+  });
+
   it("Tools shows junk sizes first, asks once, then says what it deleted and what was left", async () => {
     const backend = createMockBackend();
     const run = vi.spyOn(backend, "cleanupRun");
@@ -197,7 +236,7 @@ describe("App", () => {
     renderApp(withTradeoff);
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
-    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(screen.getByRole("switch", { name: /Advanced/ }));
     const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
     const apply = within(card).getByRole("button", { name: "Apply" });
     await waitFor(() => expect(screen.queryByText("Changes are locked until there is a restore point.")).toBeNull());

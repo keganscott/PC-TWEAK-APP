@@ -21,6 +21,7 @@ import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalView } from "../generated/JournalView";
+import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSession } from "../generated/ProofSession";
@@ -102,6 +103,8 @@ export interface State {
   driveOp: Op<DriveOptimization>;
   lastChange: ChangeResult | null;
   proof: ProofState;
+  /** The game watcher (catalogue step 5); null until it first answers. */
+  play: PlayStatus | null;
   bus: BusEntry[];
 }
 
@@ -133,6 +136,7 @@ export function initialState(sample: boolean): State {
     driveOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
+    play: null,
     bus: [],
   };
 }
@@ -174,6 +178,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
   const latest = new Map<string, number>();
   let busId = 0;
   let listening: Promise<() => void> | null = null;
+  let watchingPlay: Promise<() => void> | null = null;
 
   const set = (update: (s: State) => State) => {
     const next = update(state);
@@ -245,6 +250,26 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     }
   }
 
+  /** The watcher's status. An event is newer than any reply still in flight,
+   * so it takes the same channel. Gaming Mode starting or ending changes what
+   * Backups lists, so the change record is read again then. */
+  function showPlay(play: PlayStatus) {
+    tag("play");
+    const wasActive = state.play?.gamingModeActive;
+    set((s) => ({ ...s, play }));
+    if (wasActive !== undefined && wasActive !== play.gamingModeActive) void refreshJournal();
+  }
+
+  async function refreshPlay() {
+    const current = tag("play");
+    try {
+      const play = await backend.playStatus();
+      if (current()) set((s) => ({ ...s, play }));
+    } catch {
+      // Advisory: the section shows nothing until the watcher answers.
+    }
+  }
+
   /** What each junk-file area holds now. The newest answer wins. */
   async function refreshCleanupSizes() {
     const current = tag("cleanup_sizes");
@@ -275,7 +300,8 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
           const entry: BusEntry = { ...p, id: busId, at: now() };
           set((s) => ({ ...s, bus: [...s.bus, entry].slice(-BUS_LIMIT) }));
         });
-        await listening;
+        watchingPlay ??= backend.onPlay(showPlay);
+        await Promise.all([listening, watchingPlay]);
         const [context, settings, games, tweaks, journal, sessions] = await Promise.all([
           backend.context(),
           backend.getSettings(),
@@ -301,6 +327,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       // The audit probes the machine and can take seconds; the shell shows
       // skeletons until it lands instead of holding the whole boot.
       void refreshAudit();
+      void refreshPlay();
     },
 
     refreshAudit,
@@ -333,10 +360,12 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       const current = tag("settings");
       set((s) => ({ ...s, settingsOp: RUNNING }));
       try {
+        const before = state.settings;
         const saved = await backend.setSettings(settings);
         if (!current()) return false;
         set((s) => ({ ...s, settings: saved, settingsOp: { status: "done", value: null } }));
-        await refreshAudit();
+        // Turning Gaming Mode off mid-game puts its changes back at once.
+        await Promise.allSettled([refreshAudit(), ...(before?.gamingMode !== saved.gamingMode ? [refreshJournal()] : [])]);
         return true;
       } catch (e) {
         if (current()) set((s) => ({ ...s, settingsOp: failed(e) }));
@@ -582,7 +611,9 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     actions,
     dispose() {
       void listening?.then((off) => off());
+      void watchingPlay?.then((off) => off());
       listening = null;
+      watchingPlay = null;
       listeners.clear();
     },
   };

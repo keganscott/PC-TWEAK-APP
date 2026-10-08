@@ -9,6 +9,7 @@ import { formatBytes, formatDateTime, formatDuration, formatNumber, probeValue }
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { otherLongWork, recommendedIds, type LongWork } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
+import { PlaySection } from "./PlaySection";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
 const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }> = {
@@ -97,6 +98,7 @@ export function ToolsView() {
             </ul>
           </section>
         ))}
+        <PlaySection />
         <OneTimeActions />
       </div>
     </>

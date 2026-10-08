@@ -20,6 +20,7 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { BlockedReason } from "../generated/BlockedReason";
 import type { EngineError } from "../generated/EngineError";
 import type { JournalEntry } from "../generated/JournalEntry";
+import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSessionSummary } from "../generated/ProofSessionSummary";
@@ -41,6 +42,8 @@ export interface MockOptions {
   failures?: Partial<Record<keyof Backend, EngineError>>;
   /** Start as a first launch: the welcome has not been seen. Default: seen. */
   firstRun?: boolean;
+  /** The known game the SAMPLE watcher sees running. Default: none. */
+  playing?: string;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -168,6 +171,30 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     ...(internalApplied ? [clone(INTERNAL)] : []),
   ];
 
+  // The game watcher (catalogue step 5). The SAMPLE one reports a status only:
+  // Gaming Mode's changes are not added to the SAMPLE Backups list. As in the
+  // engine, they need a restore point.
+  const playListeners = new Set<(p: PlayStatus) => void>();
+  const playStatus = (): PlayStatus => {
+    const game = options.playing ?? null;
+    const wanted = game !== null && settings.gamingMode;
+    return {
+      ...clone(fx.playStatus),
+      game,
+      gamingModeActive: wanted && gateOpen,
+      timerHeld: game !== null && settings.gameTimer ? fx.playStatus.timerHeld : null,
+      problem: wanted && !gateOpen ? "Gaming Mode is not fully on: There is no verified restore point, so there is nothing to roll back to." : null,
+    };
+  };
+  let shownPlay = JSON.stringify(playStatus());
+  /** As the watcher: an event only when what it would show changed. */
+  const emitPlay = () => {
+    const now = playStatus();
+    if (JSON.stringify(now) === shownPlay) return;
+    shownPlay = JSON.stringify(now);
+    for (const l of playListeners) l(clone(now));
+  };
+
   const find = (id: string): TweakView => {
     const t = tweaks.find((x) => x.id === id);
     if (!t) throw new EngineFault({ kind: "unknown_tweak", tweakId: id });
@@ -192,6 +219,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     setSettings: (s) =>
       reply("setSettings", [s], () => {
         settings = clone(s);
+        emitPlay();
         return clone(settings);
       }),
     selectTargetGame: (gameId) =>
@@ -216,6 +244,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         }
         seq += 1;
         records.push({ record: "restore_point", ...clone(fx.journalView.records[3]), seq, unixMs: Date.now() } as JournalRecord);
+        emitPlay();
         return clone(fx.restoreOutcome);
       }),
     applyTweak: (id) =>
@@ -349,6 +378,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     onProgress: async (handler): Promise<UnlistenFn> => {
       listeners.add(handler);
       return () => listeners.delete(handler);
+    },
+    playStatus: () => reply("playStatus", [], playStatus),
+    onPlay: async (handler): Promise<UnlistenFn> => {
+      playListeners.add(handler);
+      return () => playListeners.delete(handler);
     },
   };
 }

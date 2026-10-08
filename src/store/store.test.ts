@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { PlayStatus } from "../generated/PlayStatus";
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
 import { BUS_LIMIT, createAppStore, otherLongWork, recommendedIds, type State } from "./store";
 
@@ -110,7 +111,7 @@ describe("changes", () => {
   it("a failed settings save reports false and keeps the stored settings", async () => {
     const { store } = await booted({ failures: { setSettings: { kind: "storage", path: "p", detail: "d" } } });
     const before = store.getState().settings;
-    expect(await store.actions.saveSettings({ language: "technical", rigClassOverride: "high", welcomeSeen: true })).toBe(false);
+    expect(await store.actions.saveSettings({ language: "technical", rigClassOverride: "high", welcomeSeen: true, gamingMode: false, gameTimer: false })).toBe(false);
     expect(store.getState().settings).toBe(before);
     expect(store.getState().settingsOp.status).toBe("failed");
   });
@@ -356,5 +357,53 @@ describe("one-time actions", () => {
     expect(otherLongWork(store.getState(), "drive")).toBeNull();
     await running;
     expect(otherLongWork(store.getState(), "cleanup")).toBeNull();
+  });
+});
+
+describe("while you play (catalogue step 5)", () => {
+  const play = async (options: MockOptions = {}) => {
+    const r = await booted(options);
+    for (let i = 0; i < 50 && r.store.getState().play === null; i += 1) await new Promise((res) => setTimeout(res, 5));
+    return r;
+  };
+
+  it("loads what the watcher sees after boot", async () => {
+    const { store } = await play();
+    expect(store.getState().play).toMatchObject({ game: null, gamingModeActive: false, timerHeld: null });
+    expect(store.getState().play?.watched).toEqual(["fortnite", "roblox", "minecraft"]);
+  });
+
+  it("follows the watcher's events: Gaming Mode on while a game runs, then the change record is read again", async () => {
+    const { store } = await play({ playing: "fortnite", gateOpen: true });
+    const journal = store.getState().journal;
+    const settings = store.getState().settings!;
+    expect(await store.actions.saveSettings({ ...settings, gamingMode: true, gameTimer: true })).toBe(true);
+    expect(store.getState().play).toMatchObject({ game: "fortnite", gamingModeActive: true, timerHeld: 5000, problem: null });
+    for (let i = 0; i < 50 && store.getState().journal === journal; i += 1) await new Promise((res) => setTimeout(res, 5));
+    expect(store.getState().journal).not.toBe(journal);
+  });
+
+  it("says why Gaming Mode is not on when there is no restore point", async () => {
+    const { store } = await play({ playing: "roblox" });
+    const settings = store.getState().settings!;
+    await store.actions.saveSettings({ ...settings, gamingMode: true });
+    expect(store.getState().play?.gamingModeActive).toBe(false);
+    expect(store.getState().play?.problem).toMatch(/restore point/);
+    await store.actions.createRestorePoint();
+    expect(store.getState().play).toMatchObject({ gamingModeActive: true, problem: null });
+  });
+
+  it("a watcher event wins over an older status reply still in flight", async () => {
+    const mock = createMockBackend({ playing: "fortnite", gateOpen: true });
+    const stale = await mock.playStatus();
+    let release = () => {};
+    const backend: Backend = { ...mock, playStatus: () => new Promise<PlayStatus>((r) => (release = () => r(stale))) };
+    const store = createAppStore(backend);
+    await store.actions.boot();
+    await backend.setSettings({ ...store.getState().settings!, gamingMode: true });
+    release();
+    await new Promise((res) => setTimeout(res, 0));
+    expect(stale.gamingModeActive).toBe(false);
+    expect(store.getState().play?.gamingModeActive).toBe(true);
   });
 });

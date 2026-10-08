@@ -1,0 +1,158 @@
+import { useId, useState, type ReactNode } from "react";
+
+import type { Settings } from "../../generated/Settings";
+import { explain } from "../../lib/errors";
+import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
+
+/** Only Minecraft's Bedrock Edition is recognised (`GAME_PROCESSES` in the
+ * engine's `play.rs`): Java Edition's program name is shared by other programs. */
+const EDITION: Readonly<Record<string, string>> = { minecraft: "Minecraft (Bedrock Edition)" };
+
+/** "A, B and C". */
+export function listWords(words: readonly string[]): string {
+  if (words.length < 2) return words.join("");
+  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+/** A timer interval in 100 ns units, as "0.5 ms". */
+const ms = (units: number) => `${(units / 10_000).toLocaleString(undefined, { maximumFractionDigits: 2 })} ms`;
+
+type Switch = "gamingMode" | "gameTimer";
+
+/** Catalogue step 5: Gaming Mode (H5, H15) and the game timer (H2). The engine
+ * makes these changes only while a known game runs and puts them back when it
+ * closes; this section is the two switches and what the watcher sees. */
+export function PlaySection() {
+  const play = useStore((s) => s.play);
+  const games = useStore((s) => s.games);
+  const settings = useStore((s) => s.settings);
+  const settingsOp = useStore((s) => s.settingsOp);
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { saveSettings } = useActions();
+  const [saving, setSaving] = useState<Switch | null>(null);
+  const [failedHere, setFailedHere] = useState(false);
+
+  const name = (id: string) => games.find((g) => g.id === id)?.name ?? id;
+  const flip = async (key: Switch, on: boolean) => {
+    if (!settings) return;
+    setSaving(key);
+    setFailedHere(false);
+    const next: Settings = { ...settings, [key]: on };
+    setFailedHere(!(await saveSettings(next)));
+    setSaving(null);
+  };
+  const busy = settingsOp.status === "running";
+
+  return (
+    <section aria-labelledby="cat-play">
+      <div className="mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 id="cat-play" className="text-base font-extrabold tracking-tight">
+            While you play
+          </h2>
+          {sample && <SampleBadge />}
+        </div>
+        <p className="mt-1 text-sm text-ink-muted">
+          PeakTweaks looks for a known game every few seconds. The changes below are made only while one runs and are
+          put back when it closes.
+        </p>
+      </div>
+      <Card className="flex flex-col gap-4 p-4">
+        {play && (
+          <p className="text-sm" role="status">
+            {play.game ? (
+              <>
+                <span className="font-bold">{name(play.game)} is running.</span>
+                {play.gamingModeActive && " Gaming Mode is on."}
+                {play.timerHeld !== null && ` The game timer is held at ${ms(play.timerHeld)}.`}
+              </>
+            ) : (
+              <>Watching for {listWords(play.watched.map((id) => EDITION[id] ?? name(id)))}.</>
+            )}
+          </p>
+        )}
+        {play?.problem && (
+          <Callout tone="warn" title="Not everything you turned on is in effect.">
+            {play.problem}
+          </Callout>
+        )}
+        <SwitchRow
+          label="Gaming Mode"
+          checked={settings?.gamingMode ?? false}
+          disabled={!settings || busy}
+          busy={saving === "gamingMode"}
+          onChange={(on) => void flip("gamingMode", on)}
+          badge={play?.gamingModeActive ? <StatusBadge tone="ok">On now</StatusBadge> : null}
+        >
+          Turns off pop-up notifications and pauses Windows Search indexing while a game runs. Both come back when it
+          closes, and Backups lists them while they are in effect.
+          {gateOpen === false && " Like every change, it needs a restore point first."}
+        </SwitchRow>
+        <SwitchRow
+          label="Game timer"
+          checked={settings?.gameTimer ?? false}
+          disabled={!settings || busy}
+          busy={saving === "gameTimer"}
+          onChange={(on) => void flip("gameTimer", on)}
+          badge={play?.timerHeld != null ? <StatusBadge tone="ok">On now</StatusBadge> : null}
+        >
+          Asks Windows for its finest timer while a game runs and lets it go when the game closes. On Windows 11 the
+          request reaches the game only with System-wide timer requests turned on (Tools, Advanced). Uses more battery
+          on a laptop while a game runs.
+        </SwitchRow>
+        {failedHere && settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
+      </Card>
+    </section>
+  );
+}
+
+function SwitchRow({
+  label,
+  checked,
+  disabled,
+  busy,
+  onChange,
+  badge,
+  children,
+}: {
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  busy: boolean;
+  onChange: (on: boolean) => void;
+  badge: ReactNode;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const hintId = useId();
+  return (
+    <div className="flex items-start gap-3">
+      <input
+        id={id}
+        type="checkbox"
+        role="switch"
+        aria-checked={checked}
+        aria-describedby={hintId}
+        aria-busy={busy}
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 size-4 shrink-0 accent-accent"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor={id} className="cursor-pointer font-bold">
+            {label}
+          </label>
+          {badge}
+        </div>
+        <p id={hintId} className="mt-1 text-sm text-ink-muted">
+          {children}
+        </p>
+      </div>
+    </div>
+  );
+}

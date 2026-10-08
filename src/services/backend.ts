@@ -4,7 +4,7 @@
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import { engine, onProgress, proof } from "../ipc";
+import { engine, onPlay, onProgress, proof } from "../ipc";
 
 import type { AreaSize } from "../generated/AreaSize";
 import type { CleanupArea } from "../generated/CleanupArea";
@@ -15,6 +15,7 @@ import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
+import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSession } from "../generated/ProofSession";
@@ -53,6 +54,9 @@ export interface Backend {
   proofSessions(): Promise<ProofSessionSummary[]>;
   proofRuns(sessionId: string): Promise<ProofRun[]>;
   onProgress(handler: (p: Progress) => void): Promise<UnlistenFn>;
+  /** The game watcher (catalogue step 5): which game runs and what is in effect for it. */
+  playStatus(): Promise<PlayStatus>;
+  onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn>;
 }
 
 export function isTauri(): boolean {
@@ -70,6 +74,7 @@ export function tauriBackend(): Backend {
     proofSessions: proof.listSessions,
     proofRuns: proof.runs,
     onProgress,
+    onPlay,
   };
 }
 

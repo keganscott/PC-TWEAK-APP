@@ -2253,6 +2253,36 @@ mod dns {
         assert_eq!(state(&h), TweakState::Foreign);
     }
 
+    /// Windows CI run 37825562132: Azure's runner lists a connected adapter
+    /// with no IPv4 of its own (bonded under another), and Windows refused to
+    /// set DNS servers on it, so Apply failed for every adapter. One without
+    /// IPv4 reads Absent and is left alone.
+    #[test]
+    fn a_connected_adapter_without_ipv4_is_left_alone() {
+        let mut h = Harness::new(vec![Box::new(CloudflareDns)]);
+        h.sys.set_adapters(vec![adapter("aa", true), adapter("bb", true)]);
+        h.sys.set(&dns("aa"), list(&[]));
+        assert_eq!(state(&h), TweakState::Default);
+
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&dns("aa")), list(&["1.1.1.1", "1.0.0.1"]));
+        assert_eq!(h.sys.get(&dns("bb")), SysState::Absent);
+        assert_eq!(state(&h), TweakState::Applied);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&dns("aa")), list(&[]));
+        assert_eq!(state(&h), TweakState::Default);
+    }
+
+    #[test]
+    fn with_only_adapters_without_ipv4_it_is_blocked() {
+        let mut h = Harness::new(vec![Box::new(CloudflareDns)]);
+        h.sys.set_adapters(vec![adapter("bb", true)]);
+        assert!(matches!(state(&h), TweakState::Blocked { .. }));
+        assert!(h.engine.apply(ID).is_err());
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
     #[test]
     fn with_no_connected_adapter_it_is_blocked() {
         let mut h = Harness::new(vec![Box::new(CloudflareDns)]);

@@ -4,7 +4,10 @@
 //! Windows' own setting (Settings > Network > adapter > DNS server
 //! assignment, manual). What each adapter had before is journalled, including
 //! "automatic" (an empty list), and Undo puts it back exactly. IPv4 only;
-//! IPv6 DNS is left as it is.
+//! IPv6 DNS is left as it is. A connected adapter without IPv4 of its own
+//! (one bonded under another, or in a Hyper-V switch, whose IP lives on the
+//! virtual adapter) reads Absent and is left alone: Windows has no DNS
+//! servers to set there (Windows CI run 37825562132).
 //!
 //! The addresses are Cloudflare's published resolvers (1.1.1.1 and 1.0.0.1,
 //! from cloudflare.com/learning/dns/what-is-1.1.1.1). Changing the servers
@@ -44,6 +47,13 @@ fn connected(res: &ContextResolver) -> Result<Vec<NetAdapter>> {
 
 fn none_connected() -> BlockedReason {
     BlockedReason::new(BlockedCode::HardwareUnsupported, "No network adapter is connected.")
+}
+
+fn none_with_ipv4() -> BlockedReason {
+    BlockedReason::new(
+        BlockedCode::HardwareUnsupported,
+        "No connected network adapter has IPv4 settings of its own.",
+    )
 }
 
 impl Tweak for CloudflareDns {
@@ -91,10 +101,18 @@ impl Tweak for CloudflareDns {
                 reason: none_connected(),
             });
         }
+        let mut any = false;
         for a in &adapters {
-            if res.read_system(&item(a))? != wanted() {
-                return Ok(TweakState::Default);
+            match res.read_system(&item(a))? {
+                SysState::Absent => {}
+                now if now == wanted() => any = true,
+                _ => return Ok(TweakState::Default),
             }
+        }
+        if !any {
+            return Ok(TweakState::Blocked {
+                reason: none_with_ipv4(),
+            });
         }
         Ok(if has_journal_entry {
             TweakState::Applied
@@ -110,8 +128,17 @@ impl Tweak for CloudflareDns {
                 reason: none_connected(),
             });
         }
+        let mut any = false;
         for a in adapters {
-            tx.set_system(item(&a), wanted())?;
+            if tx.resolver().read_system(&item(&a))? != SysState::Absent {
+                tx.set_system(item(&a), wanted())?;
+                any = true;
+            }
+        }
+        if !any {
+            return Err(EngineError::Blocked {
+                reason: none_with_ipv4(),
+            });
         }
         Ok(())
     }

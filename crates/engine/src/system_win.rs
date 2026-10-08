@@ -553,6 +553,12 @@ impl SystemBackend for WinSystem {
             }
             SysItem::DnsServers { interface } => {
                 let g = need_guid(interface, "network adapter")?;
+                // No IPv4 interface on this adapter (bonded under another, or
+                // in a Hyper-V switch): Windows keeps no DNS servers for it
+                // and refuses to set any (run 37825562132).
+                if !self.metrics()?.iter().any(|m| m.guid == g && !m.ipv6) {
+                    return Ok(SysState::Absent);
+                }
                 // The servers set by hand for this adapter (IPv4). Empty means
                 // automatic, from the router.
                 let key = format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{g}}}");
@@ -1591,8 +1597,8 @@ mod tests {
 
     /// DNS servers (catalogue H25) on this PC, through the engine: each
     /// connected adapter's servers are read, the tool is applied (every one
-    /// must then read 1.1.1.1, 1.0.0.1) and undone (every one must read as
-    /// before, automatic included). What Windows reports is printed at each
+    /// with IPv4 must then read 1.1.1.1, 1.0.0.1) and undone (every one must
+    /// read as before, automatic included). What Windows reports is printed at each
     /// step. Run only with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1; the runner is
     /// without its own DNS servers for a few seconds.
     #[test]
@@ -1647,9 +1653,14 @@ mod tests {
         let wanted = SysState::List {
             items: SERVERS.iter().map(|s| (*s).to_owned()).collect(),
         };
+        // An adapter without IPv4 of its own reads Absent and is left alone.
         for (name, servers) in &during {
-            assert_eq!(servers, &wanted, "{name}");
+            assert!(
+                servers == &wanted || servers == &SysState::Absent,
+                "{name}: {servers:?}"
+            );
         }
+        assert!(during.iter().any(|(_, s)| s == &wanted));
 
         engine.revert(ID).unwrap();
         println!("Windows after Undo: {:?}", show());

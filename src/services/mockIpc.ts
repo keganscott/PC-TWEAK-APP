@@ -20,6 +20,7 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { BlockedReason } from "../generated/BlockedReason";
 import type { EngineError } from "../generated/EngineError";
 import type { JournalEntry } from "../generated/JournalEntry";
+import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
@@ -45,6 +46,8 @@ export interface MockOptions {
   firstRun?: boolean;
   /** The known game the SAMPLE watcher sees running. Default: none. */
   playing?: string;
+  /** The SAMPLE PC is on Wi-Fi only while that game runs. */
+  onWifi?: boolean;
 }
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -79,6 +82,8 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   // Startup apps (H12): each entry's switch is a change like any other, so
   // apply, undo, Undo all and Backups treat it as one.
   let startup: StartupList = clone(fx.startupList) as StartupList;
+  // MSI mode per device (H6): changes like any other, as startup switches.
+  let msi: MsiDeviceList = clone(fx.msiDevices) as MsiDeviceList;
   let settings: Settings = { ...(clone(fx.systemAudit.settings) as Settings), welcomeSeen: !options.firstRun };
   let targetGame: string | null = null;
   let gateOpen = options.gateOpen ?? false;
@@ -169,7 +174,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   const INTERNAL = fx.journalView.applied.find((c) => c.kind === "internal")!;
   let internalApplied = false;
   const outstanding = (): AppliedChange[] => [
-    ...[...tweaks, ...startup.apps.map((a) => a.tweak)]
+    ...[...tweaks, ...startup.apps.map((a) => a.tweak), ...msi.devices.map((d) => d.tweak)]
       .filter((t) => t.state.status === "applied" || t.state.status === "drifted")
       .map((t): AppliedChange => ({ tweakId: t.id, name: t.name, kind: "catalogue" })),
     ...(internalApplied ? [clone(INTERNAL)] : []),
@@ -188,6 +193,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       gamingModeActive: wanted && gateOpen,
       timerHeld: game !== null && settings.gameTimer ? fx.playStatus.timerHeld : null,
       problem: wanted && !gateOpen ? "Gaming Mode is not fully on: There is no verified restore point, so there is nothing to roll back to." : null,
+      onWifi: game !== null && (options.onWifi ?? false),
     };
   };
   let shownPlay = JSON.stringify(playStatus());
@@ -200,7 +206,10 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   };
 
   const find = (id: string): TweakView => {
-    const t = tweaks.find((x) => x.id === id) ?? startup.apps.find((a) => a.tweak.id === id)?.tweak;
+    const t =
+      tweaks.find((x) => x.id === id) ??
+      startup.apps.find((a) => a.tweak.id === id)?.tweak ??
+      msi.devices.find((d) => d.tweak.id === id)?.tweak;
     if (!t) throw new EngineFault({ kind: "unknown_tweak", tweakId: id });
     return t;
   };
@@ -210,6 +219,10 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     startup = {
       ...startup,
       apps: startup.apps.map((a) => (a.tweak.id === id ? { ...a, tweak: { ...a.tweak, state } } : a)),
+    };
+    msi = {
+      ...msi,
+      devices: msi.devices.map((d) => (d.tweak.id === id ? { ...d, tweak: { ...d.tweak, state } } : d)),
     };
   };
 
@@ -341,6 +354,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         return report;
       }),
     listStartupApps: () => reply("listStartupApps", [], () => clone(startup)),
+    listMsiDevices: () => reply("listMsiDevices", [], () => clone(msi)),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {
         emit("drive", "Optimizing the Windows drive");

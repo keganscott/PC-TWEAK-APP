@@ -290,7 +290,24 @@ impl<'a> Transaction<'a> {
                     }
                     self.remove_created_keys(e.root, &e.created_keys)?;
                 }
-                Step::Sys(c) => self.change_back(&c.item, &c.previous)?,
+                Step::Sys(c) => {
+                    if let Some(name) = self.adapter_is_gone(&c.item) {
+                        self.note(format!(
+                            "network adapter {name} no longer exists (it was removed), so its {} was not put back",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
+                    if self.nvidia_is_gone(&c.item) {
+                        self.note(format!(
+                            "the NVIDIA driver is no longer on this PC, and its settings went with it, so the {} \
+                             was not put back",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
+                    self.change_back(&c.item, &c.previous)?
+                }
             }
         }
         Ok(())
@@ -582,6 +599,28 @@ impl<'a> Transaction<'a> {
         self.journal.append_change(entry.clone())?;
         self.changes.push(entry);
         Ok(())
+    }
+
+    /// The interface GUID of a per-adapter change (DNS servers, interface
+    /// metric) whose adapter Windows no longer lists: there is nothing to put
+    /// back, and the write would fail, so Undo could never finish. When the
+    /// adapters cannot be listed, the adapter is taken to be there.
+    fn adapter_is_gone(&self, item: &SysItem) -> Option<String> {
+        let (SysItem::DnsServers { interface } | SysItem::InterfaceMetric { interface, .. }) = item else {
+            return None;
+        };
+        let adapters = self.resolver.system().network_adapters().ok()?;
+        (!adapters.iter().any(|a| a.guid.eq_ignore_ascii_case(interface))).then(|| interface.clone())
+    }
+
+    /// True for an NVIDIA setting when the PC no longer has an NVIDIA driver:
+    /// the settings lived in it, so there is nothing to put back.
+    fn nvidia_is_gone(&self, item: &SysItem) -> bool {
+        matches!(item, SysItem::NvidiaSetting { .. })
+            && matches!(
+                self.resolver.system().read(item),
+                Err(EngineError::Blocked { reason }) if reason.code == crate::types::BlockedCode::HardwareUnsupported
+            )
     }
 
     /// True when `e` was allowed only through a `*` target and the key the `*`

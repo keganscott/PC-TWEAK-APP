@@ -122,6 +122,7 @@ fn main() {
             commands::cleanup_run,
             commands::optimize_drive,
             commands::list_startup_apps,
+            commands::list_msi_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PeakTweaks");

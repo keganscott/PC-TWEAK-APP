@@ -138,6 +138,9 @@ pub struct PlayStatus {
     pub timer_held: Option<u32>,
     /// Why something the user turned on is not in effect, in plain words.
     pub problem: Option<String>,
+    /// The running game's PC was on Wi-Fi only when it started (catalogue E5:
+    /// the app says so; it changes nothing by itself).
+    pub on_wifi: bool,
     /// Ids of the games watched for (`game_processes`), each once.
     pub watched: Vec<String>,
 }
@@ -150,6 +153,11 @@ impl PlayStatus {
             ..Self::default()
         }
     }
+}
+
+/// Connected over Wi-Fi and not over a cable (catalogue E5).
+pub fn wifi_only(adapters: &[crate::system::NetAdapter]) -> bool {
+    adapters.iter().any(|a| a.up && a.wireless) && !adapters.iter().any(|a| a.up && a.wired)
 }
 
 /// The game ids in `games`, each once, in order.
@@ -336,6 +344,24 @@ mod tests {
             game_running(&names(&["Minecraft.Windows.exe"]), &games),
             Some("minecraft")
         );
+    }
+
+    #[test]
+    fn wifi_only_means_wifi_connected_and_no_cable_connected() {
+        use crate::system::NetAdapter;
+        let a = |wired: bool, up: bool| NetAdapter {
+            guid: String::new(),
+            name: String::new(),
+            up,
+            wireless: !wired,
+            wired,
+        };
+        assert!(wifi_only(&[a(false, true)]));
+        assert!(wifi_only(&[a(false, true), a(true, false)]), "an unplugged cable");
+        assert!(!wifi_only(&[a(false, true), a(true, true)]));
+        assert!(!wifi_only(&[a(true, true)]));
+        assert!(!wifi_only(&[a(false, false)]), "not connected at all");
+        assert!(!wifi_only(&[]));
     }
 
     #[test]

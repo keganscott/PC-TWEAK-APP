@@ -118,8 +118,10 @@ pub struct Progress {
 enum Slot {
     Catalogue(usize),
     Internal(usize),
-    /// A startup entry's switch, made from its id (`tweaks::startup`).
-    Startup(Box<dyn Tweak>),
+    /// A change made from its id for something this PC has: a startup
+    /// entry's switch (`tweaks::startup`) or a device's MSI mode
+    /// (`tweaks::msi`).
+    Listed(Box<dyn Tweak>),
 }
 
 pub struct Engine {
@@ -138,9 +140,10 @@ pub struct Engine {
     settings: crate::settings::Settings,
     settings_store: crate::settings::SettingsStore,
     offline_error: Option<String>,
-    /// The startup entries the last `startup_apps` listed. Only those can be
-    /// turned off, so an id the UI makes up never becomes a write.
-    startup_listed: std::collections::HashSet<String>,
+    /// The ids the last `startup_apps` and `msi_devices` listed, with the
+    /// name each was shown with. Only those can be applied, so an id the UI
+    /// makes up never becomes a write.
+    listed: std::collections::HashMap<String, String>,
     /// Held while this engine lives, so no second engine writes the same
     /// journal (`instance.rs`). `None` for engines on test directories.
     _instance: Option<crate::instance::InstanceLock>,
@@ -175,7 +178,7 @@ impl Engine {
             settings: crate::settings::Settings::default(),
             settings_store: crate::settings::SettingsStore::in_memory(),
             offline_error: None,
-            startup_listed: std::collections::HashSet::new(),
+            listed: std::collections::HashMap::new(),
             _instance: None,
         }
     }
@@ -330,7 +333,13 @@ impl Engine {
             return Ok(Slot::Internal(i));
         }
         if let Some(t) = crate::tweaks::startup::StartupToggle::from_id(id) {
-            return Ok(Slot::Startup(Box::new(t)));
+            return Ok(Slot::Listed(Box::new(t)));
+        }
+        if let Some(instance) = id.strip_prefix(crate::tweaks::msi::ID_PREFIX) {
+            let name = self.listed.get(id).map_or("", String::as_str);
+            if let Some(t) = crate::tweaks::msi::MsiMode::new(instance, name) {
+                return Ok(Slot::Listed(Box::new(t)));
+            }
         }
         Err(EngineError::UnknownTweak {
             tweak_id: id.to_string(),
@@ -341,7 +350,7 @@ impl Engine {
         match slot {
             Slot::Catalogue(i) => self.tweaks[*i].as_ref(),
             Slot::Internal(i) => self.internal[*i].as_ref(),
-            Slot::Startup(t) => t.as_ref(),
+            Slot::Listed(t) => t.as_ref(),
         }
     }
 
@@ -403,7 +412,10 @@ impl Engine {
     /// with its switch. `folders` are the two Startup folders on this PC.
     pub fn startup_apps(&mut self, folders: &crate::startup::StartupFolders) -> crate::startup::StartupList {
         let (toggles, problems) = crate::startup::entries(&self.resolver, folders);
-        self.startup_listed = toggles.iter().map(|t| t.id().to_owned()).collect();
+        self.relist(
+            crate::tweaks::startup::ID_PREFIX,
+            toggles.iter().map(|t| (t.id().to_owned(), String::new())),
+        );
         let mut apps: Vec<crate::startup::StartupApp> = toggles
             .into_iter()
             .map(|t| crate::startup::StartupApp {
@@ -417,17 +429,61 @@ impl Engine {
         crate::startup::StartupList { apps, problems }
     }
 
+    /// MSI mode (CATALOGUE H6) for each graphics card and network adapter on
+    /// the PCI bus.
+    pub fn msi_devices(&mut self) -> crate::tweaks::msi::MsiDeviceList {
+        use crate::tweaks::msi::{MsiDevice, MsiDeviceList, MsiMode, ID_PREFIX};
+        let devices = match self.resolver.pci_devices() {
+            Ok(d) => d,
+            Err(e) => {
+                self.relist(ID_PREFIX, std::iter::empty());
+                return MsiDeviceList {
+                    devices: Vec::new(),
+                    problem: Some(e.to_string()),
+                };
+            }
+        };
+        let modes: Vec<(MsiMode, crate::system::DeviceClass)> = devices
+            .iter()
+            .filter_map(|d| Some((MsiMode::new(&d.instance_id, &d.name)?, d.class)))
+            .collect();
+        self.relist(
+            ID_PREFIX,
+            modes.iter().map(|(m, _)| (m.id().to_owned(), m.name.clone())),
+        );
+        let mut devices: Vec<MsiDevice> = modes
+            .iter()
+            .map(|(m, class)| MsiDevice {
+                tweak: self.view_of(m),
+                class: *class,
+            })
+            .collect();
+        devices.sort_by_key(|d| {
+            (
+                d.class != crate::system::DeviceClass::Display,
+                d.tweak.metadata.name.to_string(),
+            )
+        });
+        MsiDeviceList { devices, problem: None }
+    }
+
+    /// Replace the listed ids starting with `prefix`.
+    fn relist(&mut self, prefix: &str, ids: impl Iterator<Item = (String, String)>) {
+        self.listed.retain(|id, _| !id.starts_with(prefix));
+        self.listed.extend(ids);
+    }
+
     pub fn apply(&mut self, id: &str) -> Result<Vec<JournalEntry>> {
-        // The catalogue, or a startup entry's switch. The engine's own
-        // changes are made by the engine, never asked for by id.
+        // The catalogue, or a change for something listed on this PC. The
+        // engine's own changes are made by the engine, never asked for by id.
         let slot = match self.slot_of(id)? {
             Slot::Internal(_) => {
                 return Err(EngineError::UnknownTweak {
                     tweak_id: id.to_string(),
                 })
             }
-            // Only an entry Windows has, as last listed. Undo needs no list.
-            Slot::Startup(t) if !self.startup_listed.contains(t.id()) => {
+            // Only what this PC has, as last listed. Undo needs no list.
+            Slot::Listed(t) if !self.listed.contains_key(t.id()) => {
                 return Err(EngineError::UnknownTweak {
                     tweak_id: id.to_string(),
                 })
@@ -472,7 +528,7 @@ impl Engine {
         } = self;
         let tweak = match &slot {
             Slot::Catalogue(i) => tweaks[*i].as_ref(),
-            Slot::Startup(t) => t.as_ref(),
+            Slot::Listed(t) => t.as_ref(),
             Slot::Internal(_) => unreachable!("refused above"),
         };
 
@@ -508,7 +564,7 @@ impl Engine {
         let tweak = match &slot {
             Slot::Catalogue(i) => tweaks[*i].as_ref(),
             Slot::Internal(i) => internal[*i].as_ref(),
-            Slot::Startup(t) => t.as_ref(),
+            Slot::Listed(t) => t.as_ref(),
         };
 
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Revert)?;
@@ -698,6 +754,14 @@ impl Engine {
             .collect()
     }
 
+    /// This PC is connected over Wi-Fi only (`play::wifi_only`). False when
+    /// the adapters cannot be listed: nothing is said then.
+    pub fn on_wifi_only(&self) -> bool {
+        self.resolver
+            .network_adapters()
+            .is_ok_and(|a| crate::play::wifi_only(&a))
+    }
+
     /// Some Gaming Mode change is in effect.
     pub fn play_session_open(&self) -> bool {
         crate::tweaks::session::SESSION_IDS
@@ -758,7 +822,7 @@ impl Engine {
                 let (name, kind) = match self.slot_of(&id) {
                     Ok(Slot::Catalogue(i)) => (self.tweaks[i].metadata().name.to_string(), ChangeKind::Catalogue),
                     Ok(Slot::Internal(i)) => (self.internal[i].metadata().name.to_string(), ChangeKind::Internal),
-                    Ok(Slot::Startup(t)) => (t.metadata().name.to_string(), ChangeKind::Catalogue),
+                    Ok(Slot::Listed(t)) => (t.metadata().name.to_string(), ChangeKind::Catalogue),
                     Err(_) => (id.clone(), ChangeKind::Retired),
                 };
                 AppliedChange {

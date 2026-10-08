@@ -313,7 +313,7 @@ function JournalRow({ record, name, technical }: { record: JournalRecord; name: 
           </span>
           <span className="shrink-0 text-ink-faint">{when}</span>
         </div>
-        <div className="text-ink-faint">before: {describeState(record.previous)}</div>
+        <div className="text-ink-faint">before: {describeState(record.previous, record.item)}</div>
       </li>
     );
   }

@@ -1734,6 +1734,13 @@ mod system_changes {
         )]);
         t.declared = vec![SysItem::DnsServers { interface: "*".into() }];
         let mut h = Harness::new(vec![Box::new(t)]);
+        h.sys.set_adapters(vec![crate::system::NetAdapter {
+            guid: "{9F2-AA}".into(),
+            name: "Ethernet".into(),
+            up: true,
+            wireless: false,
+            wired: true,
+        }]);
         h.engine.apply("sys").unwrap();
         h.engine.revert("sys").unwrap();
         assert_eq!(h.sys.get(&dns), SysState::Absent);
@@ -2064,12 +2071,14 @@ mod nagle {
                 name: "Ethernet".into(),
                 up: eth_up,
                 wireless: false,
+                wired: true,
             },
             NetAdapter {
                 guid: WIFI.into(),
                 name: "Wi-Fi".into(),
                 up: false,
                 wireless: true,
+                wired: false,
             },
         ]
     }
@@ -2150,6 +2159,7 @@ mod dns {
             name: g.into(),
             up,
             wireless: false,
+            wired: true,
         }
     }
 
@@ -2212,6 +2222,463 @@ mod dns {
         assert!(matches!(state(&h), TweakState::Blocked { .. }));
         assert!(h.engine.apply(ID).is_err());
         assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+}
+
+/// CATALOGUE H6 (tweaks/msi.rs).
+mod msi_mode {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::registry::Hive;
+    use crate::system::{DeviceClass, PciDevice};
+    use crate::tweaks::msi::{pci_instance, MsiMode, VALUE};
+    use crate::types::RawValue;
+
+    const GPU: &str = r"PCI\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\4&2b0b1f0c&0&0008";
+    const NIC: &str = r"PCI\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\01000000684CE00000";
+    const ENUM: &str = r"SYSTEM\CurrentControlSet\Enum";
+
+    fn msi_key(instance: &str) -> String {
+        format!(r"{ENUM}\{instance}\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties")
+    }
+
+    /// A graphics card whose driver left MSI off, and a network card whose
+    /// driver turned it on.
+    fn pc() -> Harness {
+        let h = Harness::new(Vec::new());
+        for (i, name) in [(GPU, "NVIDIA GeForce RTX 3060 Ti"), (NIC, "Realtek Gaming 2.5GbE")] {
+            h.fake.set_external(
+                Hive::LocalMachine,
+                &format!(r"{ENUM}\{i}"),
+                "DeviceDesc",
+                RawValue::sz(name),
+            );
+        }
+        h.fake
+            .set_external(Hive::LocalMachine, &msi_key(NIC), VALUE, RawValue::dword(1));
+        h.sys.set_pci_devices(vec![
+            PciDevice {
+                instance_id: NIC.into(),
+                name: "Realtek Gaming 2.5GbE Family Controller".into(),
+                class: DeviceClass::Net,
+            },
+            PciDevice {
+                instance_id: GPU.into(),
+                name: "NVIDIA GeForce RTX 3060 Ti".into(),
+                class: DeviceClass::Display,
+            },
+        ]);
+        h
+    }
+
+    fn id(instance: &str) -> String {
+        format!("msi.{instance}")
+    }
+
+    #[test]
+    fn lists_the_graphics_card_first_with_each_devices_state() {
+        let mut h = pc();
+        let list = h.engine.msi_devices();
+        assert_eq!(list.problem, None);
+        let shown: Vec<(&str, DeviceClass, &TweakState)> = list
+            .devices
+            .iter()
+            .map(|d| (d.tweak.metadata.id.as_ref(), d.class, &d.tweak.state))
+            .collect();
+        let (gpu, nic) = (id(GPU), id(NIC));
+        assert_eq!(
+            shown,
+            [
+                (gpu.as_str(), DeviceClass::Display, &TweakState::Default),
+                (nic.as_str(), DeviceClass::Net, &TweakState::Foreign),
+            ]
+        );
+        assert_eq!(
+            list.devices[0].tweak.metadata.name,
+            "MSI mode: NVIDIA GeForce RTX 3060 Ti"
+        );
+        assert!(list.devices[0].tweak.metadata.requires_reboot);
+    }
+
+    #[test]
+    fn apply_writes_only_msisupported_and_undo_removes_it_and_its_keys() {
+        let mut h = pc();
+        h.engine.msi_devices();
+        let before = h.fake.snapshot();
+        h.engine.apply(&id(GPU)).unwrap();
+        assert_eq!(
+            h.fake.read_value_for_test(Hive::LocalMachine, &msi_key(GPU), VALUE),
+            Some(RawValue::dword(1))
+        );
+        let after = h.fake.snapshot();
+        assert_eq!(after.len(), before.len() + 1, "one value written");
+        assert_eq!(
+            h.engine.journal_view().applied[0].name,
+            "MSI mode: NVIDIA GeForce RTX 3060 Ti"
+        );
+
+        h.engine.revert(&id(GPU)).unwrap();
+        assert_eq!(h.fake.snapshot(), before);
+        assert!(!h.fake.key_exists_for_test(
+            Hive::LocalMachine,
+            &format!(r"{ENUM}\{GPU}\Device Parameters\Interrupt Management")
+        ));
+    }
+
+    #[test]
+    fn undo_after_the_card_is_removed_finishes_without_recreating_its_key() {
+        let mut h = pc();
+        h.engine.msi_devices();
+        h.engine.apply(&id(GPU)).unwrap();
+        h.fake
+            .remove_key_external(Hive::LocalMachine, &format!(r"{ENUM}\{GPU}"));
+        h.restart(Vec::new());
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(!h
+            .fake
+            .key_exists_for_test(Hive::LocalMachine, &format!(r"{ENUM}\{GPU}")));
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn a_failed_listing_says_why_and_withdraws_the_last_list() {
+        let mut h = pc();
+        h.engine.msi_devices();
+        h.sys.fail_listing(true);
+        let list = h.engine.msi_devices();
+        assert!(list.devices.is_empty());
+        assert!(list.problem.as_deref().is_some_and(|p| p.contains("did not answer")));
+        assert!(
+            matches!(h.engine.apply(&id(GPU)), Err(EngineError::UnknownTweak { .. })),
+            "nothing is offered that the app no longer shows"
+        );
+    }
+
+    #[test]
+    fn only_listed_pci_devices_can_be_changed() {
+        let mut h = pc();
+        let before = h.fake.snapshot();
+        assert!(
+            matches!(h.engine.apply(&id(GPU)), Err(EngineError::UnknownTweak { .. })),
+            "not listed yet"
+        );
+        h.engine.msi_devices();
+        for bad in [
+            r"msi.PCI\VEN_10DE&DEV_2484\..\..\Control",
+            r"msi.PCI\VEN_10DE&DEV_2484\4&2b0b1f0c&0&0008\Device Parameters",
+            r"msi.ACPI\PNP0A08\0",
+            r"msi.PCI\DEV_2484\x",
+            r"msi.PCI\VEN_10DE&DEV_2484\a b",
+            "msi.",
+        ] {
+            assert!(
+                matches!(h.engine.apply(bad), Err(EngineError::UnknownTweak { .. })),
+                "{bad}"
+            );
+        }
+        assert_eq!(h.fake.snapshot(), before);
+        assert_eq!(
+            pci_instance(GPU),
+            Some(("VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1", "4&2b0b1f0c&0&0008"))
+        );
+        assert_eq!(
+            MsiMode::from_id(&id(GPU)).unwrap().name,
+            "NVIDIA device DEV_2484",
+            "named by its maker when only the id is known"
+        );
+    }
+
+    #[test]
+    fn its_target_stays_under_the_devices_own_key() {
+        let t = MsiMode::new(GPU, "x").unwrap();
+        let targets = t.touches();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            targets[0].key,
+            r"SYSTEM\CurrentControlSet\Enum\PCI\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\*\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
+        );
+        assert_eq!(targets[0].values, [VALUE]);
+    }
+}
+
+/// CATALOGUE E5 (tweaks/cable.rs).
+mod prefer_cable {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::system::{NetAdapter, SysItem, SysState};
+    use crate::tweaks::cable::{PreferCable, ID, WIFI_METRIC, WIRED_METRIC};
+    use crate::types::BlockedCode;
+
+    fn adapter(g: &str, kind: &str, up: bool) -> NetAdapter {
+        NetAdapter {
+            guid: g.into(),
+            name: kind.into(),
+            up,
+            wireless: kind == "wifi",
+            wired: kind == "cable",
+        }
+    }
+
+    fn metric(g: &str, ipv6: bool) -> SysItem {
+        SysItem::InterfaceMetric {
+            interface: g.into(),
+            ipv6,
+        }
+    }
+
+    const AUTO: SysState = SysState::Dword { value: 0 };
+    const fn m(value: u32) -> SysState {
+        SysState::Dword { value }
+    }
+
+    fn state(h: &Harness) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == ID)
+            .unwrap()
+            .state
+    }
+
+    /// Kegan's PC: a cable (connected) and Wi-Fi (not), plus Bluetooth. The
+    /// cable has IPv4 and IPv6, Wi-Fi only IPv4 with a metric set by hand.
+    fn pc() -> Harness {
+        let h = Harness::new(vec![Box::new(PreferCable)]);
+        h.sys.set_adapters(vec![
+            adapter("cab", "cable", true),
+            adapter("wif", "wifi", false),
+            adapter("blu", "bluetooth", false),
+        ]);
+        h.sys.set(&metric("cab", false), AUTO);
+        h.sys.set(&metric("cab", true), AUTO);
+        h.sys.set(&metric("wif", false), m(20));
+        h.sys.set(&metric("blu", false), AUTO);
+        h
+    }
+
+    #[test]
+    fn sets_the_cable_low_and_wifi_high_and_undo_puts_each_back() {
+        let mut h = pc();
+        assert_eq!(state(&h), TweakState::Default);
+
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("cab", false)), m(WIRED_METRIC));
+        assert_eq!(h.sys.get(&metric("cab", true)), m(WIRED_METRIC));
+        assert_eq!(h.sys.get(&metric("wif", false)), m(WIFI_METRIC));
+        assert_eq!(
+            h.sys.get(&metric("wif", true)),
+            SysState::Absent,
+            "a protocol that is not on the adapter is left alone"
+        );
+        assert_eq!(h.sys.get(&metric("blu", false)), AUTO, "Bluetooth is neither");
+        assert_eq!(state(&h), TweakState::Applied);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("cab", false)), AUTO, "automatic stays automatic");
+        assert_eq!(h.sys.get(&metric("cab", true)), AUTO);
+        assert_eq!(
+            h.sys.get(&metric("wif", false)),
+            m(20),
+            "a metric set by hand comes back"
+        );
+        assert_eq!(state(&h), TweakState::Default);
+    }
+
+    #[test]
+    fn a_new_adapter_after_apply_reads_as_changed_and_apply_again_covers_it() {
+        let mut h = pc();
+        h.engine.apply(ID).unwrap();
+        let mut adapters = vec![
+            adapter("cab", "cable", true),
+            adapter("wif", "wifi", false),
+            adapter("usb", "wifi", true),
+        ];
+        h.sys.set_adapters(adapters.clone());
+        h.sys.set(&metric("usb", false), AUTO);
+        assert_eq!(state(&h), TweakState::Drifted);
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("usb", false)), m(WIFI_METRIC));
+        assert_eq!(state(&h), TweakState::Applied);
+
+        // The USB Wi-Fi is unplugged: Undo still finishes, and leaves it be.
+        adapters.pop();
+        h.sys.set_adapters(adapters);
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&metric("wif", false)), m(20));
+        assert_eq!(h.sys.get(&metric("cab", false)), AUTO);
+        assert_eq!(
+            h.sys.get(&metric("usb", false)),
+            m(WIFI_METRIC),
+            "not written for a removed adapter"
+        );
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn already_set_this_way_reads_as_already_optimized() {
+        let h = pc();
+        h.sys.set(&metric("cab", false), m(WIRED_METRIC));
+        h.sys.set(&metric("cab", true), m(WIRED_METRIC));
+        h.sys.set(&metric("wif", false), m(WIFI_METRIC));
+        assert_eq!(state(&h), TweakState::Foreign);
+    }
+
+    #[test]
+    fn a_pc_without_both_a_cable_port_and_wifi_is_not_offered() {
+        for adapters in [
+            vec![adapter("cab", "cable", true)],
+            vec![adapter("wif", "wifi", true), adapter("blu", "bluetooth", true)],
+            Vec::new(),
+        ] {
+            let mut h = Harness::new(vec![Box::new(PreferCable)]);
+            h.sys.set_adapters(adapters);
+            match state(&h) {
+                TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::HardwareUnsupported),
+                other => panic!("{other:?}"),
+            }
+            assert!(matches!(h.engine.apply(ID), Err(EngineError::Blocked { .. })));
+            assert!(h.engine.applied_tweak_ids().is_empty());
+        }
+    }
+
+    #[test]
+    fn its_registry_backing_names_each_protocols_key() {
+        assert_eq!(
+            metric("ab", true).registry_backing(),
+            [(
+                r"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\{ab}".to_owned(),
+                "InterfaceMetric"
+            )]
+        );
+        assert_eq!(metric("ab", false).describe(), "IPv4 interface metric of adapter ab");
+    }
+}
+
+/// CATALOGUE H20 (tweaks/nvidia.rs).
+mod nvidia_tools {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::journal::Record;
+    use crate::system::{SysItem, SysState};
+    use crate::tweaks::nvidia::{self, LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, POWER_MANAGEMENT, PRERENDER_LIMIT};
+    use crate::types::BlockedCode;
+
+    fn setting(id: u32) -> SysItem {
+        SysItem::NvidiaSetting {
+            profile: String::new(),
+            setting: id,
+        }
+    }
+
+    const fn v(value: u32) -> SysState {
+        SysState::Dword { value }
+    }
+
+    fn state(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    fn pc(nvidia: bool) -> Harness {
+        let h = Harness::new(nvidia::all());
+        h.sys.set_nvidia(nvidia);
+        h
+    }
+
+    #[test]
+    fn low_latency_sets_its_three_values_and_undo_returns_them_to_the_driver_default() {
+        let mut h = pc(true);
+        assert_eq!(state(&h, "nvidia.lowlatency"), TweakState::Default);
+        h.engine.apply("nvidia.lowlatency").unwrap();
+        assert_eq!(h.sys.get(&setting(LOW_LATENCY_STATE)), v(2));
+        assert_eq!(h.sys.get(&setting(LOW_LATENCY_ULTRA)), v(1));
+        assert_eq!(h.sys.get(&setting(PRERENDER_LIMIT)), v(1));
+        assert_eq!(state(&h, "nvidia.lowlatency"), TweakState::Applied);
+
+        h.engine.revert("nvidia.lowlatency").unwrap();
+        for id in [LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, PRERENDER_LIMIT] {
+            assert_eq!(h.sys.get(&setting(id)), SysState::Absent, "0x{id:08X}");
+        }
+        assert_eq!(state(&h, "nvidia.lowlatency"), TweakState::Default);
+    }
+
+    #[test]
+    fn a_value_set_in_control_panel_comes_back_on_undo() {
+        let mut h = pc(true);
+        // Optimal power, chosen by the user in Control Panel.
+        h.sys.set(&setting(POWER_MANAGEMENT), v(5));
+        h.engine.apply("nvidia.powermax").unwrap();
+        assert_eq!(h.sys.get(&setting(POWER_MANAGEMENT)), v(1));
+        h.engine.revert_all();
+        assert_eq!(h.sys.get(&setting(POWER_MANAGEMENT)), v(5));
+    }
+
+    #[test]
+    fn already_set_this_way_reads_as_already_optimized() {
+        let h = pc(true);
+        h.sys.set(&setting(POWER_MANAGEMENT), v(1));
+        assert_eq!(state(&h, "nvidia.powermax"), TweakState::Foreign);
+        h.sys.set(&setting(LOW_LATENCY_STATE), v(2));
+        assert_eq!(
+            state(&h, "nvidia.lowlatency"),
+            TweakState::Default,
+            "only part of it is set"
+        );
+    }
+
+    #[test]
+    fn a_pc_without_an_nvidia_card_is_not_offered_any_and_nothing_is_written() {
+        let mut h = pc(false);
+        for t in nvidia::all() {
+            match state(&h, t.id()) {
+                TweakState::Blocked { reason } => {
+                    assert_eq!(reason.code, BlockedCode::HardwareUnsupported);
+                    assert_eq!(reason.message, "This PC has no NVIDIA graphics card.");
+                }
+                other => panic!("{}: {other:?}", t.id()),
+            }
+            assert!(matches!(h.engine.apply(t.id()), Err(EngineError::Blocked { .. })));
+        }
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn undo_after_the_nvidia_driver_is_removed_finishes_and_says_so() {
+        let mut h = pc(true);
+        h.engine.apply("nvidia.powermax").unwrap();
+        h.sys.set_nvidia(false);
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+        assert!(h
+            .engine
+            .journal_view()
+            .records
+            .iter()
+            .any(|r| matches!(r, Record::Note(n) if n.text.contains("NVIDIA driver is no longer on this PC"))));
+    }
+
+    #[test]
+    fn each_tool_changes_only_its_own_settings() {
+        for t in nvidia::all() {
+            let targets = t.system_targets();
+            assert!(!targets.is_empty());
+            for target in targets {
+                assert!(
+                    matches!(&target, SysItem::NvidiaSetting { profile, .. } if profile.is_empty()),
+                    "{}: {target:?}",
+                    t.id()
+                );
+            }
+            assert!(t.touches().is_empty(), "{} writes no registry", t.id());
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 
+import type { BlockedCode } from "../../generated/BlockedCode";
 import type { CleanupArea } from "../../generated/CleanupArea";
 import type { DiskMedia } from "../../generated/DiskMedia";
 import type { TweakView } from "../../generated/TweakView";
@@ -24,6 +25,15 @@ const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }>
 
 const TIER_LABEL = { free: null, pro: "Pro", ultimate: "Ultimate" } as const;
 
+/** Reasons a change can never be made on this PC as it is (its hardware, its
+ * Windows), as opposed to ones the user can act on. */
+const NOT_HERE: readonly BlockedCode[] = ["hardware_unsupported", "os_version_unsupported"];
+
+/** A change this PC cannot take at all: listed apart, folded, with why. */
+export function notForThisPc(t: TweakView): boolean {
+  return t.state.status === "blocked" && NOT_HERE.includes(t.state.reason.code);
+}
+
 export function ToolsView() {
   const tweaks = useStore((s) => s.tweaks);
   // null until the audit has answered (or if it failed): the engine still
@@ -41,8 +51,10 @@ export function ToolsView() {
   }, [tweaks, advanced]);
   const hiddenCount = tweaks.filter((t) => t.safety !== "safe").length;
   // Settings this PC already has count as done, whoever set them: they are
-  // listed, not hidden, so the user sees the whole set.
+  // listed, not hidden, so the user sees the whole set. Changes this PC
+  // cannot take are not counted.
   const doneCount = tweaks.filter((t) => t.state.status === "applied" || t.state.status === "foreign").length;
+  const forThisPc = tweaks.filter((t) => !notForThisPc(t)).length;
 
   return (
     <>
@@ -76,9 +88,9 @@ export function ToolsView() {
               : "A restore point lets Windows put the whole PC back the way it is now. One click makes it; it can take a minute."}
           </Callout>
         )}
-        {tweaks.length > 0 && (
+        {forThisPc > 0 && (
           <p className="text-sm text-ink-muted">
-            {doneCount} of {tweaks.length} already optimized on this PC.
+            {doneCount} of {forThisPc} already optimized on this PC.
           </p>
         )}
         {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}
@@ -91,19 +103,100 @@ export function ToolsView() {
               <ApplyRecommended ids={recommendedIds(list)} gateOpen={gateOpen} />
             </div>
             <ul className="flex flex-col gap-3">
-              {list.map((t) => (
-                <li key={t.id}>
-                  <TweakCard tweak={t} gateOpen={gateOpen} />
-                </li>
-              ))}
+              {list
+                .filter((t) => !notForThisPc(t))
+                .map((t) => (
+                  <li key={t.id}>
+                    <TweakCard tweak={t} gateOpen={gateOpen} />
+                  </li>
+                ))}
             </ul>
+            <NotForThisPc list={list.filter(notForThisPc)} />
           </section>
         ))}
+        {advanced && <DevicesSection gateOpen={gateOpen} />}
         <PlaySection />
         <StartupSection />
         <OneTimeActions />
       </div>
     </>
+  );
+}
+
+/** Catalogue H6: MSI mode for each graphics card and network adapter. One
+ * change per device, listed by the engine from what this PC has; Advanced
+ * only, read when the section first shows. */
+function DevicesSection({ gateOpen }: { gateOpen: boolean | null }) {
+  const list = useStore((s) => s.msi);
+  const op = useStore((s) => s.msiOp);
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { loadMsi } = useActions();
+
+  useEffect(() => {
+    if (op.status === "idle") void loadMsi();
+  }, [op.status, loadMsi]);
+
+  return (
+    <section aria-labelledby="cat-devices">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id="cat-devices" className="text-base font-extrabold tracking-tight">
+              Devices
+            </h2>
+            {sample && <SampleBadge />}
+          </div>
+          <p className="mt-1 text-sm text-ink-muted">
+            This PC's graphics cards and network adapters. Most current drivers use MSI mode already; those are listed as
+            already optimized.
+          </p>
+        </div>
+        <Button variant="ghost" busy={op.status === "running"} onClick={() => void loadMsi()}>
+          Check again
+        </Button>
+      </div>
+      {!list && op.status === "running" && <p className="text-sm text-ink-muted">Looking for devices…</p>}
+      {list && list.devices.length === 0 && !list.problem && (
+        <p className="text-sm text-ink-muted">No graphics card or network adapter here can take this change.</p>
+      )}
+      {list && list.devices.length > 0 && (
+        <ul className="flex flex-col gap-3">
+          {list.devices.map((d) => (
+            <li key={d.tweak.id}>
+              <TweakCard tweak={d.tweak} gateOpen={gateOpen} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {list?.problem && (
+        <Callout tone="warn" title="The devices could not be listed.">
+          {list.problem}
+        </Callout>
+      )}
+      {op.status === "failed" && <ErrorCallout text={explain(op.error)} technical={technical} />}
+    </section>
+  );
+}
+
+/** The group's changes this PC cannot take, folded into one line, each with
+ * the engine's reason. */
+function NotForThisPc({ list }: { list: TweakView[] }) {
+  if (list.length === 0) return null;
+  return (
+    <details className="mt-3 text-sm text-ink-muted">
+      <summary className="cursor-pointer">
+        {list.length === 1 ? "1 change does not" : `${list.length} changes do not`} apply to this PC
+      </summary>
+      <ul className="mt-2 flex flex-col gap-2 pl-4">
+        {list.map((t) => (
+          <li key={t.id}>
+            <span className="font-bold text-ink">{t.name}</span>
+            {t.state.status === "blocked" && `: ${t.state.reason.message}`}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -480,8 +573,11 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
   // Our apply is still on record but Windows has another value now: both
   // directions stay open (set ours again, or put back what was there before).
   const drifted = tweak.state.status === "drifted";
+  // Why the engine does not offer it: its plan or its rules, or what this PC
+  // has (no such adapter, say), which only reading its state shows.
+  const blocked = tweak.blocked ?? (tweak.state.status === "blocked" ? tweak.state.reason : null);
   const canApply =
-    !applied && !tweak.blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
+    !applied && !blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
 
   return (
@@ -497,9 +593,9 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
           </div>
           <p className="mt-1 text-sm text-ink-muted">{tweak.summary}</p>
           {/* The engine's reason, also when the change was applied before the block began (it keeps its Undo). */}
-          {tweak.blocked && (
+          {blocked && (
             <p className="mt-2 text-sm">
-              {tweak.blocked.message} <span className="text-ink-muted">{blockedHint(tweak.blocked)}</span>
+              {blocked.message} <span className="text-ink-muted">{blockedHint(blocked)}</span>
             </p>
           )}
           {tweak.state.status === "unknown" && technical && (

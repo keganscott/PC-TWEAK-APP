@@ -268,6 +268,16 @@ jobs:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 startup_apps_turn_off_and_back_on_on_this_pc
 
+      # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
+      # set by hand and put back (same gate). The runner has no Wi-Fi, so the
+      # tool itself is not offered there. Read only: the devices MSI mode
+      # (H6) would list, and NVIDIA's settings (H20) through NvAPI, which on a
+      # runner without an NVIDIA card must say so rather than fail.
+      - name: Network adapter metric, MSI mode devices and NVIDIA settings on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing
+
       # The per-game tools (catalogue H3, H31, H19) applied and undone for real
       # through the engine: csrss and a game's priority under HKLM IFEO, and
       # fullscreen optimizations for a made-up game path under HKCU, with the

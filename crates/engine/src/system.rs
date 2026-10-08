@@ -52,6 +52,11 @@ pub enum SysItem {
     /// DNS servers of one network adapter, by interface GUID. State:
     /// `List` (empty means automatic, from the router).
     DnsServers { interface: String },
+    /// A network adapter's interface metric for IPv4 or IPv6, by interface
+    /// GUID: Windows sends traffic over the connected adapter with the lowest.
+    /// State: `Dword(metric)`, `Dword(0)` for Windows' automatic metric (from
+    /// the link speed), `Absent` when the protocol is not on the adapter.
+    InterfaceMetric { interface: String, ipv6: bool },
     /// One `netsh interface tcp global` setting. State: `Text`.
     TcpGlobal { name: String },
     /// One NVIDIA driver profile setting (NvAPI DRS). `profile` is empty for
@@ -109,6 +114,15 @@ impl SysItem {
                 format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{interface}}}"),
                 "NameServer",
             )],
+            // VERIFY (NOTES N83): where Windows keeps a metric set with
+            // Set-NetIPInterface; the legacy TCP/IP keys are exported.
+            Self::InterfaceMetric { interface, ipv6 } => vec![(
+                format!(
+                    r"SYSTEM\CurrentControlSet\Services\{}\Parameters\Interfaces\{{{interface}}}",
+                    if *ipv6 { "Tcpip6" } else { "Tcpip" }
+                ),
+                "InterfaceMetric",
+            )],
             Self::ActivePowerScheme => vec![(SCHEMES.to_owned(), "ActivePowerScheme")],
             Self::PowerSetting {
                 scheme,
@@ -145,6 +159,10 @@ impl SysItem {
             Self::Service { name } => format!("service {name}"),
             Self::ScheduledTask { path } => format!("scheduled task {path}"),
             Self::DnsServers { interface } => format!("DNS servers of adapter {interface}"),
+            Self::InterfaceMetric { interface, ipv6 } => format!(
+                "{} interface metric of adapter {interface}",
+                if *ipv6 { "IPv6" } else { "IPv4" }
+            ),
             Self::TcpGlobal { name } => format!("TCP setting {name}"),
             Self::NvidiaSetting { profile, setting } => {
                 let p = if profile.is_empty() { "global" } else { profile };
@@ -248,12 +266,39 @@ pub struct NetAdapter {
     /// Connected now.
     pub up: bool,
     pub wireless: bool,
+    /// A network cable (Ethernet). Neither this nor `wireless` for others,
+    /// such as Bluetooth.
+    pub wired: bool,
+}
+
+/// What a PCI device is, for the devices PeakTweaks offers changes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceClass {
+    /// A graphics card (Windows' Display class).
+    Display,
+    /// A network adapter, cable or Wi-Fi (Windows' Net class).
+    Net,
+}
+
+/// A graphics card or network adapter on the PCI bus that is present now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PciDevice {
+    /// Windows' device instance id, `PCI\VEN_xxxx&DEV_xxxx&...\<instance>`:
+    /// the path of its key under `HKLM\SYSTEM\CurrentControlSet\Enum`.
+    pub instance_id: String,
+    /// The name Windows shows in Device Manager.
+    pub name: String,
+    pub class: DeviceClass,
 }
 
 /// The operations on Windows for non-registry changes, and no more.
 pub trait SystemBackend: Send + Sync {
     /// Physical network adapters (no virtual switches or VPNs).
     fn network_adapters(&self) -> Result<Vec<NetAdapter>>;
+    /// Graphics cards and network adapters on the PCI bus, present now.
+    fn pci_devices(&self) -> Result<Vec<PciDevice>>;
     /// The current state of `item`. File items are read with `read_file`.
     fn read(&self, item: &SysItem) -> Result<SysState>;
     /// Make `item` be `state`. File items are written with `write_file`.
@@ -282,6 +327,9 @@ impl Unavailable {
 impl SystemBackend for Unavailable {
     fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
         Err(Self::refuse("network adapters".into()))
+    }
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        Err(Self::refuse("devices".into()))
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Err(Self::refuse(item.describe()))
@@ -314,6 +362,11 @@ struct FakeInner {
     files: BTreeMap<String, Vec<u8>>,
     effects: Vec<SideEffect>,
     adapters: Vec<NetAdapter>,
+    devices: Vec<PciDevice>,
+    /// An NVIDIA card with its driver; without one, its settings are "not
+    /// available", as on the real backend.
+    nvidia: bool,
+    fail_listing: bool,
     fail_writes: bool,
     fail_effects: bool,
 }
@@ -358,6 +411,27 @@ impl FakeSystem {
     pub fn set_adapters(&self, adapters: Vec<NetAdapter>) {
         self.inner.lock().unwrap().adapters = adapters;
     }
+    pub fn set_pci_devices(&self, devices: Vec<PciDevice>) {
+        self.inner.lock().unwrap().devices = devices;
+    }
+    pub fn set_nvidia(&self, present: bool) {
+        self.inner.lock().unwrap().nvidia = present;
+    }
+    /// Make listing devices fail, as when Windows' device query does.
+    pub fn fail_listing(&self, fail: bool) {
+        self.inner.lock().unwrap().fail_listing = fail;
+    }
+    fn check_nvidia(&self, item: &SysItem) -> Result<()> {
+        if matches!(item, SysItem::NvidiaSetting { .. }) && !self.inner.lock().unwrap().nvidia {
+            return Err(EngineError::Blocked {
+                reason: crate::types::BlockedReason::new(
+                    crate::types::BlockedCode::HardwareUnsupported,
+                    "This PC has no NVIDIA graphics card.",
+                ),
+            });
+        }
+        Ok(())
+    }
     pub fn fail_writes(&self, fail: bool) {
         self.inner.lock().unwrap().fail_writes = fail;
     }
@@ -371,10 +445,21 @@ impl SystemBackend for FakeSystem {
     fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
         Ok(self.inner.lock().unwrap().adapters.clone())
     }
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: Windows did not answer the device query".into(),
+            });
+        }
+        Ok(g.devices.clone())
+    }
     fn read(&self, item: &SysItem) -> Result<SysState> {
+        self.check_nvidia(item)?;
         Ok(self.get(item))
     }
     fn write(&self, item: &SysItem, state: &SysState) -> Result<()> {
+        self.check_nvidia(item)?;
         let mut g = self.inner.lock().unwrap();
         if g.fail_writes {
             return Err(EngineError::Internal {

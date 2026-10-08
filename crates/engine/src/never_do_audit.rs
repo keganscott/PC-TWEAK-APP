@@ -165,6 +165,37 @@ fn no_tweak_targets_a_security_feature() {
     assert!(found.is_empty(), "{}", found.join("\n"));
 }
 
+/// Changes made for what a PC has (a startup entry, a device) are not in the
+/// catalogue, so each kind is checked here: its target stays within its own
+/// key whatever the entry or device is called.
+#[test]
+fn changes_for_listed_things_target_no_security_feature() {
+    use crate::tweaks::{msi::MsiMode, startup::StartupSource, startup::StartupToggle};
+    let mut listed: Vec<Box<dyn Tweak>> = crate::tweaks::startup::SOURCES
+        .iter()
+        .map(|&s| Box::new(StartupToggle::new(s, r"..\..\Control\CI")) as Box<dyn Tweak>)
+        .collect();
+    listed.push(Box::new(StartupToggle::new(StartupSource::MachineRun, "SecureBoot")));
+    listed.push(Box::new(
+        MsiMode::new(r"PCI\VEN_8086&DEV_A0F0&SUBSYS_00748086&REV_20\3&11583659&0&A3", "").unwrap(),
+    ));
+    let found = forbidden_targets(&listed);
+    assert!(found.is_empty(), "{}", found.join("\n"));
+    for t in &listed {
+        for target in t.touches() {
+            assert!(
+                target
+                    .key
+                    .starts_with(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\")
+                    || target.key.starts_with(r"SYSTEM\CurrentControlSet\Enum\PCI\"),
+                "{}: {}",
+                t.id(),
+                target.key
+            );
+        }
+    }
+}
+
 #[test]
 fn the_registry_check_catches_a_planted_violation() {
     let planted: Vec<Box<dyn Tweak>> = vec![

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { StartupList } from "../generated/StartupList";
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
@@ -474,5 +475,61 @@ describe("startup apps (catalogue H12)", () => {
     release();
     await first;
     expect(app(store.getState(), CHAT)?.tweak.state.status).toBe("applied");
+  });
+});
+
+describe("MSI mode per device (catalogue H6)", () => {
+  const GPU = "msi.PCI\\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\\4&2b0b1f0c&0&0008";
+  const device = (s: State, id: string) => s.msi?.devices.find((d) => d.tweak.id === id);
+
+  it("is read only once something asks, graphics card first", async () => {
+    const { store } = await booted();
+    expect(store.getState().msi).toBeNull();
+    expect(store.getState().msiOp.status).toBe("idle");
+    await store.actions.loadMsi();
+    expect(store.getState().msiOp.status).toBe("done");
+    expect(store.getState().msi?.devices.map((d) => [d.class, d.tweak.state.status])).toEqual([
+      ["display", "default"],
+      ["net", "foreign"],
+    ]);
+  });
+
+  it("setting it is a change like any other: in Backups, undone by Undo all, and the list follows", async () => {
+    const { store } = await booted({ gateOpen: true });
+    await store.actions.loadMsi();
+    await store.actions.applyTweak(GPU);
+    expect(device(store.getState(), GPU)?.tweak.state.status).toBe("applied");
+    expect(store.getState().journal?.applied.map((c) => c.tweakId)).toContain(GPU);
+
+    await store.actions.revertAll();
+    expect(device(store.getState(), GPU)?.tweak.state.status).toBe("default");
+  });
+
+  it("an older list still in flight does not overwrite a newer one", async () => {
+    const mock = createMockBackend({ gateOpen: true });
+    const stale = await mock.listMsiDevices();
+    let release = () => {};
+    let calls = 0;
+    const backend: Backend = {
+      ...mock,
+      listMsiDevices: () => {
+        calls += 1;
+        return calls === 1 ? new Promise<MsiDeviceList>((r) => (release = () => r(stale))) : mock.listMsiDevices();
+      },
+    };
+    const store = createAppStore(backend);
+    await store.actions.boot();
+    const first = store.actions.loadMsi();
+    await store.actions.applyTweak(GPU);
+    expect(device(store.getState(), GPU)?.tweak.state.status).toBe("applied");
+    release();
+    await first;
+    expect(device(store.getState(), GPU)?.tweak.state.status).toBe("applied");
+  });
+
+  it("a failed read keeps the engine's error", async () => {
+    const { store } = await booted({ failures: { listMsiDevices: { kind: "internal", detail: "no answer" } } });
+    await store.actions.loadMsi();
+    expect(store.getState().msiOp).toMatchObject({ status: "failed", error: { kind: "internal" } });
   });
 });

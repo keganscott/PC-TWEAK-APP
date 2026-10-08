@@ -15,6 +15,7 @@ import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
+import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
@@ -51,6 +52,8 @@ export interface Backend {
   optimizeDrive(): Promise<DriveOptimization>;
   /** Startup apps (catalogue H12). Each switch is a change: applyTweak turns one off, revertTweak puts it back. */
   listStartupApps(): Promise<StartupList>;
+  /** MSI mode per device (catalogue H6). Each is a change: applyTweak / revertTweak. */
+  listMsiDevices(): Promise<MsiDeviceList>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

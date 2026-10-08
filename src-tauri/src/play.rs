@@ -41,6 +41,8 @@ struct Session {
     /// Why some could not be put back (they stay listed in Backups).
     not_put_back: Option<String>,
     timer_problem: Option<String>,
+    /// On Wi-Fi only when the game started.
+    on_wifi: bool,
 }
 
 impl Session {
@@ -85,6 +87,8 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                     session.tried = false;
                     session.not_made = None;
                     session.not_put_back = None;
+                    // Once per game: listing adapters starts PowerShell.
+                    session.on_wifi = e.on_wifi_only();
                 }
                 Some(WatchEvent::Stopped(_)) => {
                     session.timer = None;
@@ -137,6 +141,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 gaming_mode_active: e.play_session_open(),
                 timer_held: session.timer.as_ref().map(TimerRequest::granted),
                 problem: session.problem(),
+                on_wifi: watch.current().is_some() && session.on_wifi,
                 watched: watched_ids(&games),
             };
             drop(e);

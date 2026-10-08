@@ -7,6 +7,7 @@ import type { ContextInfo } from "./ContextInfo";
 import type { DriveOptimization } from "./DriveOptimization";
 import type { EngineError } from "./EngineError";
 import type { JournalView } from "./JournalView";
+import type { MsiDeviceList } from "./MsiDeviceList";
 import type { PlayStatus } from "./PlayStatus";
 import type { Progress } from "./Progress";
 import type { ProofRun } from "./ProofRun";
@@ -923,6 +924,7 @@ export const playStatus = {
   "gamingModeActive": true,
   "timerHeld": 5000,
   "problem": null,
+  "onWifi": false,
   "watched": [
     "fortnite",
     "roblox",
@@ -1050,4 +1052,50 @@ export const startupList = {
   ],
   "problems": []
 } satisfies StartupList;
+
+export const msiDevices = {
+  "devices": [
+    {
+      "tweak": {
+        "id": "msi.PCI\\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\\4&2b0b1f0c&0&0008",
+        "name": "MSI mode: Sample graphics card",
+        "summary": "Has Sample graphics card signal the processor with messages (MSI) instead of a shared interrupt line. Most current drivers do this already; this turns it on where the driver left it off.",
+        "target": "HKLM\\SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\\4&2b0b1f0c&0&0008\\Device Parameters\\Interrupt Management\\MessageSignaledInterruptProperties\\MSISupported = 1",
+        "category": "devices",
+        "tier": "pro",
+        "safety": "moderate",
+        "impact": "moderate",
+        "tradeoff": "If Sample graphics card stops working properly after the restart, undo this here and restart again.",
+        "requiresReboot": true,
+        "context": "service",
+        "state": {
+          "status": "default"
+        },
+        "blocked": null
+      },
+      "class": "display"
+    },
+    {
+      "tweak": {
+        "id": "msi.PCI\\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\\01000000684CE00000",
+        "name": "MSI mode: Sample network adapter",
+        "summary": "Has Sample network adapter signal the processor with messages (MSI) instead of a shared interrupt line. Most current drivers do this already; this turns it on where the driver left it off.",
+        "target": "HKLM\\SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\\01000000684CE00000\\Device Parameters\\Interrupt Management\\MessageSignaledInterruptProperties\\MSISupported = 1",
+        "category": "devices",
+        "tier": "pro",
+        "safety": "moderate",
+        "impact": "moderate",
+        "tradeoff": "If Sample network adapter stops working properly after the restart, undo this here and restart again.",
+        "requiresReboot": true,
+        "context": "service",
+        "state": {
+          "status": "foreign"
+        },
+        "blocked": null
+      },
+      "class": "net"
+    }
+  ],
+  "problem": null
+} satisfies MsiDeviceList;
 

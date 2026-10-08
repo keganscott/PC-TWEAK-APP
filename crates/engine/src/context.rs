@@ -92,6 +92,11 @@ impl ContextResolver {
         self.system.network_adapters()
     }
 
+    /// Graphics cards and network adapters on the PCI bus (safe for tweaks).
+    pub fn pci_devices(&self) -> Result<Vec<super::system::PciDevice>> {
+        self.system.pci_devices()
+    }
+
     /// A file's bytes, `None` when absent (safe for tweaks).
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         self.system.read_file(path)

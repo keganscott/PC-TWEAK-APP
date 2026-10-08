@@ -9,8 +9,10 @@
 //! script text. Services use the Win32 service API and scheduled tasks the
 //! Task Scheduler COM API directly.
 //!
+//! NVIDIA settings go through NvAPI (`nvapi.rs`), base profile only.
+//!
 //! Not yet built here, and refused with a plain message: `netsh` TCP globals
-//! and NVIDIA profile settings (their catalogue steps add them; NOTES N66).
+//! (its catalogue step adds them; NOTES N66).
 
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -21,7 +23,9 @@ use super::error::{EngineError, Result};
 use super::proc::run_limited;
 use super::registry::windows::WinRegistry;
 use super::registry::{Hive, RegistryBackend};
-use super::system::{guid, guids_in, setting_indexes, NetAdapter, SideEffect, SysItem, SysState, SystemBackend};
+use super::system::{
+    guid, guids_in, setting_indexes, DeviceClass, NetAdapter, PciDevice, SideEffect, SysItem, SysState, SystemBackend,
+};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const LIMIT: Duration = Duration::from_secs(60);
@@ -33,6 +37,10 @@ pub struct WinSystem {
     /// rather than by starting PowerShell on every refresh.
     reg: WinRegistry,
     adapters: std::sync::Mutex<Option<(std::time::Instant, Vec<NetAdapter>)>>,
+    /// Every physical adapter's interface metrics, from one PowerShell run;
+    /// dropped on every metric write.
+    metrics: std::sync::Mutex<Option<(std::time::Instant, Vec<Metric>)>>,
+    nvapi: crate::nvapi::NvApi,
 }
 
 impl WinSystem {
@@ -40,8 +48,87 @@ impl WinSystem {
         Self {
             reg: WinRegistry::new(),
             adapters: std::sync::Mutex::new(None),
+            metrics: std::sync::Mutex::new(None),
+            nvapi: crate::nvapi::NvApi::new(),
         }
     }
+
+    fn metrics(&self) -> Result<Vec<Metric>> {
+        let mut cache = self.metrics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, list)) = cache.as_ref() {
+            if at.elapsed() < ADAPTER_CACHE {
+                return Ok(list.clone());
+            }
+        }
+        let list = parse_metrics(&powershell("interface metrics", METRICS_SCRIPT, &[])?);
+        *cache = Some((std::time::Instant::now(), list.clone()));
+        Ok(list)
+    }
+}
+
+/// `InstanceId|Class|FriendlyName` lines from `Get-PnpDevice`: graphics
+/// cards and network adapters on the PCI bus. Anything else is skipped.
+pub(crate) fn parse_pci_devices(out: &str) -> Vec<PciDevice> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.trim().splitn(3, '|');
+            let instance_id = parts.next()?.trim().to_owned();
+            let class = match parts.next()?.trim() {
+                c if c.eq_ignore_ascii_case("Display") => DeviceClass::Display,
+                c if c.eq_ignore_ascii_case("Net") => DeviceClass::Net,
+                _ => return None,
+            };
+            let name = parts.next()?.trim().to_owned();
+            crate::tweaks::msi::pci_instance(&instance_id)?;
+            Some(PciDevice {
+                instance_id,
+                name,
+                class,
+            })
+        })
+        .collect()
+}
+
+/// Every physical adapter's IPv4 and IPv6 interface, one line each.
+const METRICS_SCRIPT: &str = "Get-NetAdapter -Physical | ForEach-Object { $g = $_.InterfaceGuid; Get-NetIPInterface \
+                              -InterfaceIndex $_.ifIndex -ErrorAction SilentlyContinue | ForEach-Object { \
+                              '{0}|{1}|{2}|{3}' -f $g, $_.AddressFamily, $_.AutomaticMetric, $_.InterfaceMetric } }";
+
+/// One adapter's interface metric for one protocol; `0` when automatic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Metric {
+    pub guid: String,
+    pub ipv6: bool,
+    pub value: u32,
+}
+
+/// `guid|IPv4|Enabled|25` lines (AutomaticMetric, InterfaceMetric) from
+/// `Get-NetIPInterface`. An automatic metric reads as 0. The family and the
+/// automatic flag are also taken as numbers (2 / 23, 1 / 0), in case the
+/// properties come through as their raw values.
+pub(crate) fn parse_metrics(out: &str) -> Vec<Metric> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.trim().splitn(4, '|');
+            let g = guid(parts.next()?)?;
+            let ipv6 = match parts.next()?.trim() {
+                "IPv4" | "2" => false,
+                "IPv6" | "23" => true,
+                _ => return None,
+            };
+            let automatic = match parts.next()?.trim() {
+                a if a.eq_ignore_ascii_case("Enabled") || a == "1" => true,
+                a if a.eq_ignore_ascii_case("Disabled") || a == "0" => false,
+                _ => return None,
+            };
+            let metric: u32 = parts.next()?.trim().parse().ok()?;
+            Some(Metric {
+                guid: g,
+                ipv6,
+                value: if automatic { 0 } else { metric },
+            })
+        })
+        .collect()
 }
 
 impl Default for WinSystem {
@@ -66,9 +153,33 @@ pub(crate) fn parse_adapters(out: &str) -> Vec<NetAdapter> {
                 name,
                 up: status.eq_ignore_ascii_case("Up"),
                 wireless: media.contains("802.11"),
+                wired: media.trim() == "802.3",
             })
         })
         .collect()
+}
+
+/// No NVIDIA card is an answer about this PC ("not available"); anything
+/// else is a failed command.
+fn nvidia(e: crate::nvapi::NvError) -> EngineError {
+    match e {
+        crate::nvapi::NvError::NoNvidia => EngineError::Blocked {
+            reason: crate::types::BlockedReason::new(
+                crate::types::BlockedCode::HardwareUnsupported,
+                "This PC has no NVIDIA graphics card.",
+            ),
+        },
+        crate::nvapi::NvError::Failed(detail) => fail("NVIDIA settings", detail),
+    }
+}
+
+/// Only the base profile (Control Panel's global settings) is changed.
+fn need_base_profile(profile: &str) -> Result<()> {
+    if profile.is_empty() {
+        Ok(())
+    } else {
+        Err(fail("NVIDIA settings", "only the global profile is changed"))
+    }
 }
 
 fn fail(what: &str, detail: impl Into<String>) -> EngineError {
@@ -192,6 +303,17 @@ impl SystemBackend for WinSystem {
         Ok(list)
     }
 
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        let out = powershell(
+            "devices",
+            "Get-PnpDevice -PresentOnly -Class Display,Net -ErrorAction SilentlyContinue | Where-Object { \
+             $_.InstanceId -like 'PCI\\*' } | ForEach-Object { '{0}|{1}|{2}' -f $_.InstanceId, $_.Class, \
+             $_.FriendlyName }",
+            &[],
+        )?;
+        Ok(parse_pci_devices(&out))
+    }
+
     fn read(&self, item: &SysItem) -> Result<SysState> {
         match item {
             SysItem::ActivePowerScheme => {
@@ -278,7 +400,22 @@ impl SystemBackend for WinSystem {
                     .collect();
                 Ok(SysState::List { items })
             }
-            SysItem::TcpGlobal { .. } | SysItem::NvidiaSetting { .. } => Err(EngineError::Internal {
+            SysItem::InterfaceMetric { interface, ipv6 } => {
+                let g = need_guid(interface, "network adapter")?;
+                Ok(self
+                    .metrics()?
+                    .into_iter()
+                    .find(|m| m.guid == g && m.ipv6 == *ipv6)
+                    .map_or(SysState::Absent, |m| SysState::Dword { value: m.value }))
+            }
+            SysItem::NvidiaSetting { profile, setting } => {
+                need_base_profile(profile)?;
+                Ok(match self.nvapi.get(*setting).map_err(nvidia)? {
+                    Some(value) => SysState::Dword { value },
+                    None => SysState::Absent,
+                })
+            }
+            SysItem::TcpGlobal { .. } => Err(EngineError::Internal {
                 detail: format!("this version cannot change the {} yet", item.describe()),
             }),
             SysItem::File { .. } => Err(EngineError::Internal {
@@ -359,6 +496,37 @@ impl SystemBackend for WinSystem {
                     &[("PT_GUID", &g), ("PT_DNS", &joined)],
                 )
                 .map(drop)
+            }
+            (SysItem::InterfaceMetric { interface, ipv6 }, SysState::Dword { value }) => {
+                let g = need_guid(interface, "network adapter")?;
+                if *value > 9999 {
+                    return Err(fail("interface metric", format!("{value} is above 9999")));
+                }
+                *self.metrics.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                // 0 is Windows' automatic metric. VERIFY (NOTES N83): that
+                // Set-NetIPInterface keeps the metric after a restart.
+                powershell(
+                    "interface metric",
+                    "$a = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq ('{' + $env:PT_GUID + \
+                     '}') }; if (-not $a) { throw 'adapter not found' }; if ($env:PT_METRIC -eq '0') { \
+                     Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $env:PT_FAMILY -AutomaticMetric \
+                     Enabled -ErrorAction Stop } else { Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily \
+                     $env:PT_FAMILY -AutomaticMetric Disabled -InterfaceMetric ([int]$env:PT_METRIC) -ErrorAction Stop }",
+                    &[
+                        ("PT_GUID", &g),
+                        ("PT_FAMILY", if *ipv6 { "IPv6" } else { "IPv4" }),
+                        ("PT_METRIC", &value.to_string()),
+                    ],
+                )
+                .map(drop)
+            }
+            (SysItem::NvidiaSetting { profile, setting }, SysState::Dword { value }) => {
+                need_base_profile(profile)?;
+                self.nvapi.set(*setting, Some(*value)).map_err(nvidia)
+            }
+            (SysItem::NvidiaSetting { profile, setting }, SysState::Absent) => {
+                need_base_profile(profile)?;
+                self.nvapi.set(*setting, None).map_err(nvidia)
             }
             (item, state) => Err(wrong_state(item, state)),
         }
@@ -715,8 +883,119 @@ mod tests {
         let a = parse_adapters(out);
         assert_eq!(a.len(), 2);
         assert_eq!(a[0].guid, "4d86b570-2994-4eb0-a004-914ef65ff05a");
-        assert!(a[0].wireless && !a[0].up);
-        assert!(!a[1].wireless && a[1].up && a[1].name == "Ethernet");
+        assert!(a[0].wireless && !a[0].wired && !a[0].up);
+        assert!(!a[1].wireless && a[1].wired && a[1].up && a[1].name == "Ethernet");
+    }
+
+    #[test]
+    fn pci_graphics_and_network_devices_are_parsed_and_others_skipped() {
+        let out =
+            "PCI\\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\\4&2B0B1F0C&0&0008|Display|NVIDIA GeForce RTX 3060 Ti\r\n\
+                   PCI\\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\\01000000684CE00000|Net|Realtek Gaming 2.5GbE\r\n\
+                   PCI\\VEN_8086&DEV_A0F0&SUBSYS_00748086&REV_20\\3&11583659&0&A3|Net|\r\n\
+                   PCI\\VEN_1022&DEV_1483\\3&2411E6FE&0&09|System|PCI bridge\r\n\
+                   USB\\VID_0BDA&PID_8153\\000001|Net|USB Ethernet\r\n";
+        let d = parse_pci_devices(out);
+        assert_eq!(d.len(), 3, "{d:?}");
+        assert_eq!(d[0].class, DeviceClass::Display);
+        assert_eq!(d[0].name, "NVIDIA GeForce RTX 3060 Ti");
+        assert_eq!(d[1].class, DeviceClass::Net);
+        assert_eq!(
+            d[2].name, "",
+            "a device without a name is kept; the app names it by its maker"
+        );
+    }
+
+    /// Read-only, against this PC: NVIDIA's power management mode in the
+    /// global profile, or "no NVIDIA graphics card" as a block, never a failed
+    /// command (a runner has no NVIDIA card).
+    #[test]
+    fn nvidia_settings_read_or_say_there_is_no_nvidia_card() {
+        let item = SysItem::NvidiaSetting {
+            profile: String::new(),
+            setting: crate::tweaks::nvidia::POWER_MANAGEMENT,
+        };
+        let read = WinSystem::new().read(&item);
+        println!("NVIDIA power management mode: {read:?}");
+        match read {
+            Ok(SysState::Dword { .. } | SysState::Absent) => {}
+            Err(EngineError::Blocked { reason }) => {
+                assert_eq!(reason.code, crate::types::BlockedCode::HardwareUnsupported)
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Read-only, against this PC: the graphics cards and network adapters
+    /// MSI mode would be offered for, each with its state.
+    #[test]
+    fn msi_mode_lists_this_pcs_devices() {
+        use std::sync::Arc;
+
+        use crate::context::{ContextResolver, UserContext, UserResolution};
+        use crate::engine::Engine;
+        use crate::env::{License, StubProbe};
+        use crate::journal::Journal;
+        use crate::secure_dir::TrustedDir;
+        use crate::types::Tier;
+
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserContext {
+            sid: crate::identity::current_process_sid().unwrap(),
+            resolution: UserResolution::OwnToken,
+            is_self: true,
+        };
+        let resolver = ContextResolver::new(user, crate::identity::is_elevated(), Arc::new(WinRegistry::new()))
+            .with_system(Arc::new(WinSystem::new()));
+        let mut engine = Engine::new(
+            resolver,
+            Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+            Vec::new(),
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        );
+        let list = engine.msi_devices();
+        for d in &list.devices {
+            println!("{:?} {:?}: {:?}", d.class, d.tweak.metadata.name, d.tweak.state);
+        }
+        assert_eq!(list.problem, None);
+    }
+
+    #[test]
+    fn interface_metrics_are_parsed_with_automatic_as_zero() {
+        let out = "{3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv6|Enabled|25\r\n\
+                   {3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv4|Disabled|5\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|IPv4|Enabled|abc\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|IPv4|Sometimes|5\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|23|1|40\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|2|0|9\r\n\
+                   garbage\r\n";
+        let m = parse_metrics(out);
+        assert_eq!(
+            m,
+            [
+                Metric {
+                    guid: "3f504232-cecb-4118-b4d8-5a5e72d677c3".into(),
+                    ipv6: true,
+                    value: 0
+                },
+                Metric {
+                    guid: "3f504232-cecb-4118-b4d8-5a5e72d677c3".into(),
+                    ipv6: false,
+                    value: 5
+                },
+                Metric {
+                    guid: "4d86b570-2994-4eb0-a004-914ef65ff05a".into(),
+                    ipv6: true,
+                    value: 0
+                },
+                Metric {
+                    guid: "4d86b570-2994-4eb0-a004-914ef65ff05a".into(),
+                    ipv6: false,
+                    value: 9
+                },
+            ]
+        );
     }
 
     /// Read-only, against this PC: the active plan and a service everyone has.
@@ -1136,5 +1415,67 @@ mod tests {
         assert_eq!(switched_off(&during), Some(true));
         assert_eq!(during.bytes.len(), 12);
         assert_eq!(after, before, "the switch reads back differently after Undo");
+    }
+
+    /// The interface metric (CATALOGUE E5) of this PC's first physical adapter,
+    /// set by hand and put back through the real backend, IPv4 and IPv6, with
+    /// the registry values Windows may keep it in printed alongside. Gated
+    /// like the tests above.
+    #[test]
+    fn an_interface_metric_is_set_and_put_back_on_this_pc() {
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change a network adapter's metric for real");
+            return;
+        }
+        let s = WinSystem::new();
+        let adapters = s.network_adapters().unwrap();
+        println!("adapters: {adapters:?}");
+        println!(
+            "metric script output: {:?}",
+            powershell("interface metrics", METRICS_SCRIPT, &[])
+        );
+        println!(
+            "Get-NetIPInterface: {:?}",
+            powershell(
+                "IP interfaces",
+                "Get-NetIPInterface | ForEach-Object { '{0}|{1}|{2}|{3}|{4}' -f $_.ifIndex, $_.InterfaceAlias, \
+                 $_.AddressFamily, $_.AutomaticMetric, $_.InterfaceMetric }",
+                &[]
+            )
+        );
+        let a = adapters.iter().find(|a| a.up).expect("a connected physical adapter");
+        for ipv6 in [false, true] {
+            let item = SysItem::InterfaceMetric {
+                interface: a.guid.clone(),
+                ipv6,
+            };
+            let backing = || {
+                item.registry_backing()
+                    .iter()
+                    .map(|(key, name)| format!("{key}\\{name} = {:?}", s.reg.read_value(Hive::LocalMachine, key, name)))
+                    .collect::<Vec<_>>()
+            };
+            let before = s.read(&item).unwrap();
+            println!("{}: before {before:?}; registry {:?}", item.describe(), backing());
+            // A connected adapter has IPv4; IPv6 may be unbound.
+            assert!(
+                ipv6 || before != SysState::Absent,
+                "the connected adapter's IPv4 metric was not read"
+            );
+            if before == SysState::Absent {
+                continue;
+            }
+            let set = SysState::Dword { value: 7 };
+            let wrote = s.write(&item, &set);
+            let during = s.read(&item);
+            println!("set 7: {wrote:?}; now {during:?}; registry {:?}", backing());
+            let put_back = s.write(&item, &before);
+            let after = s.read(&item);
+            println!("put back: {put_back:?}; now {after:?}; registry {:?}", backing());
+            wrote.unwrap();
+            put_back.unwrap();
+            assert_eq!(during.unwrap(), set);
+            assert_eq!(after.unwrap(), before);
+        }
     }
 }

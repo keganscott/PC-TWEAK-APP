@@ -121,6 +121,7 @@ fn main() {
             commands::cleanup_measure,
             commands::cleanup_run,
             commands::optimize_drive,
+            commands::list_startup_apps,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PeakTweaks");

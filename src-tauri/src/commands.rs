@@ -25,6 +25,7 @@ use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummar
 use peaktweaks_engine::proof::verdict::Comparison;
 use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
 use peaktweaks_engine::settings::Settings;
+use peaktweaks_engine::startup::{StartupFolders, StartupList};
 use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, SystemAudit, TweakView};
 
 use crate::play::SharedPlay;
@@ -495,6 +496,18 @@ pub async fn cleanup_measure(engine: State<'_, EngineHandle>) -> Result<Vec<Area
     .map_err(|e| EngineError::Internal {
         detail: format!("cleanup worker failed: {e}"),
     })
+}
+
+/// The programs Windows starts when the user signs in, each with its switch
+/// (catalogue H12). Reads only; turning one off is `apply_tweak` with its id.
+#[tauri::command]
+pub async fn list_startup_apps(engine: State<'_, EngineHandle>) -> Result<StartupList> {
+    let sid = user_sid(&engine.get()?)?;
+    blocking(&engine, move |e| {
+        let folders = StartupFolders::from_places(&cleanup::places(&sid));
+        Ok(e.startup_apps(&folders))
+    })
+    .await
 }
 
 /// Delete the junk files in the chosen areas. Cannot be undone; the screen

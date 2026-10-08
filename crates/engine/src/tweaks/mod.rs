@@ -11,6 +11,7 @@ pub mod power;
 pub mod registry_values;
 pub mod services;
 pub mod session;
+pub mod startup;
 pub mod system_restore;
 pub mod tasks;
 

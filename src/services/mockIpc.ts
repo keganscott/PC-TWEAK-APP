@@ -26,6 +26,7 @@ import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSessionSummary } from "../generated/ProofSessionSummary";
 import type { Record as JournalRecord } from "../generated/Record";
 import type { Settings } from "../generated/Settings";
+import type { StartupList } from "../generated/StartupList";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 import { EngineFault } from "../ipc";
@@ -75,6 +76,9 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   const failures = { ...options.failures };
   const listeners = new Set<(p: Progress) => void>();
   let tweaks = sampleTweaks();
+  // Startup apps (H12): each entry's switch is a change like any other, so
+  // apply, undo, Undo all and Backups treat it as one.
+  let startup: StartupList = clone(fx.startupList) as StartupList;
   let settings: Settings = { ...(clone(fx.systemAudit.settings) as Settings), welcomeSeen: !options.firstRun };
   let targetGame: string | null = null;
   let gateOpen = options.gateOpen ?? false;
@@ -165,7 +169,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   const INTERNAL = fx.journalView.applied.find((c) => c.kind === "internal")!;
   let internalApplied = false;
   const outstanding = (): AppliedChange[] => [
-    ...tweaks
+    ...[...tweaks, ...startup.apps.map((a) => a.tweak)]
       .filter((t) => t.state.status === "applied" || t.state.status === "drifted")
       .map((t): AppliedChange => ({ tweakId: t.id, name: t.name, kind: "catalogue" })),
     ...(internalApplied ? [clone(INTERNAL)] : []),
@@ -196,13 +200,17 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   };
 
   const find = (id: string): TweakView => {
-    const t = tweaks.find((x) => x.id === id);
+    const t = tweaks.find((x) => x.id === id) ?? startup.apps.find((a) => a.tweak.id === id)?.tweak;
     if (!t) throw new EngineFault({ kind: "unknown_tweak", tweakId: id });
     return t;
   };
 
   const setState = (id: string, state: TweakView["state"]) => {
     tweaks = tweaks.map((t) => (t.id === id ? { ...t, state } : t));
+    startup = {
+      ...startup,
+      apps: startup.apps.map((a) => (a.tweak.id === id ? { ...a, tweak: { ...a.tweak, state } } : a)),
+    };
   };
 
   return {
@@ -332,6 +340,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         });
         return report;
       }),
+    listStartupApps: () => reply("listStartupApps", [], () => clone(startup)),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {
         emit("drive", "Optimizing the Windows drive");

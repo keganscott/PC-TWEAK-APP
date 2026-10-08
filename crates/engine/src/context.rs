@@ -188,6 +188,12 @@ impl ContextResolver {
         self.backend.key_exists(hive, &full)
     }
 
+    /// The names of the values under the key; empty when it is absent.
+    pub fn value_names(&self, root: RegRoot, path: &str) -> Result<Vec<String>> {
+        let (hive, full) = self.route(root, path);
+        self.backend.value_names(hive, &full)
+    }
+
     /// `Ok(None)` when the key or value is absent.
     pub fn read_raw(&self, root: RegRoot, path: &str, name: &str) -> Result<Option<RawValue>> {
         let (hive, full) = self.route(root, path);

@@ -85,6 +85,10 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
         !reg.delete_key_if_empty(HIVE, "").unwrap(),
         "a hive root is never deleted",
     );
+    check(
+        reg.value_names(HIVE, base).unwrap().is_empty(),
+        "an absent key lists no values",
+    );
 
     // Byte-exact round trips of every supported type, creating parents.
     let vals = format!(r"{base}\Values\Deeper");
@@ -100,6 +104,20 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
         reg.key_exists(HIVE, &format!(r"{base}\Values")).unwrap(),
         "write creates missing parents",
     );
+    let mut names = reg.value_names(HIVE, &vals).unwrap();
+    names.sort();
+    let mut wanted: Vec<String> = samples().into_iter().map(|(n, _)| n.to_owned()).collect();
+    wanted.sort();
+    check(
+        names == wanted,
+        &format!("value_names lists every value as written: {names:?}"),
+    );
+    reg.write_value(HIVE, &vals, "", &RawValue::sz("default")).unwrap();
+    check(
+        reg.value_names(HIVE, &vals).unwrap().iter().any(String::is_empty),
+        "the default value is listed as \"\"",
+    );
+    check(reg.delete_value(HIVE, &vals, "").unwrap(), "the default value deletes");
 
     // Writes are exact every time, not by luck of what follows the buffer in
     // memory (WinRegistry::set_exact): rewrite the unterminated strings often.

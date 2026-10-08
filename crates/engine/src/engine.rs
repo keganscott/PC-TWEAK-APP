@@ -118,6 +118,8 @@ pub struct Progress {
 enum Slot {
     Catalogue(usize),
     Internal(usize),
+    /// A startup entry's switch, made from its id (`tweaks::startup`).
+    Startup(Box<dyn Tweak>),
 }
 
 pub struct Engine {
@@ -136,6 +138,9 @@ pub struct Engine {
     settings: crate::settings::Settings,
     settings_store: crate::settings::SettingsStore,
     offline_error: Option<String>,
+    /// The startup entries the last `startup_apps` listed. Only those can be
+    /// turned off, so an id the UI makes up never becomes a write.
+    startup_listed: std::collections::HashSet<String>,
     /// Held while this engine lives, so no second engine writes the same
     /// journal (`instance.rs`). `None` for engines on test directories.
     _instance: Option<crate::instance::InstanceLock>,
@@ -170,6 +175,7 @@ impl Engine {
             settings: crate::settings::Settings::default(),
             settings_store: crate::settings::SettingsStore::in_memory(),
             offline_error: None,
+            startup_listed: std::collections::HashSet::new(),
             _instance: None,
         }
     }
@@ -315,15 +321,6 @@ impl Engine {
         self.license
     }
 
-    fn index_of(&self, id: &str) -> Result<usize> {
-        self.tweaks
-            .iter()
-            .position(|t| t.id() == id)
-            .ok_or_else(|| EngineError::UnknownTweak {
-                tweak_id: id.to_string(),
-            })
-    }
-
     /// Where a tweak id lives: the catalogue or the engine's own list.
     fn slot_of(&self, id: &str) -> Result<Slot> {
         if let Some(i) = self.tweaks.iter().position(|t| t.id() == id) {
@@ -332,9 +329,20 @@ impl Engine {
         if let Some(i) = self.internal.iter().position(|t| t.id() == id) {
             return Ok(Slot::Internal(i));
         }
+        if let Some(t) = crate::tweaks::startup::StartupToggle::from_id(id) {
+            return Ok(Slot::Startup(Box::new(t)));
+        }
         Err(EngineError::UnknownTweak {
             tweak_id: id.to_string(),
         })
+    }
+
+    fn tweak_in<'a>(&'a self, slot: &'a Slot) -> &'a dyn Tweak {
+        match slot {
+            Slot::Catalogue(i) => self.tweaks[*i].as_ref(),
+            Slot::Internal(i) => self.internal[*i].as_ref(),
+            Slot::Startup(t) => t.as_ref(),
+        }
     }
 
     /// Why the licence does not cover this tweak, if it does not. The one tier
@@ -351,51 +359,84 @@ impl Engine {
     }
 
     pub fn list(&self) -> Result<Vec<TweakView>> {
-        let mut out = Vec::with_capacity(self.tweaks.len());
+        Ok(self.tweaks.iter().map(|t| self.view_of(t.as_ref())).collect())
+    }
 
-        for tweak in &self.tweaks {
-            let applied = self.journal.is_applied(tweak.id());
-            // Predicate first: a blocked tweak's state is not probed (the probe
-            // may not be meaningful), except that an apply still open in the
-            // journal is reported as Applied, so it can be undone.
-            let predicate = match tweak.evaluate_predicate(&self.env) {
-                PredicateOutcome::Block(reason) => Some(reason),
-                PredicateOutcome::Allow => None,
-            };
-            let state = match &predicate {
-                Some(_) if applied => TweakState::Applied,
-                Some(reason) => TweakState::Blocked { reason: reason.clone() },
-                None => {
-                    // A read failure is its own state. Reporting it as Default
-                    // would invite an Apply on top of something we cannot see.
-                    match tweak.read_state(&self.resolver, applied) {
-                        // Our apply is outstanding but Windows no longer has
-                        // our value: changed outside PeakTweaks. Kept undoable.
-                        Ok(TweakState::Default | TweakState::Foreign) if applied => TweakState::Drifted,
-                        Ok(s) => s,
-                        Err(e) => TweakState::Unknown { detail: e.to_string() },
-                    }
+    /// What the UI shows for one tweak: its state and why it is not offered.
+    fn view_of(&self, tweak: &dyn Tweak) -> TweakView {
+        let applied = self.journal.is_applied(tweak.id());
+        // Predicate first: a blocked tweak's state is not probed (the probe
+        // may not be meaningful), except that an apply still open in the
+        // journal is reported as Applied, so it can be undone.
+        let predicate = match tweak.evaluate_predicate(&self.env) {
+            PredicateOutcome::Block(reason) => Some(reason),
+            PredicateOutcome::Allow => None,
+        };
+        let state = match &predicate {
+            Some(_) if applied => TweakState::Applied,
+            Some(reason) => TweakState::Blocked { reason: reason.clone() },
+            None => {
+                // A read failure is its own state. Reporting it as Default
+                // would invite an Apply on top of something we cannot see.
+                match tweak.read_state(&self.resolver, applied) {
+                    // Our apply is outstanding but Windows no longer has
+                    // our value: changed outside PeakTweaks. Kept undoable.
+                    Ok(TweakState::Default | TweakState::Foreign) if applied => TweakState::Drifted,
+                    Ok(s) => s,
+                    Err(e) => TweakState::Unknown { detail: e.to_string() },
                 }
-            };
+            }
+        };
 
-            // A plan that does not include the change blocks Apply but not
-            // the reading of its state (the user may want to see it is set).
-            let blocked = self.tier_block(tweak.as_ref()).or(predicate);
-            out.push(TweakView {
-                metadata: tweak.metadata(),
-                context: tweak.execution_context(),
-                state,
-                blocked,
-            });
+        // A plan that does not include the change blocks Apply but not
+        // the reading of its state (the user may want to see it is set).
+        let blocked = self.tier_block(tweak).or(predicate);
+        TweakView {
+            metadata: tweak.metadata(),
+            context: tweak.execution_context(),
+            state,
+            blocked,
         }
-        Ok(out)
+    }
+
+    /// Startup apps (CATALOGUE H12): every entry Windows starts at sign in,
+    /// with its switch. `folders` are the two Startup folders on this PC.
+    pub fn startup_apps(&mut self, folders: &crate::startup::StartupFolders) -> crate::startup::StartupList {
+        let (toggles, problems) = crate::startup::entries(&self.resolver, folders);
+        self.startup_listed = toggles.iter().map(|t| t.id().to_owned()).collect();
+        let mut apps: Vec<crate::startup::StartupApp> = toggles
+            .into_iter()
+            .map(|t| crate::startup::StartupApp {
+                tweak: self.view_of(&t),
+                name: crate::tweaks::startup::display_name(t.source, &t.name),
+                source: t.source,
+                command: t.command(&self.resolver).ok().flatten(),
+            })
+            .collect();
+        apps.sort_by_key(|a| a.name.to_lowercase());
+        crate::startup::StartupList { apps, problems }
     }
 
     pub fn apply(&mut self, id: &str) -> Result<Vec<JournalEntry>> {
-        let idx = self.index_of(id)?;
+        // The catalogue, or a startup entry's switch. The engine's own
+        // changes are made by the engine, never asked for by id.
+        let slot = match self.slot_of(id)? {
+            Slot::Internal(_) => {
+                return Err(EngineError::UnknownTweak {
+                    tweak_id: id.to_string(),
+                })
+            }
+            // Only an entry Windows has, as last listed. Undo needs no list.
+            Slot::Startup(t) if !self.startup_listed.contains(t.id()) => {
+                return Err(EngineError::UnknownTweak {
+                    tweak_id: id.to_string(),
+                })
+            }
+            slot => slot,
+        };
 
         // Tier is enforced here, in Rust, against a license the UI cannot set.
-        if let Some(reason) = self.tier_block(self.tweaks[idx].as_ref()) {
+        if let Some(reason) = self.tier_block(self.tweak_in(&slot)) {
             return Err(EngineError::Blocked { reason });
         }
 
@@ -404,7 +445,7 @@ impl Engine {
         // from the 10-minute cache.
         self.probe.invalidate();
         self.rescan();
-        if let PredicateOutcome::Block(reason) = self.tweaks[idx].evaluate_predicate(&self.env) {
+        if let PredicateOutcome::Block(reason) = self.tweak_in(&slot).evaluate_predicate(&self.env) {
             return Err(EngineError::Blocked { reason });
         }
 
@@ -421,7 +462,7 @@ impl Engine {
 
         // If we cannot see the current state we do not write on top of it.
         let applied = self.journal.is_applied(id);
-        self.tweaks[idx].read_state(&self.resolver, applied)?;
+        self.tweak_in(&slot).read_state(&self.resolver, applied)?;
 
         let Engine {
             resolver,
@@ -429,7 +470,11 @@ impl Engine {
             tweaks,
             ..
         } = self;
-        let tweak = tweaks[idx].as_ref();
+        let tweak = match &slot {
+            Slot::Catalogue(i) => tweaks[*i].as_ref(),
+            Slot::Startup(t) => t.as_ref(),
+            Slot::Internal(_) => unreachable!("refused above"),
+        };
 
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
         let result = match tweak.apply(&mut tx) {
@@ -460,9 +505,10 @@ impl Engine {
             internal,
             ..
         } = self;
-        let tweak = match slot {
-            Slot::Catalogue(i) => tweaks[i].as_ref(),
-            Slot::Internal(i) => internal[i].as_ref(),
+        let tweak = match &slot {
+            Slot::Catalogue(i) => tweaks[*i].as_ref(),
+            Slot::Internal(i) => internal[*i].as_ref(),
+            Slot::Startup(t) => t.as_ref(),
         };
 
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Revert)?;
@@ -712,6 +758,7 @@ impl Engine {
                 let (name, kind) = match self.slot_of(&id) {
                     Ok(Slot::Catalogue(i)) => (self.tweaks[i].metadata().name.to_string(), ChangeKind::Catalogue),
                     Ok(Slot::Internal(i)) => (self.internal[i].metadata().name.to_string(), ChangeKind::Internal),
+                    Ok(Slot::Startup(t)) => (t.metadata().name.to_string(), ChangeKind::Catalogue),
                     Err(_) => (id.clone(), ChangeKind::Retired),
                 };
                 AppliedChange {

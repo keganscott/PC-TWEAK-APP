@@ -29,6 +29,7 @@
     "allow-purge-standby-memory",
     "allow-cleanup-measure",
     "allow-cleanup-run",
-    "allow-optimize-drive"
+    "allow-optimize-drive",
+    "allow-list-startup-apps"
   ]
 }

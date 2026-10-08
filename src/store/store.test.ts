@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PlayStatus } from "../generated/PlayStatus";
+import type { StartupList } from "../generated/StartupList";
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
 import { BUS_LIMIT, createAppStore, otherLongWork, recommendedIds, type State } from "./store";
 
@@ -405,5 +406,73 @@ describe("while you play (catalogue step 5)", () => {
     await new Promise((res) => setTimeout(res, 0));
     expect(stale.gamingModeActive).toBe(false);
     expect(store.getState().play?.gamingModeActive).toBe(true);
+  });
+});
+
+describe("startup apps (catalogue H12)", () => {
+  const CHAT = "startup.user_run:Sample chat app";
+  const app = (s: State, id: string) => s.startup?.apps.find((a) => a.tweak.id === id);
+
+  it("is read only once something asks, then lists every entry with its switch", async () => {
+    const { store } = await booted();
+    expect(store.getState().startup).toBeNull();
+    expect(store.getState().startupOp.status).toBe("idle");
+    await store.actions.loadStartup();
+    expect(store.getState().startupOp.status).toBe("done");
+    expect(store.getState().startup?.apps.map((a) => a.name)).toEqual([
+      "Sample chat app",
+      "Sample game launcher",
+      "Sample notes",
+      "Sample updater",
+      "SecurityHealth",
+    ]);
+  });
+
+  it("turning one off is a change like any other: in Backups, undone by Undo all, and the list follows", async () => {
+    const { store } = await booted({ gateOpen: true });
+    await store.actions.loadStartup();
+    await store.actions.applyTweak(CHAT);
+    expect(store.getState().tweakOps[CHAT]).toEqual({ status: "done", value: "apply" });
+    expect(app(store.getState(), CHAT)?.tweak.state.status).toBe("applied");
+    expect(store.getState().journal?.applied.map((c) => c.tweakId)).toContain(CHAT);
+
+    await store.actions.revertAll();
+    expect(app(store.getState(), CHAT)?.tweak.state.status).toBe("default");
+    expect(store.getState().journal?.applied.map((c) => c.tweakId)).not.toContain(CHAT);
+  });
+
+  it("keeps the engine's refusals: no restore point, and Windows Security", async () => {
+    const { store } = await booted();
+    await store.actions.loadStartup();
+    await store.actions.applyTweak(CHAT);
+    expect(store.getState().tweakOps[CHAT]).toMatchObject({ status: "failed", error: { kind: "blocked", reason: { code: "no_restore_point" } } });
+
+    await store.actions.createRestorePoint();
+    const security = "startup.machine_run:SecurityHealth";
+    await store.actions.applyTweak(security);
+    expect(store.getState().tweakOps[security]).toMatchObject({ status: "failed", error: { kind: "blocked", reason: { code: "protected_program" } } });
+    expect(app(store.getState(), security)?.tweak.state.status).toBe("blocked");
+  });
+
+  it("an older list still in flight does not overwrite a newer one", async () => {
+    const mock = createMockBackend({ gateOpen: true });
+    const stale = await mock.listStartupApps();
+    let release = () => {};
+    let calls = 0;
+    const backend: Backend = {
+      ...mock,
+      listStartupApps: () => {
+        calls += 1;
+        return calls === 1 ? new Promise<StartupList>((r) => (release = () => r(stale))) : mock.listStartupApps();
+      },
+    };
+    const store = createAppStore(backend);
+    await store.actions.boot();
+    const first = store.actions.loadStartup();
+    await store.actions.applyTweak(CHAT);
+    expect(app(store.getState(), CHAT)?.tweak.state.status).toBe("applied");
+    release();
+    await first;
+    expect(app(store.getState(), CHAT)?.tweak.state.status).toBe("applied");
   });
 });

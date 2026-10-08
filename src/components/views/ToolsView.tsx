@@ -10,6 +10,7 @@ import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { otherLongWork, recommendedIds, type LongWork } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
 import { PlaySection } from "./PlaySection";
+import { StartupSection } from "./StartupSection";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
 const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }> = {
@@ -99,6 +100,7 @@ export function ToolsView() {
           </section>
         ))}
         <PlaySection />
+        <StartupSection />
         <OneTimeActions />
       </div>
     </>

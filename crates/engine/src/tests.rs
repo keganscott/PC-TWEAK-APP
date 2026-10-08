@@ -2997,3 +2997,258 @@ mod windows11_tools {
         }
     }
 }
+
+mod startup_apps {
+    use std::fs;
+
+    use crate::error::EngineError;
+    use crate::registry::Hive;
+    use crate::startup::{StartupFolders, StartupList};
+    use crate::testutil::Harness;
+    use crate::tweaks::startup::{switched_off, StartupSource, StartupToggle};
+    use crate::types::{BlockedCode, RawValue, Tweak, TweakState};
+
+    const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const RUN_32: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
+    const APPROVED_RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+    fn on_value() -> RawValue {
+        RawValue {
+            vtype: 3,
+            bytes: vec![2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        }
+    }
+
+    /// Discord and Steam (turned off in Task Manager) for the user, Windows
+    /// Security's icon for everyone, a 32-bit launcher, and a shortcut in the
+    /// user's Startup folder.
+    fn pc() -> (Harness, tempfile::TempDir, StartupFolders) {
+        let h = Harness::new(Vec::new());
+        let set = |hive, key, name: &str, value| h.fake.set_external(hive, key, name, value);
+        set(
+            Hive::CurrentUser,
+            RUN,
+            "Discord",
+            RawValue::sz(r#""C:\Discord\Update.exe" --processStart Discord.exe"#),
+        );
+        set(
+            Hive::CurrentUser,
+            RUN,
+            "Steam",
+            RawValue::sz(r#""C:\Steam\steam.exe" -silent"#),
+        );
+        set(Hive::CurrentUser, APPROVED_RUN, "Steam", StartupToggle::off_for_test());
+        set(
+            Hive::LocalMachine,
+            RUN,
+            "SecurityHealth",
+            RawValue::sz(r"%windir%\system32\SecurityHealthSystray.exe"),
+        );
+        set(
+            Hive::LocalMachine,
+            RUN_32,
+            "Launcher32",
+            RawValue::sz(r"C:\Launcher\launcher.exe"),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user");
+        fs::create_dir_all(&user).unwrap();
+        fs::write(user.join("OneNote.lnk"), b"").unwrap();
+        fs::write(user.join("desktop.ini"), b"").unwrap();
+        let folders = StartupFolders {
+            user: Some(user),
+            machine: Some(dir.path().join("no such folder")),
+        };
+        (h, dir, folders)
+    }
+
+    fn app<'a>(list: &'a StartupList, name: &str) -> &'a crate::startup::StartupApp {
+        list.apps
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap_or_else(|| panic!("{name} not listed"))
+    }
+
+    #[test]
+    fn every_entry_is_listed_with_its_switch() {
+        let (mut h, _dir, folders) = pc();
+        let list = h.engine.startup_apps(&folders);
+        assert!(list.problems.is_empty(), "{:?}", list.problems);
+        let names: Vec<&str> = list.apps.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Discord", "Launcher32", "OneNote", "SecurityHealth", "Steam"]);
+
+        let discord = app(&list, "Discord");
+        assert_eq!(discord.tweak.state, TweakState::Default);
+        assert_eq!(discord.source, StartupSource::UserRun);
+        assert!(discord.command.as_deref().unwrap().contains("Update.exe"));
+        assert_eq!(
+            app(&list, "Steam").tweak.state,
+            TweakState::Foreign,
+            "turned off in Task Manager"
+        );
+        assert_eq!(app(&list, "Launcher32").source, StartupSource::MachineRun32);
+        let onenote = app(&list, "OneNote");
+        assert_eq!(
+            (onenote.source, onenote.command.as_deref()),
+            (StartupSource::UserFolder, None)
+        );
+        match &app(&list, "SecurityHealth").tweak.state {
+            TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::ProtectedProgram),
+            other => panic!("Windows Security offered: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn turning_one_off_writes_only_its_switch_and_undo_removes_it() {
+        let (mut h, _dir, folders) = pc();
+        let id = app(&h.engine.startup_apps(&folders), "Discord")
+            .tweak
+            .metadata
+            .id
+            .to_string();
+        let before = h.fake.snapshot();
+
+        h.engine.apply(&id).unwrap();
+        let switch = h
+            .fake
+            .read_value_for_test(Hive::CurrentUser, APPROVED_RUN, "Discord")
+            .unwrap();
+        assert_eq!(switched_off(&switch), Some(true));
+        assert_eq!(switch.bytes.len(), 12);
+        assert!(
+            h.fake.read_value_for_test(Hive::CurrentUser, RUN, "Discord").is_some(),
+            "the entry itself is kept"
+        );
+        assert_eq!(
+            app(&h.engine.startup_apps(&folders), "Discord").tweak.state,
+            TweakState::Applied
+        );
+        assert!(h
+            .engine
+            .journal_view()
+            .applied
+            .iter()
+            .any(|c| c.tweak_id == id && c.name == "Discord at sign-in"));
+
+        h.engine.revert(&id).unwrap();
+        assert_eq!(h.fake.snapshot(), before, "everything as it was");
+        assert_eq!(
+            app(&h.engine.startup_apps(&folders), "Discord").tweak.state,
+            TweakState::Default
+        );
+    }
+
+    #[test]
+    fn a_switch_windows_already_had_is_put_back_byte_for_byte() {
+        let (mut h, _dir, folders) = pc();
+        h.fake
+            .set_external(Hive::CurrentUser, APPROVED_RUN, "Discord", on_value());
+        let id = app(&h.engine.startup_apps(&folders), "Discord")
+            .tweak
+            .metadata
+            .id
+            .to_string();
+        h.engine.apply(&id).unwrap();
+        h.engine.revert(&id).unwrap();
+        assert_eq!(
+            h.fake.read_value_for_test(Hive::CurrentUser, APPROVED_RUN, "Discord"),
+            Some(on_value())
+        );
+    }
+
+    #[test]
+    fn windows_security_is_never_turned_off() {
+        let (mut h, _dir, folders) = pc();
+        let id = app(&h.engine.startup_apps(&folders), "SecurityHealth")
+            .tweak
+            .metadata
+            .id
+            .to_string();
+        let before = h.fake.snapshot();
+        match h.engine.apply(&id) {
+            Err(EngineError::Blocked { reason }) => assert_eq!(reason.code, BlockedCode::ProtectedProgram),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(h.fake.snapshot(), before);
+    }
+
+    #[test]
+    fn undo_still_works_after_the_program_is_uninstalled_and_undo_all_reaches_it() {
+        let (mut h, _dir, folders) = pc();
+        let id = app(&h.engine.startup_apps(&folders), "Discord")
+            .tweak
+            .metadata
+            .id
+            .to_string();
+        h.engine.apply(&id).unwrap();
+        h.fake.remove_external(Hive::CurrentUser, RUN, "Discord");
+        assert!(h.engine.startup_apps(&folders).apps.iter().all(|a| a.name != "Discord"));
+        h.restart(Vec::new());
+        let results = h.engine.revert_all();
+        assert!(results.iter().any(|r| r.tweak_id == id && r.ok), "{results:?}");
+        assert!(h
+            .fake
+            .read_value_for_test(Hive::CurrentUser, APPROVED_RUN, "Discord")
+            .is_none());
+    }
+
+    #[test]
+    fn ids_that_name_no_startup_entry_are_refused() {
+        let (mut h, _dir, folders) = pc();
+        // Only what the list showed: an id the UI makes up is never a write,
+        // even for a real entry before the list was read.
+        let before = h.fake.snapshot();
+        for id in ["startup.user_run:Discord", "startup.user_folder:Made up.lnk"] {
+            assert!(
+                matches!(h.engine.apply(id), Err(EngineError::UnknownTweak { .. })),
+                "{id}"
+            );
+        }
+        h.engine.startup_apps(&folders);
+        assert!(matches!(
+            h.engine.apply("startup.user_folder:Made up.lnk"),
+            Err(EngineError::UnknownTweak { .. })
+        ));
+        assert_eq!(h.fake.snapshot(), before);
+        h.engine.apply("startup.user_run:Discord").unwrap();
+
+        for id in [
+            "startup.",
+            "startup.nowhere:Discord",
+            "startup.user_run:",
+            "startup.user_run",
+        ] {
+            assert!(
+                matches!(h.engine.apply(id), Err(EngineError::UnknownTweak { .. })),
+                "{id}"
+            );
+        }
+        let before = h.fake.snapshot();
+        assert!(matches!(
+            h.engine.apply("startup.user_run:Not Installed"),
+            Err(EngineError::UnknownTweak { .. })
+        ));
+        assert_eq!(h.fake.snapshot(), before, "no switch for an entry that is not there");
+        let t = StartupToggle::from_id("startup.user_folder:OneNote.lnk").unwrap();
+        assert_eq!(
+            (t.source, t.name.as_str(), t.id()),
+            (
+                StartupSource::UserFolder,
+                "OneNote.lnk",
+                "startup.user_folder:OneNote.lnk"
+            )
+        );
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_found_is_said_not_skipped() {
+        let (mut h, _dir, _folders) = pc();
+        let list = h.engine.startup_apps(&StartupFolders::default());
+        assert_eq!(list.problems.len(), 2, "{:?}", list.problems);
+        assert!(list.problems[0].contains("Startup folder"), "{:?}", list.problems);
+        assert!(
+            list.apps.iter().any(|a| a.name == "Discord"),
+            "the registry entries are still listed"
+        );
+    }
+}

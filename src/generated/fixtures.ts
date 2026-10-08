@@ -14,6 +14,7 @@ import type { ProofSessionSummary } from "./ProofSessionSummary";
 import type { RestoreOutcome } from "./RestoreOutcome";
 import type { RevertResult } from "./RevertResult";
 import type { StandbyPurge } from "./StandbyPurge";
+import type { StartupList } from "./StartupList";
 import type { SystemAudit } from "./SystemAudit";
 import type { TweakView } from "./TweakView";
 
@@ -928,4 +929,125 @@ export const playStatus = {
     "minecraft"
   ]
 } satisfies PlayStatus;
+
+export const startupList = {
+  "apps": [
+    {
+      "tweak": {
+        "id": "startup.user_run:Sample chat app",
+        "name": "Sample chat app at sign-in",
+        "summary": "Stops Sample chat app from starting when you sign in. It stays installed and starts when you open it.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\Sample chat app",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "default"
+        },
+        "blocked": null
+      },
+      "name": "Sample chat app",
+      "source": "user_run",
+      "command": "C:\\Sample\\chat.exe --minimized"
+    },
+    {
+      "tweak": {
+        "id": "startup.user_run:Sample game launcher",
+        "name": "Sample game launcher at sign-in",
+        "summary": "Stops Sample game launcher from starting when you sign in. It stays installed and starts when you open it.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\Sample game launcher",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "applied"
+        },
+        "blocked": null
+      },
+      "name": "Sample game launcher",
+      "source": "user_run",
+      "command": "C:\\Sample\\launcher.exe -silent"
+    },
+    {
+      "tweak": {
+        "id": "startup.user_folder:Sample notes.lnk",
+        "name": "Sample notes at sign-in",
+        "summary": "Stops Sample notes from starting when you sign in. It stays installed and starts when you open it.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder\\Sample notes.lnk",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "default"
+        },
+        "blocked": null
+      },
+      "name": "Sample notes",
+      "source": "user_folder",
+      "command": null
+    },
+    {
+      "tweak": {
+        "id": "startup.user_run:Sample updater",
+        "name": "Sample updater at sign-in",
+        "summary": "Stops Sample updater from starting when you sign in. It stays installed and starts when you open it.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\Sample updater",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "foreign"
+        },
+        "blocked": null
+      },
+      "name": "Sample updater",
+      "source": "user_run",
+      "command": "C:\\Sample\\updater.exe"
+    },
+    {
+      "tweak": {
+        "id": "startup.machine_run:SecurityHealth",
+        "name": "SecurityHealth at sign-in",
+        "summary": "Stops SecurityHealth from starting when you sign in. It stays installed and starts when you open it.",
+        "target": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\SecurityHealth",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "service",
+        "state": {
+          "status": "blocked",
+          "reason": {
+            "code": "protected_program",
+            "trigger": null,
+            "message": "This starts Windows Security."
+          }
+        },
+        "blocked": null
+      },
+      "name": "SecurityHealth",
+      "source": "machine_run",
+      "command": "%windir%\\system32\\SecurityHealthSystray.exe"
+    }
+  ],
+  "problems": []
+} satisfies StartupList;
 

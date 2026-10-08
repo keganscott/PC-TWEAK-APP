@@ -31,6 +31,7 @@ import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
 import type { StandbyPurge } from "../generated/StandbyPurge";
+import type { StartupList } from "../generated/StartupList";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 import { explain, toEngineError } from "../lib/errors";
@@ -105,6 +106,10 @@ export interface State {
   proof: ProofState;
   /** The game watcher (catalogue step 5); null until it first answers. */
   play: PlayStatus | null;
+  /** Startup apps (H12), once the Tools section has asked. Kept on screen
+   * while it is read again; `startupOp` says how the latest read went. */
+  startup: StartupList | null;
+  startupOp: Op;
   bus: BusEntry[];
 }
 
@@ -137,6 +142,8 @@ export function initialState(sample: boolean): State {
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     play: null,
+    startup: null,
+    startupOp: IDLE,
     bus: [],
   };
 }
@@ -282,9 +289,27 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     }
   }
 
-  /** After anything that changed the PC: re-read what the engine now reports. */
+  /** The startup apps and their switches. The newest answer wins. */
+  async function refreshStartup() {
+    const current = tag("startup");
+    set((s) => ({ ...s, startupOp: RUNNING }));
+    try {
+      const startup = await backend.listStartupApps();
+      if (current()) set((s) => ({ ...s, startup, startupOp: { status: "done", value: null } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, startupOp: failed(e) }));
+    }
+  }
+
+  /** After anything that changed the PC: re-read what the engine now reports.
+   * The startup list only once something has shown it. */
   async function refreshAfterChange() {
-    await Promise.allSettled([refreshTweaks(), refreshAudit(), refreshJournal()]);
+    await Promise.allSettled([
+      refreshTweaks(),
+      refreshAudit(),
+      refreshJournal(),
+      ...(state.startupOp.status === "idle" ? [] : [refreshStartup()]),
+    ]);
   }
 
   // ---- actions -------------------------------------------------------------
@@ -428,6 +453,11 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
         set((s) => ({ ...s, driveOp: failed(e) }));
       }
       await refreshJournal();
+    },
+
+    /** Read the startup apps. Reads only; a switch is turned with applyTweak / revertTweak. */
+    async loadStartup() {
+      await refreshStartup();
     },
 
     /** Look at what each junk-file area holds. Reads only. */

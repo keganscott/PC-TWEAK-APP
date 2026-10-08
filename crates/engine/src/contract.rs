@@ -29,9 +29,12 @@ use crate::proof::nvml::{ThrottleReason, ThrottleSeen, ThrottleSummary};
 use crate::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use crate::proof::verdict::{compare, RunSummary};
 use crate::registry::fake::FakeRegistry;
+use crate::registry::Hive;
 use crate::restore::{FakeRestoreOps, FixedClock, RestoreOutcome, RestoreService};
+use crate::startup::{StartupFolders, StartupList};
 use crate::sysprobe::{SystemAudit, SystemProbe};
 use crate::testutil::*;
+use crate::tweaks::startup::StartupToggle;
 use crate::types::{BlockedCode, BlockedReason, ExecutionContext, RawValue, RegRoot, Tweak};
 use crate::wmi::{FakeWmi, WmiValue, NS_CIMV2, NS_DEVICEGUARD, NS_STORAGE, NS_TPM};
 
@@ -519,6 +522,55 @@ fn errors() -> Vec<EngineError> {
     ]
 }
 
+/// A real engine's startup list: one starting at sign-in, one PeakTweaks
+/// turned off, one turned off in Task Manager, Windows Security (never
+/// offered) and a shortcut in the Startup folder. The names are SAMPLE.
+fn startup_list() -> StartupList {
+    const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const APPROVED_RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    let mut h = Harness::new(Vec::new());
+    let set = |hive, key, name: &str, value| h.fake.set_external(hive, key, name, value);
+    set(
+        Hive::CurrentUser,
+        RUN,
+        "Sample chat app",
+        RawValue::sz(r"C:\Sample\chat.exe --minimized"),
+    );
+    set(
+        Hive::CurrentUser,
+        RUN,
+        "Sample game launcher",
+        RawValue::sz(r"C:\Sample\launcher.exe -silent"),
+    );
+    set(
+        Hive::CurrentUser,
+        RUN,
+        "Sample updater",
+        RawValue::sz(r"C:\Sample\updater.exe"),
+    );
+    set(
+        Hive::CurrentUser,
+        APPROVED_RUN,
+        "Sample updater",
+        StartupToggle::off_for_test(),
+    );
+    set(
+        Hive::LocalMachine,
+        RUN,
+        "SecurityHealth",
+        RawValue::sz(r"%windir%\system32\SecurityHealthSystray.exe"),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Sample notes.lnk"), b"").unwrap();
+    let folders = StartupFolders {
+        user: Some(dir.path().to_path_buf()),
+        machine: Some(dir.path().join("none")),
+    };
+    h.engine.startup_apps(&folders);
+    h.engine.apply("startup.user_run:Sample game launcher").unwrap();
+    h.engine.startup_apps(&folders)
+}
+
 #[test]
 fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
     let mut out = String::from(
@@ -538,6 +590,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { RestoreOutcome } from \"./RestoreOutcome\";\n\
          import type { RevertResult } from \"./RevertResult\";\n\
          import type { StandbyPurge } from \"./StandbyPurge\";\n\
+         import type { StartupList } from \"./StartupList\";\n\
          import type { SystemAudit } from \"./SystemAudit\";\n\
          import type { TweakView } from \"./TweakView\";\n\n",
     );
@@ -654,6 +707,8 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             ..PlayStatus::watching()
         },
     );
+
+    ts_const(&mut out, "startupList", "StartupList", &startup_list());
 
     let dir = generated_dir();
     std::fs::create_dir_all(&dir).unwrap();

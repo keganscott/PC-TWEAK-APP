@@ -1035,4 +1035,106 @@ mod tests {
             steps.len()
         );
     }
+
+    /// Startup apps (catalogue H12) on this PC's real registry and folders:
+    /// lists what this runner starts at sign-in, then turns a startup entry
+    /// made for the test off and back on through the real engine, reading
+    /// the switch Windows keeps for it before, during and after. Gated like
+    /// the tests above.
+    #[test]
+    fn startup_apps_turn_off_and_back_on_on_this_pc() {
+        use std::sync::Arc;
+
+        use crate::context::{ContextResolver, UserContext, UserResolution};
+        use crate::engine::Engine;
+        use crate::env::{License, StubProbe};
+        use crate::journal::Journal;
+        use crate::registry::{Hive, RegistryBackend};
+        use crate::secure_dir::TrustedDir;
+        use crate::startup::StartupFolders;
+        use crate::tweaks::startup::{switched_off, StartupSource, StartupToggle};
+        use crate::types::{RawValue, Tier, Tweak, TweakState};
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!(
+                "SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to add and turn off a startup entry on this PC for real"
+            );
+            return;
+        }
+        const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+        const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        const NAME: &str = "PeakTweaks startup check";
+
+        /// Removes the test entry however the test ends.
+        struct Entry(Arc<WinRegistry>);
+        impl Drop for Entry {
+            fn drop(&mut self) {
+                let _ = self.0.delete_value(Hive::CurrentUser, RUN, NAME);
+            }
+        }
+
+        let reg = Arc::new(WinRegistry::new());
+        reg.write_value(
+            Hive::CurrentUser,
+            RUN,
+            NAME,
+            &RawValue::sz(r"C:\Windows\System32\notepad.exe"),
+        )
+        .unwrap();
+        let _entry = Entry(reg.clone());
+        let switch = || reg.read_value(Hive::CurrentUser, APPROVED, NAME).unwrap();
+        let before = switch();
+        println!("switch before: {before:?}");
+
+        let sid = crate::identity::current_process_sid().unwrap();
+        let folders = StartupFolders::from_places(&crate::cleanup::places(&sid));
+        println!("Startup folders: {folders:?}");
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserContext {
+            sid,
+            resolution: UserResolution::OwnToken,
+            is_self: true,
+        };
+        let resolver = ContextResolver::new(user, crate::identity::is_elevated(), reg.clone());
+        let mut engine = Engine::new(
+            resolver,
+            Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+            Vec::new(),
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        );
+
+        let list = engine.startup_apps(&folders);
+        for app in &list.apps {
+            println!(
+                "listed: {:?} {:?} {:?} {:?}",
+                app.source, app.name, app.tweak.state, app.command
+            );
+        }
+        println!("problems: {:?}", list.problems);
+        assert!(list.problems.is_empty(), "{:?}", list.problems);
+        let id = StartupToggle::new(StartupSource::UserRun, NAME).id().to_owned();
+        let ours = list
+            .apps
+            .iter()
+            .find(|a| a.tweak.metadata.id == id)
+            .expect("the test entry is listed");
+        assert_eq!(ours.tweak.state, TweakState::Default);
+
+        let result = engine.apply(&id);
+        let during = switch();
+        println!("apply: {result:?}");
+        println!("switch while off: {during:?}");
+        let undo = engine.revert(&id);
+        println!("undo: {undo:?}");
+        let after = switch();
+        println!("switch after Undo: {after:?}");
+
+        result.unwrap();
+        undo.unwrap();
+        let during = during.expect("a switch is written");
+        assert_eq!(switched_off(&during), Some(true));
+        assert_eq!(during.bytes.len(), 12);
+        assert_eq!(after, before, "the switch reads back differently after Undo");
+    }
 }

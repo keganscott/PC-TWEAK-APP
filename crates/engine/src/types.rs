@@ -244,6 +244,9 @@ pub enum BlockedCode {
     /// A per-game change for a game, or a program file of it, that is not on
     /// this PC. The trigger is the game id.
     GameNotInstalled,
+    /// Security software or an anti-cheat, which PeakTweaks never turns off
+    /// (a startup entry for Windows Security, say). `message` names it.
+    ProtectedProgram,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

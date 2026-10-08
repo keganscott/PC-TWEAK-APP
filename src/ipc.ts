@@ -28,6 +28,7 @@ import type { RestoreOutcome } from "./generated/RestoreOutcome";
 import type { RevertResult } from "./generated/RevertResult";
 import type { Settings } from "./generated/Settings";
 import type { Side } from "./generated/Side";
+import type { StartupList } from "./generated/StartupList";
 import type { StandbyPurge } from "./generated/StandbyPurge";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
@@ -108,6 +109,8 @@ export const engine = {
   cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
   /** Run Windows' own drive optimisation on the Windows drive (catalogue H29). Can take an hour or more on a hard drive. */
   optimizeDrive: () => call<DriveOptimization>("optimize_drive"),
+  /** The programs Windows starts at sign-in, each with its switch (catalogue H12). Reads only; turn one off with applyTweak(its id). */
+  listStartupApps: () => call<StartupList>("list_startup_apps"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

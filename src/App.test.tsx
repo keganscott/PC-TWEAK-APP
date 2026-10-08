@@ -146,6 +146,49 @@ describe("App", () => {
     expect(within(section).queryByText("On now")).toBeNull();
   });
 
+  it("Tools lists startup apps; a switch turns one off and back on, and Windows Security is not offered", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const apply = vi.spyOn(backend, "applyTweak");
+    const revert = vi.spyOn(backend, "revertTweak");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /Startup apps/ });
+    expect(await within(section).findByText("3 of 5 start when you sign in.")).toBeTruthy();
+
+    const chat = within(section).getByRole("switch", { name: "Sample chat app" }) as HTMLInputElement;
+    expect(chat.checked).toBe(true);
+    await userEvent.click(chat);
+    expect(apply).toHaveBeenLastCalledWith("startup.user_run:Sample chat app");
+    await waitFor(() => expect(chat.checked).toBe(false));
+    expect(within(section).getByText("2 of 5 start when you sign in.")).toBeTruthy();
+
+    await userEvent.click(chat);
+    expect(revert).toHaveBeenLastCalledWith("startup.user_run:Sample chat app");
+    await waitFor(() => expect(chat.checked).toBe(true));
+
+    const security = within(section).getByRole("switch", { name: "SecurityHealth" }) as HTMLInputElement;
+    expect(security.checked).toBe(true);
+    expect(security.disabled).toBe(true);
+    expect(within(section).getByText("This starts Windows Security.", { exact: false })).toBeTruthy();
+    expect(within(section).getByText(/never turns off security software/)).toBeTruthy();
+    // Turned off in Task Manager: shown as off, nothing of ours to undo.
+    const updater = within(section).getByRole("switch", { name: "Sample updater" }) as HTMLInputElement;
+    expect([updater.checked, updater.disabled]).toEqual([false, true]);
+    expect(within(section).getByText(/Turned off outside PeakTweaks/)).toBeTruthy();
+  });
+
+  it("Tools keeps startup switches locked until there is a restore point", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /Startup apps/ });
+    const chat = (await within(section).findByRole("switch", { name: "Sample chat app" })) as HTMLInputElement;
+    await waitFor(() => expect(chat.disabled).toBe(true));
+    // Ours to turn back on, whatever the gate.
+    expect((within(section).getByRole("switch", { name: "Sample game launcher" }) as HTMLInputElement).disabled).toBe(false);
+  });
+
   it("Tools shows junk sizes first, asks once, then says what it deleted and what was left", async () => {
     const backend = createMockBackend();
     const run = vi.spyOn(backend, "cleanupRun");

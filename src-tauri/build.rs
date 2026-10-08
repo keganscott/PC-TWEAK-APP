@@ -25,6 +25,7 @@ const COMMANDS: &[&str] = &[
     "cleanup_measure",
     "cleanup_run",
     "optimize_drive",
+    "list_startup_apps",
 ];
 
 fn main() {

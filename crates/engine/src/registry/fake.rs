@@ -142,6 +142,14 @@ impl RegistryBackend for FakeRegistry {
             .map(|(_, v)| v.clone()))
     }
 
+    fn value_names(&self, hive: Hive, path: &str) -> Result<Vec<String>> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.keys
+            .get(&key_id(hive, path))
+            .map(|k| k.values().map(|(name, _)| name.clone()).collect())
+            .unwrap_or_default())
+    }
+
     fn write_value(&self, hive: Hive, path: &str, name: &str, value: &RawValue) -> Result<()> {
         // Same refusal as WinRegistry, before anything changes (contract_tests).
         if !value.is_supported_type() {

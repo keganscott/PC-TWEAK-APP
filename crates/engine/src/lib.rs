@@ -35,6 +35,7 @@ pub mod scanner;
 pub mod secure_dir;
 pub mod security;
 pub mod settings;
+pub mod startup;
 pub mod sysdirs;
 pub mod sysprobe;
 pub mod system;

@@ -41,6 +41,9 @@ pub struct WinSystem {
     /// Every physical adapter's interface metrics, from one PowerShell run;
     /// dropped on every metric write.
     metrics: std::sync::Mutex<Option<(std::time::Instant, Vec<Metric>)>>,
+    /// The global TCP settings, from one PowerShell run; dropped on every
+    /// TCP setting write.
+    tcp: std::sync::Mutex<Option<(std::time::Instant, TcpGlobals)>>,
     nvapi: crate::nvapi::NvApi,
     adlx: crate::adlx::Adlx,
 }
@@ -51,6 +54,7 @@ impl WinSystem {
             reg: WinRegistry::new(),
             adapters: std::sync::Mutex::new(None),
             metrics: std::sync::Mutex::new(None),
+            tcp: std::sync::Mutex::new(None),
             nvapi: crate::nvapi::NvApi::new(),
             adlx: crate::adlx::Adlx::new(),
         }
@@ -67,6 +71,49 @@ impl WinSystem {
         *cache = Some((std::time::Instant::now(), list.clone()));
         Ok(list)
     }
+
+    /// One global TCP setting by its `netsh` name, lower case.
+    fn tcp_global(&self, name: &str) -> Result<String> {
+        let mut cache = self.tcp.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fresh = cache.as_ref().filter(|(at, _)| at.elapsed() < ADAPTER_CACHE);
+        let list = match fresh {
+            Some((_, list)) => list.clone(),
+            None => {
+                let list = parse_tcp_globals(&powershell("TCP settings", TCP_SCRIPT, &[])?);
+                *cache = Some((std::time::Instant::now(), list.clone()));
+                list
+            }
+        };
+        list.into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v)
+            .ok_or_else(|| fail("TCP settings", format!("Windows did not report {name}")))
+    }
+}
+
+/// Each global TCP setting by its `netsh` name, with its value.
+type TcpGlobals = Vec<(String, String)>;
+
+/// The settings `netsh interface tcp set global` changes, read where Windows
+/// keeps them as names that are never translated (`netsh`'s own output is).
+/// VERIFY (NOTES N90): that `netsh` sets the Internet template's values.
+const TCP_SCRIPT: &str = "$t = Get-NetTCPSetting -SettingName Internet -ErrorAction Stop; $o = \
+                          Get-NetOffloadGlobalSetting -ErrorAction Stop; 'autotuninglevel|{0}' -f \
+                          $t.AutoTuningLevelLocal; 'rss|{0}' -f $o.ReceiveSideScaling; 'ecncapability|{0}' -f \
+                          $t.EcnCapability";
+
+/// `name|Value` lines from `TCP_SCRIPT`, values in lower case. Only a name
+/// and value `netsh` takes are kept.
+pub(crate) fn parse_tcp_globals(out: &str) -> TcpGlobals {
+    out.lines()
+        .filter_map(|l| {
+            let (name, value) = l.trim().split_once('|')?;
+            let value = value.trim().to_ascii_lowercase();
+            crate::tweaks::tcp::allowed(name)?
+                .contains(&value.as_str())
+                .then(|| (name.to_owned(), value))
+        })
+        .collect()
 }
 
 /// `InstanceId|Class|FriendlyName` lines from `Get-PnpDevice`: graphics
@@ -463,8 +510,8 @@ impl SystemBackend for WinSystem {
                     None => Err(no_such_card(gpu)),
                 }
             }
-            SysItem::TcpGlobal { .. } => Err(EngineError::Internal {
-                detail: format!("this version cannot change the {} yet", item.describe()),
+            SysItem::TcpGlobal { name } => Ok(SysState::Text {
+                text: self.tcp_global(name)?,
             }),
             SysItem::File { .. } => Err(EngineError::Internal {
                 detail: "files are read with read_file".into(),
@@ -585,6 +632,30 @@ impl SystemBackend for WinSystem {
             }
             // A setting the card does not have: nothing to put back.
             (SysItem::AmdSetting { setting, .. }, SysState::Absent) => amd_setting(setting).map(drop),
+            (SysItem::TcpGlobal { name }, SysState::Text { text }) => {
+                let value = text.to_ascii_lowercase();
+                if !crate::tweaks::tcp::allowed(name).is_some_and(|ok| ok.contains(&value.as_str())) {
+                    return Err(fail(
+                        "TCP settings",
+                        format!("{name}={text:?} is not a setting netsh takes"),
+                    ));
+                }
+                *self.tcp.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                tool(
+                    "netsh.exe",
+                    &["interface", "tcp", "set", "global", &format!("{name}={value}")],
+                )?;
+                // netsh can report success for a value it did not keep.
+                let now = self.tcp_global(name)?;
+                if now == value {
+                    Ok(())
+                } else {
+                    Err(fail(
+                        "TCP settings",
+                        format!("netsh set {name} to {value}, but Windows reports {now}"),
+                    ))
+                }
+            }
             (item, state) => Err(wrong_state(item, state)),
         }
     }
@@ -1122,6 +1193,65 @@ mod tests {
         println!("PnPCapabilities after Undo: {after:?}");
         assert_eq!(after, pc_before);
         assert_eq!(states(&engine), before);
+    }
+
+    #[test]
+    fn tcp_settings_are_parsed_in_lower_case_and_only_values_netsh_takes_are_kept() {
+        let out = "autotuninglevel|Normal\r\nrss|Enabled\r\necncapability|Disabled\r\n\
+                   chimney|Enabled\r\necncapability|Sometimes\r\nrss\r\n";
+        assert_eq!(
+            parse_tcp_globals(out),
+            [
+                ("autotuninglevel".to_owned(), "normal".to_owned()),
+                ("rss".to_owned(), "enabled".to_owned()),
+                ("ecncapability".to_owned(), "disabled".to_owned()),
+            ]
+        );
+    }
+
+    /// TCP settings (catalogue H23) on this PC: what `netsh` and PowerShell
+    /// each report, then (with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1) auto-tuning
+    /// and ECN each set to another value and back. RSS is only read: turning
+    /// it off can restart the runner's adapters.
+    #[test]
+    fn tcp_settings_are_set_and_put_back_on_this_pc() {
+        let s = WinSystem::new();
+        let show = || tool("netsh.exe", &["interface", "tcp", "show", "global"]);
+        println!("netsh before: {:?}", show());
+        println!(
+            "Get-NetTCPSetting: {:?}",
+            powershell(
+                "TCP templates",
+                "Get-NetTCPSetting | ForEach-Object { '{0}|{1}|{2}' -f $_.SettingName, $_.AutoTuningLevelLocal, \
+                 $_.EcnCapability }",
+                &[]
+            )
+        );
+        let item = |name: &str| SysItem::TcpGlobal { name: name.into() };
+        for (name, _) in crate::tweaks::tcp::SETTINGS {
+            println!("{name}: {:?}", s.read(&item(name)).unwrap());
+        }
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change TCP settings for real");
+            return;
+        }
+        for (name, a, b) in [
+            ("autotuninglevel", "normal", "restricted"),
+            ("ecncapability", "enabled", "disabled"),
+        ] {
+            let before = s.read(&item(name)).unwrap();
+            let other = if before == (SysState::Text { text: a.into() }) {
+                b
+            } else {
+                a
+            };
+            s.write(&item(name), &SysState::Text { text: other.into() }).unwrap();
+            println!("netsh with {name}={other}: {:?}", show());
+            assert_eq!(s.read(&item(name)).unwrap(), SysState::Text { text: other.into() });
+            s.write(&item(name), &before).unwrap();
+            assert_eq!(s.read(&item(name)).unwrap(), before, "{name} put back");
+        }
+        println!("netsh after: {:?}", show());
     }
 
     #[test]

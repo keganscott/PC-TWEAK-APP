@@ -19,12 +19,14 @@ pub mod session;
 pub mod startup;
 pub mod system_restore;
 pub mod tasks;
+pub mod tcp;
 
 /// Every tweak the engine knows about, in display order.
 pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     let mut all: Vec<Box<dyn Tweak>> = vec![Box::new(mouse_accel::MouseAcceleration)];
     all.extend(registry_values::all());
     all.push(Box::new(nagle::Nagle));
+    all.push(Box::new(tcp::TcpSettings));
     all.push(Box::new(dns::CloudflareDns));
     all.push(Box::new(cable::PreferCable));
     all.extend(adapter_props::all());

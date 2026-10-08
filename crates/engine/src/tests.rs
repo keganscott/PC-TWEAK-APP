@@ -2561,6 +2561,115 @@ mod prefer_cable {
     }
 }
 
+/// CATALOGUE H23 (tweaks/tcp.rs).
+mod tcp_tools {
+    use super::*;
+    use crate::system::{SysItem, SysState};
+    use crate::tweaks::tcp::{allowed, TcpSettings, ID, SETTINGS};
+
+    fn item(name: &str) -> SysItem {
+        SysItem::TcpGlobal { name: name.into() }
+    }
+
+    fn text(t: &str) -> SysState {
+        SysState::Text { text: t.into() }
+    }
+
+    fn pc(autotuning: &str, rss: &str, ecn: &str) -> Harness {
+        let h = Harness::new(vec![Box::new(TcpSettings)]);
+        h.sys.set(&item("autotuninglevel"), text(autotuning));
+        h.sys.set(&item("rss"), text(rss));
+        h.sys.set(&item("ecncapability"), text(ecn));
+        h
+    }
+
+    fn state(h: &Harness) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == ID)
+            .unwrap()
+            .state
+    }
+
+    fn changed(h: &Harness) -> Vec<SysItem> {
+        h.engine
+            .journal_view()
+            .records
+            .into_iter()
+            .filter_map(|r| match r {
+                Record::Change(c) => Some(c.item),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn changes_only_what_differs_and_undo_puts_it_back() {
+        let mut h = pc("normal", "enabled", "enabled");
+        assert_eq!(state(&h), TweakState::Default);
+
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&item("ecncapability")), text("disabled"));
+        assert_eq!(
+            changed(&h),
+            [item("ecncapability")],
+            "the two defaults are left as they are"
+        );
+        assert_eq!(state(&h), TweakState::Applied);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&item("ecncapability")), text("enabled"));
+        assert_eq!(h.sys.get(&item("autotuninglevel")), text("normal"));
+        assert_eq!(state(&h), TweakState::Default);
+    }
+
+    #[test]
+    fn auto_tuning_and_rss_turned_off_elsewhere_come_back_on_and_undo_restores_that() {
+        let mut h = pc("disabled", "disabled", "disabled");
+        h.engine.apply(ID).unwrap();
+        assert_eq!(h.sys.get(&item("autotuninglevel")), text("normal"));
+        assert_eq!(h.sys.get(&item("rss")), text("enabled"));
+        assert_eq!(changed(&h).len(), 2);
+
+        h.engine.revert(ID).unwrap();
+        assert_eq!(h.sys.get(&item("autotuninglevel")), text("disabled"));
+        assert_eq!(h.sys.get(&item("rss")), text("disabled"));
+        assert_eq!(h.sys.get(&item("ecncapability")), text("disabled"));
+    }
+
+    #[test]
+    fn already_set_this_way_reads_as_already_optimized_in_any_case() {
+        let h = pc("Normal", "ENABLED", "disabled");
+        assert_eq!(state(&h), TweakState::Foreign);
+    }
+
+    #[test]
+    fn a_setting_without_a_value_does_not_count_as_set() {
+        let h = Harness::new(vec![Box::new(TcpSettings)]);
+        h.sys.set(&item("autotuninglevel"), text("normal"));
+        h.sys.set(&item("rss"), text("enabled"));
+        // ECN not set: the fake reads it as absent, which is not "disabled".
+        // (Windows' backend reports an error instead, read as Unknown.)
+        assert_eq!(state(&h), TweakState::Default);
+    }
+
+    #[test]
+    fn it_declares_exactly_its_three_settings_and_sets_only_values_netsh_takes() {
+        assert_eq!(
+            TcpSettings.system_targets(),
+            [item("autotuninglevel"), item("rss"), item("ecncapability")]
+        );
+        assert!(TcpSettings.touches().is_empty());
+        for (name, value) in SETTINGS {
+            assert!(allowed(name).unwrap().contains(&value), "{name}={value}");
+        }
+        assert_eq!(allowed("chimney"), None, "a setting this tool does not list");
+        assert!(!TcpSettings.metadata().requires_reboot);
+    }
+}
+
 /// CATALOGUE H24 (tweaks/adapter_props.rs).
 mod adapter_tools {
     use super::*;

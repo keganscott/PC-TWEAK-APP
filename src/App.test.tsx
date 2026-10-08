@@ -476,7 +476,7 @@ describe("review regressions", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
     // Listed apart, folded, with the engine's reason and nothing to press.
-    const folded = (await screen.findByText("Sample setting A")).closest("details") as HTMLElement;
+    const folded = (await screen.findByText("Sample setting A")).closest("details") as HTMLDetailsElement;
     expect(folded.open).toBe(false);
     expect(within(folded).getByText("1 change does not apply to this PC")).toBeTruthy();
     expect(within(folded).getByText(`: ${reason.message}`, { exact: false })).toBeTruthy();

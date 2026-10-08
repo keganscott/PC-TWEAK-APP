@@ -9,6 +9,7 @@ pub mod nagle;
 pub mod power;
 pub mod registry_values;
 pub mod services;
+pub mod session;
 pub mod system_restore;
 pub mod tasks;
 
@@ -28,5 +29,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
 /// Tweaks the engine applies to itself. Never listed, never callable from IPC
 /// `apply_tweak`; revertable so `revert_all` leaves nothing behind.
 pub fn internal() -> Vec<Box<dyn Tweak>> {
-    vec![Box::new(system_restore::RestoreFrequency)]
+    let mut all: Vec<Box<dyn Tweak>> = vec![Box::new(system_restore::RestoreFrequency)];
+    all.extend(session::all());
+    all
 }

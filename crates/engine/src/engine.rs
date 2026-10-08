@@ -43,6 +43,17 @@ pub struct ContextInfo {
     pub tester_build: bool,
 }
 
+/// One Gaming Mode change when a game started (`Engine::start_play_session`).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStep {
+    pub tweak_id: String,
+    /// The change was made now (false: already so, or it failed).
+    pub made: bool,
+    pub error: Option<String>,
+}
+
 /// Outcome of one tweak in a `revert_all`.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
@@ -183,9 +194,26 @@ impl Engine {
 
     /// Replace the settings. Saved first; the in-memory copy changes only if the
     /// save worked, so what the UI shows is what is on disk.
+    /// Turning Gaming Mode off puts back its changes at once, game or not.
     pub fn set_settings(&mut self, settings: crate::settings::Settings) -> Result<crate::settings::Settings> {
         self.settings_store.save(&settings)?;
+        let ending = self.settings.gaming_mode && !settings.gaming_mode;
         self.settings = settings;
+        if ending {
+            let failed: Vec<String> = self
+                .end_play_session()
+                .into_iter()
+                .filter_map(|r| r.error.map(|e| format!("{}: {e}", r.tweak_id)))
+                .collect();
+            if !failed.is_empty() {
+                return Err(EngineError::Internal {
+                    detail: format!(
+                        "Gaming Mode is off, but some of its changes could not be put back: {}",
+                        failed.join("; ")
+                    ),
+                });
+            }
+        }
         Ok(self.settings.clone())
     }
 
@@ -522,6 +550,111 @@ impl Engine {
                 Err(e)
             }
         }
+    }
+
+    /// Gaming Mode's changes for a game that just started (`play.rs`), when the
+    /// user has Gaming Mode on. Each is its own journalled change under the
+    /// rules Apply follows: a plan that includes it and a verified restore
+    /// point. One whose result is already in place is left as it is, and so is
+    /// one still in effect from a session that never ended.
+    pub fn start_play_session(&mut self) -> Vec<SessionStep> {
+        if !self.settings.gaming_mode {
+            return Vec::new();
+        }
+        crate::tweaks::session::SESSION_IDS
+            .iter()
+            .map(|id| match self.make_session_change(id) {
+                Ok(made) => SessionStep {
+                    tweak_id: (*id).to_owned(),
+                    made,
+                    error: None,
+                },
+                Err(e) => SessionStep {
+                    tweak_id: (*id).to_owned(),
+                    made: false,
+                    // A block's own sentence is what the user reads.
+                    error: Some(match e {
+                        EngineError::Blocked { reason } => reason.message,
+                        other => other.to_string(),
+                    }),
+                },
+            })
+            .collect()
+    }
+
+    fn make_session_change(&mut self, id: &str) -> Result<bool> {
+        let Slot::Internal(idx) = self.slot_of(id)? else {
+            return Err(EngineError::Internal {
+                detail: format!("{id} is not a Gaming Mode change"),
+            });
+        };
+        if self.journal.is_applied(id) {
+            return Ok(false);
+        }
+        if let Some(reason) = self.tier_block(self.internal[idx].as_ref()) {
+            return Err(EngineError::Blocked { reason });
+        }
+        self.probe.invalidate();
+        if !self.probe.restore_gate_open() {
+            return Err(EngineError::Blocked {
+                reason: BlockedReason::new(
+                    BlockedCode::NoRestorePoint,
+                    "There is no verified restore point, so there is nothing to roll back to.",
+                ),
+            });
+        }
+        let Engine {
+            resolver,
+            journal,
+            internal,
+            ..
+        } = self;
+        let tweak = internal[idx].as_ref();
+        if tweak.read_state(resolver, false)? != TweakState::Default {
+            return Ok(false);
+        }
+        let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
+        let result = match tweak.apply(&mut tx) {
+            Ok(()) => tx.commit().map(|_| true),
+            Err(e) => {
+                let _ = tx.rollback();
+                Err(e)
+            }
+        };
+        self.probe.invalidate();
+        result
+    }
+
+    /// Put back every Gaming Mode change still in effect: the game closed,
+    /// Gaming Mode was turned off, or a session a crash left open.
+    pub fn end_play_session(&mut self) -> Vec<RevertResult> {
+        let open: Vec<&str> = crate::tweaks::session::SESSION_IDS
+            .iter()
+            .rev()
+            .copied()
+            .filter(|id| self.journal.is_applied(id))
+            .collect();
+        open.into_iter()
+            .map(|id| match self.revert(id) {
+                Ok(_) => RevertResult {
+                    tweak_id: id.to_owned(),
+                    ok: true,
+                    error: None,
+                },
+                Err(e) => RevertResult {
+                    tweak_id: id.to_owned(),
+                    ok: false,
+                    error: Some(e.to_string()),
+                },
+            })
+            .collect()
+    }
+
+    /// Some Gaming Mode change is in effect.
+    pub fn play_session_open(&self) -> bool {
+        crate::tweaks::session::SESSION_IDS
+            .iter()
+            .any(|id| self.journal.is_applied(id))
     }
 
     /// Journal a restore point that was created and verified, and make the next

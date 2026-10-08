@@ -2662,3 +2662,172 @@ mod task_tools {
         assert!(TELEMETRY_TASKS.touches().is_empty());
     }
 }
+
+/// CATALOGUE step 5: Gaming Mode's session changes (tweaks/session.rs),
+/// made when a game starts and put back when it closes.
+mod play_session {
+    use std::sync::Arc;
+
+    use crate::registry::{fake::FakeRegistry, Hive};
+    use crate::system::{FakeSystem, ServiceStart, SysItem, SysState};
+    use crate::testutil::{build_engine_with_system, Harness};
+    use crate::tweaks::session::{NOTIFICATIONS_ID, PUSH_NOTIFICATIONS, SEARCH_PAUSE_ID};
+    use crate::types::{RawValue, Tier};
+
+    fn wsearch() -> SysItem {
+        SysItem::Service { name: "WSearch".into() }
+    }
+
+    fn running(on: bool) -> SysState {
+        SysState::Service {
+            start: ServiceStart::DelayedAutomatic,
+            running: on,
+        }
+    }
+
+    fn toast(h: &Harness) -> Option<u32> {
+        h.fake
+            .read_value_for_test(Hive::CurrentUser, PUSH_NOTIFICATIONS, "ToastEnabled")
+            .and_then(|v| v.as_dword())
+    }
+
+    /// Search indexing installed and running; Gaming Mode on or off.
+    fn pc(gaming_mode: bool) -> Harness {
+        let mut h = Harness::new(Vec::new());
+        h.fake.set_external(
+            Hive::LocalMachine,
+            r"SYSTEM\CurrentControlSet\Services\WSearch",
+            "Start",
+            RawValue::dword(2),
+        );
+        h.sys.set(&wsearch(), running(true));
+        let mut s = h.engine.settings();
+        s.gaming_mode = gaming_mode;
+        h.engine.set_settings(s).unwrap();
+        h
+    }
+
+    #[test]
+    fn with_gaming_mode_off_a_game_starting_changes_nothing() {
+        let mut h = pc(false);
+        let before = h.fake.snapshot();
+        let steps = h.engine.start_play_session();
+        assert!(steps.is_empty(), "{steps:?}");
+        assert_eq!(h.fake.snapshot(), before);
+        assert_eq!(h.sys.get(&wsearch()), running(true));
+        assert!(!h.engine.play_session_open());
+    }
+
+    #[test]
+    fn a_game_starting_quiets_notifications_and_pauses_indexing_and_closing_it_puts_both_back() {
+        let mut h = pc(true);
+        let steps = h.engine.start_play_session();
+        assert!(steps.iter().all(|s| s.made && s.error.is_none()), "{steps:?}");
+        assert_eq!(steps.len(), 2);
+        assert_eq!(toast(&h), Some(0));
+        assert_eq!(h.sys.get(&wsearch()), running(false), "stopped, start type kept");
+        assert!(h.engine.play_session_open());
+        // Listed in Backups while in effect.
+        let backups: Vec<String> = h
+            .engine
+            .journal_view()
+            .applied
+            .into_iter()
+            .map(|a| a.tweak_id)
+            .collect();
+        assert!(backups.iter().any(|id| id == NOTIFICATIONS_ID) && backups.iter().any(|id| id == SEARCH_PAUSE_ID));
+
+        let ended = h.engine.end_play_session();
+        assert!(ended.iter().all(|r| r.ok), "{ended:?}");
+        assert_eq!(toast(&h), None, "the value did not exist before, so it is gone again");
+        assert_eq!(h.sys.get(&wsearch()), running(true));
+        assert!(!h.engine.play_session_open());
+        assert!(h.engine.journal_view().applied.is_empty());
+    }
+
+    #[test]
+    fn what_is_already_quiet_or_stopped_is_left_alone() {
+        let mut h = pc(true);
+        h.fake.set_external(
+            Hive::CurrentUser,
+            PUSH_NOTIFICATIONS,
+            "ToastEnabled",
+            RawValue::dword(0),
+        );
+        h.sys.set(&wsearch(), running(false));
+        let steps = h.engine.start_play_session();
+        assert!(steps.iter().all(|s| !s.made && s.error.is_none()), "{steps:?}");
+        assert!(!h.engine.play_session_open());
+        assert!(h.engine.end_play_session().is_empty());
+        assert_eq!(toast(&h), Some(0));
+    }
+
+    #[test]
+    fn without_a_restore_point_nothing_is_changed_and_the_reason_is_given() {
+        let fake = Arc::new(FakeRegistry::new());
+        let sys = Arc::new(FakeSystem::new());
+        sys.set(&wsearch(), running(true));
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = build_engine_with_system(&fake, &sys, dir.path(), Vec::new(), false, Tier::Ultimate);
+        let mut s = engine.settings();
+        s.gaming_mode = true;
+        engine.set_settings(s).unwrap();
+        let before = fake.snapshot();
+        let steps = engine.start_play_session();
+        assert!(!steps.is_empty());
+        assert!(steps
+            .iter()
+            .all(|s| !s.made && s.error.as_deref().is_some_and(|e| e.contains("restore point"))));
+        assert_eq!(fake.snapshot(), before);
+        assert_eq!(sys.get(&wsearch()), running(true));
+    }
+
+    #[test]
+    fn a_plan_without_gaming_mode_changes_nothing() {
+        let fake = Arc::new(FakeRegistry::new());
+        let sys = Arc::new(FakeSystem::new());
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = build_engine_with_system(&fake, &sys, dir.path(), Vec::new(), true, Tier::Free);
+        let mut s = engine.settings();
+        s.gaming_mode = true;
+        engine.set_settings(s).unwrap();
+        let steps = engine.start_play_session();
+        assert!(steps.iter().all(|s| !s.made && s.error.is_some()), "{steps:?}");
+        assert!(fake.snapshot().is_empty());
+    }
+
+    #[test]
+    fn turning_gaming_mode_off_during_a_game_puts_its_changes_back() {
+        let mut h = pc(true);
+        h.engine.start_play_session();
+        let mut s = h.engine.settings();
+        s.gaming_mode = false;
+        h.engine.set_settings(s).unwrap();
+        assert!(!h.engine.play_session_open());
+        assert_eq!(toast(&h), None);
+        assert_eq!(h.sys.get(&wsearch()), running(true));
+    }
+
+    #[test]
+    fn a_session_left_open_by_a_crash_is_put_back_after_a_restart() {
+        let mut h = pc(true);
+        h.engine.start_play_session();
+        h.restart(Vec::new());
+        assert!(h.engine.play_session_open(), "the journal still has it");
+        let ended = h.engine.end_play_session();
+        assert_eq!(ended.len(), 2, "{ended:?}");
+        assert_eq!(toast(&h), None);
+        assert_eq!(h.sys.get(&wsearch()), running(true));
+    }
+
+    #[test]
+    fn session_changes_are_not_listed_as_tools_but_undo_all_reaches_them() {
+        let mut h = pc(true);
+        h.engine.start_play_session();
+        assert!(h.engine.list().unwrap().is_empty());
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(!h.engine.play_session_open());
+        assert_eq!(toast(&h), None);
+    }
+}

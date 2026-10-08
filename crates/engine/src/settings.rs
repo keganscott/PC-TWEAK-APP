@@ -1,8 +1,11 @@
 //! The few choices a user makes that are not tweaks: a rig-class override
 //! (plan 6.1: "User can override"), the plain/technical wording (plan
-//! section 7), and whether the first-run welcome was seen. Stored as `settings.json` in the protected data directory.
+//! section 7), whether the first-run welcome was seen, and the two "while you
+//! play" switches (Gaming Mode, game timer). Stored as `settings.json` in the
+//! protected data directory.
 //!
-//! Settings are preferences only. They change defaults and copy; they never
+//! Settings are preferences only. They change defaults, copy and what happens
+//! while a game runs (each change still under the usual rules); they never
 //! open a gate, change a licence or hide a safety check, and nothing in here is
 //! read by a predicate. A missing, unreadable or corrupt file gives the
 //! defaults; the corrupt file is left in place until the next save replaces it.
@@ -40,6 +43,12 @@ pub struct Settings {
     /// The first-run welcome was shown and closed. Missing in older files,
     /// which then show it once.
     pub welcome_seen: bool,
+    /// Gaming Mode: notifications off and search indexing paused while a known
+    /// game runs (`tweaks::session`). Off unless the user turns it on.
+    pub gaming_mode: bool,
+    /// Ask Windows for its finest timer while a known game runs (`play.rs`).
+    /// Off unless the user turns it on.
+    pub game_timer: bool,
 }
 
 /// Where settings live. `None` (tests, dev) keeps them in memory only.
@@ -100,6 +109,7 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.language, Language::Plain);
         assert_eq!(s.rig_class_override, None);
+        assert!(!s.gaming_mode && !s.game_timer);
     }
 
     #[test]
@@ -109,6 +119,8 @@ mod tests {
             rig_class_override: Some(RigClass::High),
             language: Language::Technical,
             welcome_seen: true,
+            gaming_mode: true,
+            game_timer: true,
         };
         store(dir.path()).save(&s).unwrap();
         assert_eq!(store(dir.path()).load(), s);
@@ -144,6 +156,7 @@ mod tests {
         assert_eq!(s.language, Language::Technical);
         assert_eq!(s.rig_class_override, None);
         assert!(!s.welcome_seen, "a file from before the welcome existed shows it once");
+        assert!(!s.gaming_mode && !s.game_timer, "the while-you-play switches start off");
     }
 
     #[test]

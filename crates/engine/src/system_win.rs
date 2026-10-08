@@ -936,4 +936,88 @@ mod tests {
             ids.len()
         );
     }
+
+    /// Evidence for CATALOGUE step 5 (NOTES N79): Gaming Mode made and put
+    /// back through the real engine, as the game watcher does when a game
+    /// starts and closes, with this PC read before, during and after. Gated
+    /// like the test above: it changes nothing unless
+    /// `PEAKTWEAKS_REAL_SYSTEM_CHANGES=1`.
+    #[test]
+    fn gaming_mode_starts_and_ends_on_this_pc() {
+        use std::sync::Arc;
+
+        use crate::context::{ContextResolver, UserContext, UserResolution};
+        use crate::engine::Engine;
+        use crate::env::{License, StubProbe};
+        use crate::journal::Journal;
+        use crate::registry::{Hive, RegistryBackend};
+        use crate::secure_dir::TrustedDir;
+        use crate::tweaks::session::PUSH_NOTIFICATIONS;
+        use crate::types::Tier;
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!(
+                "SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to turn notifications off and stop Windows Search \
+                 on this PC for real"
+            );
+            return;
+        }
+
+        let sys = Arc::new(WinSystem::new());
+        let reg = Arc::new(WinRegistry::new());
+        let snapshot = || -> Vec<String> {
+            vec![
+                format!(
+                    "ToastEnabled: {:?}",
+                    reg.read_value(Hive::CurrentUser, PUSH_NOTIFICATIONS, "ToastEnabled")
+                ),
+                format!(
+                    "Service WSearch: {:?}",
+                    sys.read(&SysItem::Service { name: "WSearch".into() })
+                ),
+            ]
+        };
+        let before = snapshot();
+        println!("before: {before:?}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserContext {
+            sid: crate::identity::current_process_sid().unwrap(),
+            resolution: UserResolution::OwnToken,
+            is_self: true,
+        };
+        let resolver = ContextResolver::new(user, crate::identity::is_elevated(), reg.clone()).with_system(sys.clone());
+        let mut engine = Engine::new(
+            resolver,
+            Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+            Vec::new(),
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        );
+        let mut settings = engine.settings();
+        settings.gaming_mode = true;
+        engine.set_settings(settings).unwrap();
+
+        let steps = engine.start_play_session();
+        for step in &steps {
+            println!("start: {step:?}");
+            assert!(step.error.is_none(), "{step:?}");
+        }
+        println!("during: {:?}", snapshot());
+        println!("in Backups: {:?}", engine.journal_view().applied);
+
+        for r in engine.end_play_session() {
+            println!("end: {r:?}");
+            assert!(r.ok, "{r:?}");
+        }
+        assert!(!engine.play_session_open());
+        let after = snapshot();
+        println!("after: {after:?}");
+        assert_eq!(after, before, "this PC reads back differently after Gaming Mode ended");
+        println!(
+            "Gaming Mode made {} of {} changes and put them back",
+            steps.iter().filter(|s| s.made).count(),
+            steps.len()
+        );
+    }
 }

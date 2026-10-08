@@ -10,6 +10,7 @@
     "allow-engine-context",
     "allow-list-tweaks",
     "allow-list-games",
+    "allow-play-status",
     "allow-get-settings",
     "allow-set-settings",
     "allow-select-target-game",

@@ -21,6 +21,7 @@ pub mod instance;
 pub mod journal;
 pub mod memory;
 pub mod offline;
+pub mod play;
 pub mod power;
 pub mod probe;
 pub mod proc;

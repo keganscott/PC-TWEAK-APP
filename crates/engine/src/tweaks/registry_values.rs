@@ -59,7 +59,7 @@ pub struct Setting {
     pub absent_matches: bool,
 }
 
-const fn dword(key: &'static str, value: &'static str, data: u32) -> Setting {
+pub(crate) const fn dword(key: &'static str, value: &'static str, data: u32) -> Setting {
     Setting {
         key,
         value,

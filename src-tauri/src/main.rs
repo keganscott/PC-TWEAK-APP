@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod command_audit;
 mod commands;
+mod play;
 
 use peaktweaks_engine::env::License;
 use peaktweaks_engine::tweaks;
@@ -88,13 +89,19 @@ fn main() {
                     commands::EngineHandle::failed(e)
                 }
             };
+            let status = play::new_status();
+            if let Some(engine) = handle.shared() {
+                play::start(app.handle().clone(), engine, status.clone());
+            }
             tauri::Manager::manage(app, handle);
+            tauri::Manager::manage(app, status);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::engine_context,
             commands::list_tweaks,
             commands::list_games,
+            commands::play_status,
             commands::get_settings,
             commands::set_settings,
             commands::select_target_game,

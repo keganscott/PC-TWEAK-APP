@@ -5,6 +5,7 @@ const COMMANDS: &[&str] = &[
     "engine_context",
     "list_tweaks",
     "list_games",
+    "play_status",
     "get_settings",
     "set_settings",
     "select_target_game",

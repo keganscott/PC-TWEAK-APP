@@ -23,6 +23,7 @@ use crate::journal::{
     OneTimeAction, Record, RestoreMethod, RestorePointRecord,
 };
 use crate::memory::{MemoryUse, StandbyPurge};
+use crate::play::PlayStatus;
 use crate::proof::metrics::compute_stats;
 use crate::proof::nvml::{ThrottleReason, ThrottleSeen, ThrottleSummary};
 use crate::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
@@ -530,6 +531,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { DriveOptimization } from \"./DriveOptimization\";\n\
          import type { EngineError } from \"./EngineError\";\n\
          import type { JournalView } from \"./JournalView\";\n\
+         import type { PlayStatus } from \"./PlayStatus\";\n\
          import type { Progress } from \"./Progress\";\n\
          import type { ProofRun } from \"./ProofRun\";\n\
          import type { ProofSessionSummary } from \"./ProofSessionSummary\";\n\
@@ -636,6 +638,20 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             stage: "apply".into(),
             tweak_id: Some("input.mouseaccel".into()),
             message: "Applying".into(),
+        },
+    );
+
+    // A game running with Gaming Mode on and the timer held at 0.5 ms.
+    ts_const(
+        &mut out,
+        "playStatus",
+        "PlayStatus",
+        &PlayStatus {
+            game: Some("fortnite".into()),
+            gaming_mode_active: true,
+            timer_held: Some(5_000),
+            problem: None,
+            ..PlayStatus::watching()
         },
     );
 

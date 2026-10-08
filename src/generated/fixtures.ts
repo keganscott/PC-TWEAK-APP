@@ -7,6 +7,7 @@ import type { ContextInfo } from "./ContextInfo";
 import type { DriveOptimization } from "./DriveOptimization";
 import type { EngineError } from "./EngineError";
 import type { JournalView } from "./JournalView";
+import type { PlayStatus } from "./PlayStatus";
 import type { Progress } from "./Progress";
 import type { ProofRun } from "./ProofRun";
 import type { ProofSessionSummary } from "./ProofSessionSummary";
@@ -705,7 +706,9 @@ export const systemAudit = {
   "settings": {
     "rigClassOverride": null,
     "language": "plain",
-    "welcomeSeen": false
+    "welcomeSeen": false,
+    "gamingMode": false,
+    "gameTimer": false
   },
   "effectiveRigClass": "mid"
 } satisfies SystemAudit;
@@ -913,4 +916,16 @@ export const progressEvent = {
   "tweakId": "input.mouseaccel",
   "message": "Applying"
 } satisfies Progress;
+
+export const playStatus = {
+  "game": "fortnite",
+  "gamingModeActive": true,
+  "timerHeld": 5000,
+  "problem": null,
+  "watched": [
+    "fortnite",
+    "roblox",
+    "minecraft"
+  ]
+} satisfies PlayStatus;
 

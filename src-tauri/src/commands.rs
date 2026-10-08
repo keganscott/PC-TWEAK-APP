@@ -19,12 +19,15 @@ use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
 use peaktweaks_engine::journal::{now_ms, ActionDone, JournalEntry, OneTimeAction};
 use peaktweaks_engine::memory::{self, StandbyPurge};
+use peaktweaks_engine::play::PlayStatus;
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use peaktweaks_engine::proof::verdict::Comparison;
 use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
 use peaktweaks_engine::settings::Settings;
 use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, SystemAudit, TweakView};
+
+use crate::play::SharedPlay;
 
 pub type SharedEngine = Arc<Mutex<Engine>>;
 
@@ -45,6 +48,11 @@ impl EngineHandle {
 
     fn get(&self) -> Result<SharedEngine> {
         self.0.clone()
+    }
+
+    /// The engine, when it started (for the game watcher).
+    pub fn shared(&self) -> Option<SharedEngine> {
+        self.0.as_ref().ok().cloned()
     }
 }
 
@@ -142,6 +150,14 @@ pub async fn set_settings(engine: State<'_, EngineHandle>, settings: Settings) -
 #[tauri::command]
 pub async fn list_games() -> Result<Vec<GameInfo>> {
     Ok(KNOWN_GAMES.to_vec())
+}
+
+/// Which known game is running and what is in effect for it (the game watcher,
+/// `play.rs`). Before the watcher's first look, or when the engine did not
+/// start, no game and nothing in effect.
+#[tauri::command]
+pub async fn play_status(play: State<'_, SharedPlay>) -> Result<PlayStatus> {
+    Ok(play.lock().unwrap_or_else(PoisonError::into_inner).clone())
 }
 
 /// Pick (or clear) the target game. The id is validated against the engine's

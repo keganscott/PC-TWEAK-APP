@@ -224,6 +224,14 @@ jobs:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 power_and_service_tools_apply_and_undo_on_this_pc reads_scheduled_tasks_through_the_task_scheduler_on_this_pc
 
+      # Catalogue step 5: the running programs and the timer read (and the
+      # timer held for a moment) by the game watcher's own code, and Gaming
+      # Mode made and put back through the engine for real (same gate as above).
+      - name: Game watcher and Gaming Mode on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 lists_running_programs_and_reads_the_timer_on_this_pc gaming_mode_starts_and_ends_on_this_pc
+
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the
       # .reg backups (scratch keys under HKCU only).

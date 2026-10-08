@@ -11,4 +11,14 @@ rigClassOverride: RigClass | null, language: Language,
  * The first-run welcome was shown and closed. Missing in older files,
  * which then show it once.
  */
-welcomeSeen: boolean, };
+welcomeSeen: boolean, 
+/**
+ * Gaming Mode: notifications off and search indexing paused while a known
+ * game runs (`tweaks::session`). Off unless the user turns it on.
+ */
+gamingMode: boolean, 
+/**
+ * Ask Windows for its finest timer while a known game runs (`play.rs`).
+ * Off unless the user turns it on.
+ */
+gameTimer: boolean, };

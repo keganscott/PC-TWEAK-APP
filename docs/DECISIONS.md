@@ -235,3 +235,14 @@ Kegan, in chat: "Any single feature that Hone has you can do", and "any single f
 3. **Fewer warnings.** No warning on well-supported changes; one short line only where there is a real cost (restart needed, battery, connection drops for a few seconds); one confirmation only for Advanced changes. The safety net is unchanged: a verified restore point before the first change, a `.reg` backup and journal record before each one, Undo and Undo all.
 4. **Never-do still stands.** Plan section 12's list is unchanged. If a Hone or ExitLag feature needs one of its items (Memory Integrity/VBS off, Secure Boot/TPM/IOMMU, game memory or injection, Roblox fast flags or FPS unlockers, game CPU affinity, BIOS, vulnerable drivers), it is not built; Kegan is asked first.
 5. **Not buildable:** E1 (ExitLag's routing over its own server network). It stays listed in the catalogue as such.
+
+### 15.23 While you play: session changes and the game watcher (Claude, 2026-10-08)
+
+Catalogue step 5 (NOTES N79).
+
+1. **Gaming Mode's changes are tweaks, not a side channel.** Each one is an internal tweak (`tweaks::session`) made through `Transaction`, so it keeps the safety net: restore point first, `.reg` backup and journal record before the write, listed in Backups while in effect, Undo and Undo all reach it. They are not listed in Tools because the watcher, not the user, makes them. A session that a crash or power cut left open is put back at the next start with no game running.
+2. **Off by default.** Gaming Mode and the game timer are switches in Tools, both off until the user turns them on, so nothing changes because a game started unless asked.
+3. **The timer request is not journalled.** It is held by the app's process and Windows drops it when the process ends, so there is nothing on disk to back up or undo.
+4. **Names only.** The watcher reads running program names; it never opens, reads or changes a game process (plan section 12). Programs whose name other software shares (Minecraft Java's `javaw.exe`) are not watched.
+5. **Not in Gaming Mode:** pausing Windows Update (Kegan's brief: never touch Windows Update) and raising the game's priority (the per-game tool H31).
+

@@ -19,6 +19,7 @@ import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
 import type { JournalEntry } from "./generated/JournalEntry";
 import type { JournalView } from "./generated/JournalView";
+import type { PlayStatus } from "./generated/PlayStatus";
 import type { Progress } from "./generated/Progress";
 import type { ProofRun } from "./generated/ProofRun";
 import type { ProofSession } from "./generated/ProofSession";
@@ -81,6 +82,8 @@ export const engine = {
   context: () => call<ContextInfo>("engine_context"),
   listTweaks: () => call<TweakView[]>("list_tweaks"),
   listGames: () => call<GameInfo[]>("list_games"),
+  /** Which known game is running and what is in effect for it. Also sent as `onPlay`. */
+  playStatus: () => call<PlayStatus>("play_status"),
   /** Preferences: rig-class override and plain/technical wording. Never a gate or licence. */
   getSettings: () => call<Settings>("get_settings"),
   /** Replace the preferences; resolves to what is now stored. */
@@ -120,6 +123,11 @@ export const proof = {
   listSessions: () => call<ProofSessionSummary[]>("proof_list_sessions"),
   runs: (sessionId: string) => call<ProofRun[]>("proof_runs", { sessionId }),
 };
+
+/** Subscribe to the game watcher: a game started or closed, or what is in effect changed. */
+export function onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn> {
+  return listen<PlayStatus>("engine://play", (event) => handler(event.payload));
+}
 
 /** Subscribe to progress events from long-running commands. */
 export function onProgress(handler: (p: Progress) => void): Promise<UnlistenFn> {

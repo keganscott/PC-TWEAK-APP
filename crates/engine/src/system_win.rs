@@ -1280,40 +1280,67 @@ mod tests {
         println!("netsh after: {:?}", show());
     }
 
-    /// Game traffic priority (catalogue H26) on this PC: a policy with the
-    /// tool's values, written where Group Policy keeps them, for a program
-    /// that does not exist, must show in Windows' active QoS policies after a
-    /// policy refresh, with DSCP 46; then it is removed and refreshed away.
+    /// Game traffic priority (catalogue H26) on this PC, two ways to add a
+    /// policy for a program that does not exist, each reported, then removed:
+    /// (a) the tool's way, the values written where Group Policy keeps them
+    /// and a policy refresh; (b) `New-NetQosPolicy`, Windows' own command.
+    /// Run 37783028224 showed (a) absent from `Get-NetQosPolicy -PolicyStore
+    /// ActiveStore` after `gpupdate` (NOTES N91), so this reports what each
+    /// way leaves in Windows' QoS stores and in the registry rather than
+    /// failing on it; it fails only if anything of its own is left behind.
     /// Run only with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1.
     #[test]
-    fn a_qos_policy_written_like_the_tool_reaches_windows_on_this_pc() {
+    fn qos_policies_added_two_ways_on_this_pc() {
         use crate::tweaks::qos::{APPLICATION, FIXED, NO_NLA, POLICIES, TCPIP_QOS};
         use crate::types::RawValue;
 
         if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
-            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to add a QoS policy for real");
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to add QoS policies for real");
             return;
         }
+        const LIST: &str = "foreach ($store in 'ActiveStore', $null) { \
+             $p = if ($store) { Get-NetQosPolicy -PolicyStore $store -ErrorAction SilentlyContinue } \
+                  else { Get-NetQosPolicy -ErrorAction SilentlyContinue }; \
+             foreach ($q in $p) { '{0}: {1}|{2}|{3}|{4}|{5}' -f $(if ($store) { $store } else { 'default' }), \
+                 $q.Name, $q.AppPathNameMatchCondition, $q.DSCPAction, $q.NetworkProfile, $q.Owner } }; exit 0";
+        // Where Windows keeps a policy: every registry key under these whose
+        // name, value names or data mention ours (reg.exe exits 1 on none).
+        let find = || -> Vec<String> {
+            let mut keys = Vec::new();
+            for root in [
+                r"HKLM\SOFTWARE\Policies\Microsoft\Windows",
+                r"HKLM\SYSTEM\CurrentControlSet\Services",
+                r"HKLM\SYSTEM\CurrentControlSet\Control",
+            ] {
+                match tool("reg.exe", &["query", root, "/f", "PeakTweaks CI check", "/s"]) {
+                    Ok(out) => keys.extend(out.lines().filter(|l| l.starts_with("HKEY_")).map(str::to_owned)),
+                    Err(EngineError::Command { exit_code: Some(1), .. }) => {}
+                    Err(e) => println!("searching {root}: {e}"),
+                }
+            }
+            keys
+        };
+        let list = || powershell("QoS policies", LIST, &[]);
+        let ours = |out: &Result<String>, name: &str| -> Option<String> {
+            out.as_ref()
+                .ok()?
+                .lines()
+                .find(|l| l.split(": ").nth(1).is_some_and(|r| r.starts_with(&format!("{name}|"))))
+                .map(str::to_owned)
+        };
+        println!("before: {:?}", list());
+
+        // (a) The tool's way.
         let reg = WinRegistry::new();
-        let key = format!(r"{POLICIES}\PeakTweaks CI check");
+        let key = format!(r"{POLICIES}\PeakTweaks CI check A");
         let qos_key_existed = reg.key_exists(Hive::LocalMachine, POLICIES).unwrap();
         let nla_before = reg.read_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA).unwrap();
-        println!("{NO_NLA} before: {nla_before:?}; QoS policy key existed: {qos_key_existed}");
-        let active = || {
-            powershell(
-                "QoS policies",
-                "Get-NetQosPolicy -PolicyStore ActiveStore -ErrorAction SilentlyContinue | ForEach-Object { \
-                 '{0}|{1}|{2}|{3}' -f $_.Name, $_.AppPathNameMatchCondition, $_.DSCPAction, $_.Owner }",
-                &[],
-            )
-        };
-        println!("active before: {:?}", active());
-
+        println!("(a) {NO_NLA} before: {nla_before:?}; QoS policy key existed: {qos_key_existed}");
         reg.write_value(
             Hive::LocalMachine,
             &key,
             APPLICATION,
-            &RawValue::sz("peaktweaks-ci-check.exe"),
+            &RawValue::sz("peaktweaks-ci-check-a.exe"),
         )
         .unwrap();
         for (name, value) in FIXED {
@@ -1322,12 +1349,13 @@ mod tests {
         }
         reg.write_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA, &RawValue::sz("1"))
             .unwrap();
-        let refresh = WinSystem::new().run(&SideEffect::RefreshPolicy);
-        println!("policy refresh: {refresh:?}");
-        let during = active();
-        println!("active with the policy: {during:?}");
-
-        // Put everything back before judging.
+        println!(
+            "(a) policy refresh: {:?}",
+            WinSystem::new().run(&SideEffect::RefreshPolicy)
+        );
+        let a_listed = list();
+        println!("(a) listed: {a_listed:?}");
+        println!("(a) in the registry: {:?}", find());
         for (name, _) in FIXED {
             reg.delete_value(Hive::LocalMachine, &key, name).unwrap();
         }
@@ -1341,24 +1369,60 @@ mod tests {
             None => drop(reg.delete_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA).unwrap()),
         }
         println!(
-            "policy refresh after: {:?}",
+            "(a) policy refresh after: {:?}",
             WinSystem::new().run(&SideEffect::RefreshPolicy)
         );
-        let after = active();
-        println!("active after: {after:?}");
 
-        refresh.unwrap();
-        let line = during
-            .unwrap()
-            .lines()
-            .find(|l| l.starts_with("PeakTweaks CI check|"))
-            .map(str::to_owned);
-        let line = line.expect("the policy is active after a refresh");
-        assert!(line.contains("peaktweaks-ci-check.exe"), "{line}");
-        assert!(line.contains("|46|"), "{line}");
+        // (b) Windows' own command, every network type, TCP and UDP.
+        let added = powershell(
+            "New-NetQosPolicy",
+            "New-NetQosPolicy -Name 'PeakTweaks CI check B' -AppPathNameMatchCondition 'peaktweaks-ci-check-b.exe' \
+             -DSCPAction 46 -NetworkProfile All -IPProtocolMatchCondition Both -ErrorAction Stop | \
+             ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.Name, $_.DSCPAction, $_.NetworkProfile, $_.Owner }",
+            &[],
+        );
+        println!("(b) New-NetQosPolicy: {added:?}");
+        let b_listed = list();
+        println!("(b) listed: {b_listed:?}");
+        println!("(b) in the registry: {:?}", find());
+        println!(
+            "(b) removed: {:?}",
+            powershell(
+                "Remove-NetQosPolicy",
+                "Get-NetQosPolicy -Name 'PeakTweaks CI check B' -ErrorAction SilentlyContinue | \
+                 Remove-NetQosPolicy -Confirm:$false -ErrorAction Stop",
+                &[],
+            )
+        );
+
+        let after = list();
+        println!("after: {after:?}");
+        let left = find();
+        println!("in the registry after: {left:?}");
+        for (way, listed, name) in [
+            (
+                "(a) the tool's registry values and a policy refresh",
+                &a_listed,
+                "PeakTweaks CI check A",
+            ),
+            ("(b) New-NetQosPolicy", &b_listed, "PeakTweaks CI check B"),
+        ] {
+            let active = ours(listed, name).filter(|l| l.starts_with("ActiveStore: "));
+            println!(
+                "VERDICT {way}: {}",
+                match &active {
+                    Some(l) if l.contains("|46|") => format!("active with DSCP 46 ({l})"),
+                    Some(l) => format!("active, but not with DSCP 46 ({l})"),
+                    None => "NOT in Windows' active QoS policies".to_owned(),
+                }
+            );
+        }
+        for name in ["PeakTweaks CI check A", "PeakTweaks CI check B"] {
+            assert!(ours(&after, name).is_none(), "{name} is still listed: {after:?}");
+        }
         assert!(
-            !after.unwrap().contains("PeakTweaks CI check"),
-            "gone after Undo and a refresh"
+            left.is_empty(),
+            "a policy of this test is left in the registry: {left:?}"
         );
     }
 

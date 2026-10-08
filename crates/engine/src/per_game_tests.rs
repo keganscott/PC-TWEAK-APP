@@ -501,3 +501,182 @@ mod game_qos {
         assert!(names.iter().all(|n| !n.contains('*')));
     }
 }
+
+/// Evidence on a real Windows (CI step "Per-game tools on this runner"): the
+/// csrss priority, a game's priority and fullscreen optimizations applied and
+/// undone through the engine on the real registry, every value printed before,
+/// during and after, and the fullscreen `.reg` backup imported with Windows'
+/// own `reg.exe`. The game is made up for the test (an install path that does
+/// not exist), so no real game's setting is touched. Changes nothing unless
+/// `PEAKTWEAKS_REAL_SYSTEM_CHANGES=1`, which only that CI step sets.
+#[cfg(windows)]
+#[test]
+fn per_game_tools_apply_and_undo_on_this_pc() {
+    use std::process::Command;
+
+    use crate::context::{UserContext, UserResolution};
+    use crate::identity;
+    use crate::registry::windows::WinRegistry;
+
+    if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+        println!(
+            "SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to set and undo csrss and game priority and a \
+             fullscreen setting on this PC for real"
+        );
+        return;
+    }
+    let reg = Arc::new(WinRegistry::new());
+    let exe = format!(
+        r"C:\PeakTweaksTest-{}\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe",
+        std::process::id()
+    );
+
+    /// Removes the made-up game's setting however the test ends.
+    struct Cleanup(Arc<WinRegistry>, String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = self.0.delete_value(Hive::CurrentUser, LAYERS, &self.1);
+        }
+    }
+    let _cleanup = Cleanup(reg.clone(), exe.clone());
+    // A layer the user set before: it must survive apply, reg.exe and Undo.
+    reg.write_value(Hive::CurrentUser, LAYERS, &exe, &RawValue::sz("~ RUNASADMIN"))
+        .unwrap();
+
+    let csrss = format!(r"{IFEO}\csrss.exe\PerfOptions");
+    let apex = format!(r"{IFEO}\r5apex.exe\PerfOptions");
+    let apex12 = format!(r"{IFEO}\r5apex_dx12.exe\PerfOptions");
+    let values: Vec<(Hive, String, &str)> = vec![
+        (Hive::LocalMachine, csrss.clone(), "CpuPriorityClass"),
+        (Hive::LocalMachine, csrss.clone(), "IoPriority"),
+        (Hive::LocalMachine, apex.clone(), "CpuPriorityClass"),
+        (Hive::LocalMachine, apex12.clone(), "CpuPriorityClass"),
+        (Hive::CurrentUser, LAYERS.to_owned(), exe.as_str()),
+    ];
+    let read = |label: &str| -> Vec<Option<RawValue>> {
+        let now: Vec<Option<RawValue>> = values
+            .iter()
+            .map(|(hive, key, name)| reg.read_value(*hive, key, name).unwrap())
+            .collect();
+        for ((hive, key, name), v) in values.iter().zip(&now) {
+            let shown = match v {
+                None => "absent".to_owned(),
+                Some(v) => v
+                    .as_dword()
+                    .map(|d| d.to_string())
+                    .or_else(|| v.as_sz().map(|s| format!("{s:?}")))
+                    .unwrap_or_else(|| format!("type {}", v.vtype)),
+            };
+            println!("{label}: {hive:?}\\{key}\\{name} = {shown}");
+        }
+        now
+    };
+    let keys = [csrss.as_str(), apex.as_str(), apex12.as_str()];
+    let keys_before: Vec<bool> = keys
+        .iter()
+        .map(|k| reg.key_exists(Hive::LocalMachine, k).unwrap())
+        .collect();
+    let before = read("before");
+
+    let user = UserContext {
+        sid: identity::current_process_sid().unwrap(),
+        resolution: UserResolution::OwnToken,
+        is_self: true,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = Engine::new(
+        ContextResolver::new(user, identity::is_elevated(), reg.clone()),
+        Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+        vec![
+            Box::new(CsrssPriority),
+            Box::new(IfeoPriority::for_game("apex").unwrap().cleared_for_tests()),
+            Box::new(
+                FullscreenOptimizations::for_game("fortnite")
+                    .unwrap()
+                    .cleared_for_tests(),
+            ),
+        ],
+        Box::new(GamesProbe(Arc::new(Mutex::new(Some(vec![
+            install("fortnite", Some(&exe)),
+            install("apex", None),
+        ]))))),
+        License::dev(Tier::Ultimate),
+    );
+    engine.rescan();
+    let ids = ["scheduling.csrss", "priority.ifeo.apex", "gaming.fullscreen.fortnite"];
+    let states = |engine: &Engine| -> Vec<TweakState> {
+        let list = engine.list().unwrap();
+        ids.iter()
+            .map(|id| list.iter().find(|v| v.metadata.id == *id).unwrap().state.clone())
+            .collect()
+    };
+    println!("states before: {:?}", states(&engine));
+
+    let mut fullscreen_backups = Vec::new();
+    for id in ids {
+        let entries = engine.apply(id).unwrap();
+        println!(
+            "applied {id}: {} writes, backups {:?}",
+            entries.len(),
+            entries.iter().map(|e| &e.backup_file).collect::<Vec<_>>()
+        );
+        if id.starts_with("gaming.") {
+            fullscreen_backups = entries.iter().map(|e| e.backup_file.clone()).collect();
+        }
+    }
+    let during = read("applied");
+    assert_eq!(
+        during[0].as_ref().and_then(RawValue::as_dword),
+        Some(4),
+        "csrss Realtime"
+    );
+    assert_eq!(
+        during[1].as_ref().and_then(RawValue::as_dword),
+        Some(3),
+        "csrss I/O High"
+    );
+    assert_eq!(during[2].as_ref().and_then(RawValue::as_dword), Some(3), "Apex High");
+    assert_eq!(
+        during[3].as_ref().and_then(RawValue::as_dword),
+        Some(3),
+        "Apex DirectX 12 High"
+    );
+    assert_eq!(
+        during[4].as_ref().and_then(RawValue::as_sz).as_deref(),
+        Some("~ RUNASADMIN DISABLEDXMAXIMIZEDWINDOWEDMODE")
+    );
+    assert_eq!(states(&engine), vec![TweakState::Applied; 3]);
+
+    // The offline path: Windows' own reg.exe puts the earlier layers back
+    // from the backup, a value named by a full program path included.
+    assert_eq!(fullscreen_backups.len(), 1);
+    let file = dir.path().join(&fullscreen_backups[0]);
+    let out = Command::new("reg.exe").arg("import").arg(&file).output().unwrap();
+    assert!(
+        out.status.success(),
+        "reg import {} failed: {}{}",
+        file.display(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let imported = read("after reg.exe import of the fullscreen backup")[4].clone();
+    assert_eq!(
+        imported.as_ref().and_then(RawValue::as_sz).as_deref(),
+        Some("~ RUNASADMIN")
+    );
+    assert_eq!(states(&engine)[2], TweakState::Drifted);
+
+    for id in ids {
+        engine.revert(id).unwrap();
+    }
+    let after = read("undone");
+    assert_eq!(after, before, "Undo puts every value back exactly");
+    let keys_after: Vec<bool> = keys
+        .iter()
+        .map(|k| reg.key_exists(Hive::LocalMachine, k).unwrap())
+        .collect();
+    assert_eq!(keys_after, keys_before, "keys Undo created are gone again");
+    println!(
+        "per-game tools on this PC: 3 applied, backup imported with reg.exe, 3 undone; keys there before: {keys_before:?}"
+    );
+}

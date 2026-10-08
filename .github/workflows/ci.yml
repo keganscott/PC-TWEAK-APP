@@ -330,6 +330,15 @@ jobs:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing this_pc_answers_its_own_echoes the_connection_check_runs_on_this_pc network_adapter_settings_read_on_this_pc tcp_settings_are_set_and_put_back_on_this_pc a_qos_policy_is_added_and_removed_on_this_pc dns_servers_are_set_and_put_back_on_this_pc
 
+      # The per-game tools (catalogue H3, H31, H19) applied and undone for real
+      # through the engine: csrss and a game's priority under HKLM IFEO, and
+      # fullscreen optimizations for a made-up game path under HKCU, with the
+      # fullscreen .reg backup imported by reg.exe. Gated like the steps above.
+      - name: Per-game tools on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 per_game_tools_apply_and_undo_on_this_pc
+
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the
       # .reg backups (scratch keys under HKCU only).

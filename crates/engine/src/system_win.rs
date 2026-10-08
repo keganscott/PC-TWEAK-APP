@@ -60,14 +60,7 @@ impl WinSystem {
                 return Ok(list.clone());
             }
         }
-        let out = powershell(
-            "interface metrics",
-            "Get-NetAdapter -Physical | ForEach-Object { $g = $_.InterfaceGuid; Get-NetIPInterface -InterfaceIndex \
-             $_.ifIndex -ErrorAction SilentlyContinue | ForEach-Object { '{0}|{1}|{2}|{3}' -f $g, $_.AddressFamily, \
-             $_.AutomaticMetric, $_.InterfaceMetric } }",
-            &[],
-        )?;
-        let list = parse_metrics(&out);
+        let list = parse_metrics(&powershell("interface metrics", METRICS_SCRIPT, &[])?);
         *cache = Some((std::time::Instant::now(), list.clone()));
         Ok(list)
     }
@@ -96,6 +89,11 @@ pub(crate) fn parse_pci_devices(out: &str) -> Vec<PciDevice> {
         .collect()
 }
 
+/// Every physical adapter's IPv4 and IPv6 interface, one line each.
+const METRICS_SCRIPT: &str = "Get-NetAdapter -Physical | ForEach-Object { $g = $_.InterfaceGuid; Get-NetIPInterface \
+                              -InterfaceIndex $_.ifIndex -ErrorAction SilentlyContinue | ForEach-Object { \
+                              '{0}|{1}|{2}|{3}' -f $g, $_.AddressFamily, $_.AutomaticMetric, $_.InterfaceMetric } }";
+
 /// One adapter's interface metric for one protocol; `0` when automatic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Metric {
@@ -105,18 +103,24 @@ pub(crate) struct Metric {
 }
 
 /// `guid|IPv4|Enabled|25` lines (AutomaticMetric, InterfaceMetric) from
-/// `Get-NetIPInterface`. An automatic metric reads as 0.
+/// `Get-NetIPInterface`. An automatic metric reads as 0. The family and the
+/// automatic flag are also taken as numbers (2 / 23, 1 / 0), in case the
+/// properties come through as their raw values.
 pub(crate) fn parse_metrics(out: &str) -> Vec<Metric> {
     out.lines()
         .filter_map(|l| {
             let mut parts = l.trim().splitn(4, '|');
             let g = guid(parts.next()?)?;
-            let ipv6 = match parts.next()? {
-                "IPv4" => false,
-                "IPv6" => true,
+            let ipv6 = match parts.next()?.trim() {
+                "IPv4" | "2" => false,
+                "IPv6" | "23" => true,
                 _ => return None,
             };
-            let automatic = parts.next()?.eq_ignore_ascii_case("Enabled");
+            let automatic = match parts.next()?.trim() {
+                a if a.eq_ignore_ascii_case("Enabled") || a == "1" => true,
+                a if a.eq_ignore_ascii_case("Disabled") || a == "0" => false,
+                _ => return None,
+            };
             let metric: u32 = parts.next()?.trim().parse().ok()?;
             Some(Metric {
                 guid: g,
@@ -962,6 +966,9 @@ mod tests {
         let out = "{3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv6|Enabled|25\r\n\
                    {3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv4|Disabled|5\r\n\
                    {4D86B570-2994-4EB0-A004-914EF65FF05A}|IPv4|Enabled|abc\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|IPv4|Sometimes|5\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|23|1|40\r\n\
+                   {4D86B570-2994-4EB0-A004-914EF65FF05A}|2|0|9\r\n\
                    garbage\r\n";
         let m = parse_metrics(out);
         assert_eq!(
@@ -976,6 +983,16 @@ mod tests {
                     guid: "3f504232-cecb-4118-b4d8-5a5e72d677c3".into(),
                     ipv6: false,
                     value: 5
+                },
+                Metric {
+                    guid: "4d86b570-2994-4eb0-a004-914ef65ff05a".into(),
+                    ipv6: true,
+                    value: 0
+                },
+                Metric {
+                    guid: "4d86b570-2994-4eb0-a004-914ef65ff05a".into(),
+                    ipv6: false,
+                    value: 9
                 },
             ]
         );
@@ -1413,7 +1430,20 @@ mod tests {
         let s = WinSystem::new();
         let adapters = s.network_adapters().unwrap();
         println!("adapters: {adapters:?}");
-        let a = adapters.first().expect("a physical adapter");
+        println!(
+            "metric script output: {:?}",
+            powershell("interface metrics", METRICS_SCRIPT, &[])
+        );
+        println!(
+            "Get-NetIPInterface: {:?}",
+            powershell(
+                "IP interfaces",
+                "Get-NetIPInterface | ForEach-Object { '{0}|{1}|{2}|{3}|{4}' -f $_.ifIndex, $_.InterfaceAlias, \
+                 $_.AddressFamily, $_.AutomaticMetric, $_.InterfaceMetric }",
+                &[]
+            )
+        );
+        let a = adapters.iter().find(|a| a.up).expect("a connected physical adapter");
         for ipv6 in [false, true] {
             let item = SysItem::InterfaceMetric {
                 interface: a.guid.clone(),
@@ -1427,6 +1457,11 @@ mod tests {
             };
             let before = s.read(&item).unwrap();
             println!("{}: before {before:?}; registry {:?}", item.describe(), backing());
+            // A connected adapter has IPv4; IPv6 may be unbound.
+            assert!(
+                ipv6 || before != SysState::Absent,
+                "the connected adapter's IPv4 metric was not read"
+            );
             if before == SysState::Absent {
                 continue;
             }

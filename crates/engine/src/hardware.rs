@@ -167,11 +167,15 @@ pub struct HardwareReport {
 // ---------------------------------------------------------------------------
 
 fn smbios_memory_kind(code: u64) -> Option<&'static str> {
-    // SMBIOS "Memory Device" type codes. VERIFY against the SMBIOS spec
-    // (NOTES.md N22); from memory.
+    // SMBIOS "Memory Device" (type 17) memory type codes, as the SMBIOS 3.x
+    // headers of Microsoft's Project Mu and TianoCore EDK2 list them
+    // (`MdePkg/Include/IndustryStandard/SmBios.h`, checked 2026-10-08): 0x12
+    // DDR, 0x13 DDR2, 0x14 DDR2 FB-DIMM, 0x18 DDR3, 0x1A DDR4, 0x1B-0x1E
+    // LPDDR to LPDDR4, 0x22 DDR5, 0x23 LPDDR5. These are not the CIM
+    // `MemoryType` numbers, where 20 is DDR and 21 DDR2.
     Some(match code {
-        20 => "DDR",
-        21 => "DDR2",
+        18 => "DDR",
+        19 | 20 => "DDR2",
         24 => "DDR3",
         26 => "DDR4",
         27 => "LPDDR",
@@ -384,7 +388,8 @@ fn valid_drive(drive: &str) -> bool {
     b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
-/// `MSFT_PhysicalDisk.MediaType`: 3 HDD, 4 SSD, 5 SCM, 0 unspecified. VERIFY.
+/// `MSFT_PhysicalDisk.MediaType`: 3 HDD, 4 SSD, 5 SCM, 0 unspecified
+/// (Microsoft's MSFT_PhysicalDisk class reference, checked 2026-10-08).
 fn media_from_code(code: u64) -> Option<DiskMedia> {
     match code {
         3 => Some(DiskMedia::Hdd),
@@ -542,6 +547,28 @@ mod tests {
     use super::*;
     use crate::error::EngineError;
     use crate::wmi::{FakeWmi, WmiValue};
+
+    #[test]
+    fn memory_type_codes_are_smbios_ones() {
+        let kinds: Vec<_> = [18, 19, 20, 21, 24, 26, 30, 34, 35]
+            .into_iter()
+            .map(smbios_memory_kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                Some("DDR"),
+                Some("DDR2"),
+                Some("DDR2"),
+                None,
+                Some("DDR3"),
+                Some("DDR4"),
+                Some("LPDDR4"),
+                Some("DDR5"),
+                Some("LPDDR5")
+            ]
+        );
+    }
 
     fn stick(cap_gib: u64, locator: &str, bank: &str, kind: Option<&str>) -> MemoryStick {
         MemoryStick {

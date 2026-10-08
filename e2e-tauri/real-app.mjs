@@ -61,6 +61,29 @@ async function open(view) {
   await driver.wait(until.elementLocated(heading(view)), 15_000);
 }
 
+/** The innermost section around a heading, looked up afresh each time (React re-renders it). */
+const sectionOf = (title) =>
+  By.xpath(`//*[self::h2 or self::h3][normalize-space()='${title}']/ancestor::section[1]`);
+
+/** Wait until the section shows one of `done` and nothing in it is busy, or
+ * shows an engine error; fail on the error and return the section's text. */
+async function settled(title, done, ms) {
+  let error = null;
+  await driver.wait(async () => {
+    const section = await driver.findElement(sectionOf(title));
+    const t = await section.getText();
+    if (done.some((d) => t.includes(d)) && (await section.findElements(By.css("[aria-busy='true']"))).length === 0) {
+      return true;
+    }
+    const alerts = await section.findElements(By.css("[role='alert']"));
+    if (alerts.length > 0) error = await alerts[0].getText();
+    return error !== null;
+  }, ms);
+  const t = await (await driver.findElement(sectionOf(title))).getText();
+  assert.equal(error, null, `${title}: ${error}\n${t}`);
+  return t;
+}
+
 async function show(view) {
   const t = await bodyText();
   console.log(`\n===== ${view} =====\n${t.slice(0, 1500)}\n`);
@@ -142,6 +165,45 @@ try {
     console.log(`\n===== Tool states (${tweaks.value.length}) =====\n${lines.join("\n")}\n`);
     const unread = tweaks.value.filter((t) => t.state.status === "unknown").map((t) => t.id);
     assert.deepEqual(unread, [], "these tools could not be read on this machine");
+  });
+
+  // Tools' read-only sections, through the real commands on this machine:
+  // each shows what it found or its own error, never "Checking" for good.
+  await step("Tools lists this PC's startup apps", async () => {
+    const found = await settled(
+      "Startup apps",
+      ["start when you sign in.", "Nothing starts when you sign in.", "Some places could not be read"],
+      60_000,
+    );
+    console.log(`\n===== Startup apps =====\n${found.slice(0, 800)}\n`);
+  });
+
+  await step("Tools measures the junk files without deleting any", async () => {
+    const found = await settled("Clear out junk files", ["Selected: "], 180_000);
+    console.log(`\n===== Junk files =====\n${found.slice(0, 1200)}\n`);
+    assert.ok(!found.includes("Cleared "), "a cleanup ran");
+  });
+
+  await step("Advanced lists this PC's graphics cards and network adapters", async () => {
+    const advanced = By.xpath("//label[starts-with(normalize-space(), 'Advanced')]/input");
+    await driver.findElement(advanced).click();
+    const found = await settled(
+      "Devices",
+      ["MSI mode: ", "No graphics card or network adapter here can take this change.", "The devices could not be listed."],
+      60_000,
+    );
+    console.log(`\n===== Devices =====\n${found.slice(0, 1200)}\n`);
+    await driver.findElement(advanced).click();
+  });
+
+  // The one step here that goes online: ICMP echoes to the router and two
+  // public DNS servers, started by a click as the user would (catalogue E4).
+  // Azure runners may answer none of them; any reading is fine, an error is not.
+  await step("the connection check runs on this machine", async () => {
+    const check = By.xpath(".//button[normalize-space()='Check now']");
+    await (await driver.findElement(sectionOf("Check the connection"))).findElement(check).click();
+    const found = await settled("Check the connection", ["Checked "], 180_000);
+    console.log(`\n===== Connection check =====\n${found.slice(0, 1200)}\n`);
   });
 
   await step("Games shows the firmware security features", async () => {

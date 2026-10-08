@@ -3,7 +3,7 @@
 This is the first time PeakTweaks runs on a real Windows PC. GitHub's test
 machines are virtual Windows Servers: no System Restore, no GPU, no real
 display. So several things have only ever been tested in pieces (docs/NOTES.md
-N24, N3, N6, N22, N43). This test is what settles them.
+N24, N3, N22, N43). This test is what settles them.
 
 Allow about 30 minutes. Windows 10 22H2 or Windows 11, with an administrator account.
 
@@ -122,7 +122,7 @@ in Backups and is undone by Undo all.
    precision** ticked?
 2. In PeakTweaks, open **Tools**, find **Pointer precision**, click **Apply**.
 3. Re-open Pointer Options: **Enhance pointer precision** should now be unticked,
-   and the mouse should already move without acceleration (NOTES N6).
+   and the mouse should already move without acceleration.
 4. Back in PeakTweaks, click **Undo** on the same card.
 5. Re-open Pointer Options: it should be back to what you wrote down in step 1.
 

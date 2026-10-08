@@ -105,7 +105,8 @@ pub fn switched_off(raw: &RawValue) -> Option<bool> {
     (raw.vtype == 3 && !raw.bytes.is_empty()).then(|| raw.bytes[0] & 1 == 1)
 }
 
-/// The switch value Task Manager writes when it turns an entry off.
+/// The switch value Task Manager writes when it turns an entry off: 12 bytes,
+/// 3 and three zero bytes, then the time as a FILETIME.
 pub fn off_value(filetime: u64) -> RawValue {
     let mut bytes = vec![3, 0, 0, 0];
     bytes.extend(filetime.to_le_bytes());

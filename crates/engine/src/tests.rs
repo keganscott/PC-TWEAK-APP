@@ -1322,11 +1322,12 @@ mod mouse_state {
     }
 }
 
-/// NOTES.md N6: which slot of `SPI_SETMOUSE`'s array is which. Read-only:
+/// Which slot of `SPI_SETMOUSE`'s array is which. Read-only:
 /// Windows loads the session's values from `HKCU\Control Panel\Mouse` at
 /// sign-in, so `SPI_GETMOUSE` lined up against the three named registry
 /// values shows the order whenever the three differ. Prints NOT VERIFIED when
-/// they do not, or when the session no longer matches the registry.
+/// they do not, or when the session no longer matches the registry. Microsoft's
+/// SystemParametersInfo page settles the order too (C38, was NOTES N6).
 #[cfg(windows)]
 #[test]
 fn spi_getmouse_order_matches_the_named_registry_values() {

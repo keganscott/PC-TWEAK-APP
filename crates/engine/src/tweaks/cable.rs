@@ -1,9 +1,11 @@
 //! Prefer the network cable over Wi-Fi (CATALOGUE E5, ExitLag's
 //! Multi-Internet without its servers: failover only).
 //!
-//! Windows sends traffic over the connected adapter with the lowest interface
-//! metric, and picks each metric from the link speed unless one is set, so a
-//! fast Wi-Fi link can win over a cable. This sets every wired adapter's
+//! Windows picks the route whose route metric plus interface metric is
+//! lowest, and picks each interface metric from the link speed unless one is
+//! set, so a fast Wi-Fi link can win over a cable (Microsoft, "An explanation
+//! of the Automatic Metric feature for IPv4 routes": Wi-Fi of 500 Mb/s or more
+//! gets 30, a cable link of 80 to 200 Mb/s gets 35). This sets every wired adapter's
 //! metric low and every Wi-Fi adapter's high, IPv4 and IPv6: with both
 //! connected, traffic goes over the cable; unplugged, Wi-Fi carries it as
 //! before. Each adapter's previous metric (automatic or a number) is
@@ -12,8 +14,9 @@
 //! no IP settings on either (both in Hyper-V virtual switches, whose virtual
 //! adapters hold the addresses), the tool is not offered.
 //!
-//! VERIFY (NOTES N83): the metric survives a restart; the numbers sit below
-//! and above Windows' automatic metrics.
+//! VERIFY (NOTES N83): the metric survives a restart (Microsoft's
+//! `Set-NetIPInterface` page says both that the default writes the active and
+//! the persistent store and that the default is the active store only).
 
 use std::borrow::Cow;
 
@@ -26,9 +29,12 @@ use crate::types::{
 };
 
 pub const ID: &str = "network.prefercable";
-/// Below every automatic metric Windows gives a link.
+/// Every wired adapter gets this and every Wi-Fi adapter `WIFI_METRIC`, so
+/// only their order matters. 5 is the lowest automatic metric Windows 10 and
+/// later give (a link of 100 Gb/s or more); every other link gets 10 or more.
 pub const WIRED_METRIC: u32 = 5;
-/// Above the automatic metric of any cable link.
+/// Above the automatic metric of a cable link of 20 Mb/s or more (45 at
+/// most); automatic Wi-Fi metrics run from 25 to 85.
 pub const WIFI_METRIC: u32 = 50;
 
 pub struct PreferCable;

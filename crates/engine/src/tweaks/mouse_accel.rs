@@ -122,8 +122,12 @@ impl Tweak for MouseAcceleration {
 /// back). Only the transaction writes the registry.
 ///
 /// `SPI_SETMOUSE` takes an array of three integers:
-/// `[threshold1, threshold2, acceleration]`. VERIFY against Microsoft's
-/// SystemParametersInfo documentation before changing the order.
+/// `[threshold1, threshold2, acceleration]`. Microsoft's SystemParametersInfo
+/// documentation: "Sets the two mouse threshold values and the mouse
+/// acceleration. The pvParam parameter must point to an array of three
+/// integers", and its example changes the acceleration as element 2
+/// (learn.microsoft.com/windows/win32/api/winuser/nf-winuser-systemparametersinfoa,
+/// checked 2026-10-08).
 #[cfg(windows)]
 fn push_live(threshold1: i32, threshold2: i32, acceleration: i32) {
     use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPIF_SENDCHANGE, SPI_SETMOUSE};

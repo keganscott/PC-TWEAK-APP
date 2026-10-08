@@ -6,9 +6,10 @@
 //! Not listed: Store apps' own startup tasks, scheduled tasks and services,
 //! which Task Manager does not list here either (or lists elsewhere).
 //!
-//! VERIFY: the Startup folder paths are Windows' defaults as recalled; a user
-//! whose Startup folder was moved elsewhere has it listed from the default
-//! place (NOTES N82).
+//! The Startup folder paths are Windows' defaults (`FOLDERID_Startup` and
+//! `FOLDERID_CommonStartup` in Microsoft's KNOWNFOLDERID reference, checked
+//! 2026-10-08); a user whose Startup folder was moved elsewhere has it listed
+//! from the default place (NOTES N82).
 
 use std::path::{Path, PathBuf};
 

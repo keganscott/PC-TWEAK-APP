@@ -20,10 +20,12 @@ pub(crate) const WQL_DEVICE_GUARD: &str = "SELECT SecurityServicesRunning, Secur
      AvailableSecurityProperties, VirtualizationBasedSecurityStatus FROM Win32_DeviceGuard";
 pub(crate) const WQL_TPM: &str = "SELECT IsEnabled_InitialValue, IsActivated_InitialValue, SpecVersion FROM Win32_Tpm";
 
-/// `SecurityServicesRunning` value meaning Memory Integrity / HVCI.
-/// VERIFY against Microsoft's Win32_DeviceGuard documentation (blocked from the
-/// build sandbox, see NOTES.md N20). From memory: 1 Credential Guard,
-/// 2 HVCI, 3 System Guard Secure Launch, 4 SMM Firmware Measurement.
+/// `SecurityServicesRunning` value meaning Memory Integrity / HVCI. Microsoft's
+/// "Enable memory integrity" page (learn.microsoft.com/windows/security/
+/// hardware-security/enable-virtualization-based-protection-of-code-integrity,
+/// checked 2026-10-08): "1 If present, Credential Guard is running", "2 If
+/// present, memory integrity is running", 3 System Guard Secure Launch, 4 SMM
+/// Firmware Measurement.
 const SERVICE_HVCI: u64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]

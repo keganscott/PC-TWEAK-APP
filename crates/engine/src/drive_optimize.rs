@@ -1,8 +1,10 @@
 //! Optimize the Windows drive now (catalogue H29, Hone's drive optimisation):
-//! Windows' own `defrag <drive> /O`, the job "Optimize Drives" also runs on
-//! its own schedule (weekly by default, VERIFY). On an SSD it tells the drive
-//! which space is free (TRIM); on a hard drive it defragments, which can take
-//! an hour or more. No setting changes, so there is nothing to undo and no
+//! Windows' own `defrag <drive> /O` ("performs the proper optimization for
+//! each media type"), the kind of job Optimize Drives runs as a maintenance
+//! task, "which typically runs every week" (Microsoft's `defrag` page). On an
+//! SSD it tells the drive which space is free (TRIM); on a hard drive it
+//! defragments (VERIFY: Microsoft spells out that split for `Optimize-Volume`,
+//! not for `/O`), which can take an hour or more. No setting changes, so there is nothing to undo and no
 //! restore point is needed; the journal keeps a line for the history
 //! (`DriveOptimization::done`).
 //!

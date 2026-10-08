@@ -9,7 +9,8 @@
 //! tool does not name as the user had it.
 //!
 //! The plugged-in settings, all on the copy only:
-//! - minimum processor state 100 (the processor does not clock down at idle);
+//! - minimum processor state 100 (the lowest performance state Windows may
+//!   pick is the processor's maximum);
 //! - core parking minimum cores 100 (no cores parked; hidden in Control Panel);
 //! - USB selective suspend off;
 //! - PCI Express link state power management off.
@@ -18,13 +19,15 @@
 //! PowerSettings\<subgroup>\<setting>`, absent on some editions and virtual
 //! machines) is skipped. State is "our plan is the active plan".
 //!
-//! VERIFY: the subgroup and setting GUIDs are Windows' documented `powercfg`
-//! aliases as recalled (SUB_PROCESSOR PROCTHROTTLEMIN, CPMINCORES; SUB_USB
-//! USBSELECTIVESUSPEND; SUB_PCIEXPRESS ASPM). The Windows CI evidence step
-//! makes the plan on a real runner (NOTES N77).
+//! The subgroup and setting GUIDs and values match Microsoft's power-settings
+//! reference and the Windows SDK's `GUID_PROCESSOR_THROTTLE_MINIMUM`,
+//! `GUID_PROCESSOR_CORE_PARKING_MIN_CORES` ("disabled if the value of this
+//! setting is 100%"), `GUID_PCIEXPRESS_ASPM_POLICY` and the USB selective
+//! suspend setting (checked 2026-10-08). The Windows CI evidence step makes
+//! the plan on a real runner (NOTES N77).
 //!
 //! **Hibernation.** `powercfg /hibernate off`, which also deletes
-//! `hiberfil.sys`; Undo turns it back on.
+//! `hiberfil.sys` (VERIFY, below); Undo turns it back on.
 
 use std::borrow::Cow;
 
@@ -186,6 +189,10 @@ impl Tweak for Hibernation {
         TweakMetadata {
             id: Cow::Borrowed(HIBERNATION_ID),
             name: Cow::Borrowed("Hibernation"),
+            // VERIFY (NOTES N77): Microsoft's powercfg page says only that
+            // `/hibernate off` disables the feature; that it deletes the file
+            // is from memory. Its size and role: Microsoft's "How to disable
+            // and re-enable hibernation".
             summary: Cow::Borrowed(
                 "Turns hibernation off, which also deletes the hibernation file (hiberfil.sys) Windows keeps on \
                  the system drive.",

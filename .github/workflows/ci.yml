@@ -304,11 +304,13 @@ jobs:
       # and ECN set to another value and back (RSS only read). Game traffic
       # priority (H26): a QoS policy for a program that does not exist, added
       # through the engine's backend as the tool adds it (New-NetQosPolicy),
-      # must be active with DSCP 46, then is removed.
-      - name: Network adapter metric and settings, TCP settings, QoS policy, connection check, MSI mode devices, NVIDIA and AMD settings on this runner
+      # must be active with DSCP 46, then is removed. DNS servers (H25): the
+      # tool applied and undone through the engine; each connected adapter
+      # must read Cloudflare's servers, then its own again (DHCP included).
+      - name: Network adapter metric and settings, TCP settings, QoS policy, DNS servers, connection check, MSI mode devices, NVIDIA and AMD settings on this runner
         env:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing this_pc_answers_its_own_echoes the_connection_check_runs_on_this_pc network_adapter_settings_read_on_this_pc tcp_settings_are_set_and_put_back_on_this_pc a_qos_policy_is_added_and_removed_on_this_pc
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing this_pc_answers_its_own_echoes the_connection_check_runs_on_this_pc network_adapter_settings_read_on_this_pc tcp_settings_are_set_and_put_back_on_this_pc a_qos_policy_is_added_and_removed_on_this_pc dns_servers_are_set_and_put_back_on_this_pc
 
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the

@@ -1589,6 +1589,76 @@ mod tests {
         println!("netsh after: {:?}", show());
     }
 
+    /// DNS servers (catalogue H25) on this PC, through the engine: each
+    /// connected adapter's servers are read, the tool is applied (every one
+    /// must then read 1.1.1.1, 1.0.0.1) and undone (every one must read as
+    /// before, automatic included). What Windows reports is printed at each
+    /// step. Run only with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1; the runner is
+    /// without its own DNS servers for a few seconds.
+    #[test]
+    fn dns_servers_are_set_and_put_back_on_this_pc() {
+        use crate::tweaks::dns::{CloudflareDns, ID, SERVERS};
+        use crate::types::TweakState;
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change this PC's DNS servers for real");
+            return;
+        }
+        let show = || {
+            powershell(
+                "DNS servers",
+                "Get-DnsClientServerAddress -AddressFamily IPv4 | ForEach-Object { '{0}|{1}' -f $_.InterfaceAlias, \
+                 ($_.ServerAddresses -join ',') }",
+                &[],
+            )
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (res, mut engine) = real_engine(dir.path(), vec![Box::new(CloudflareDns)]);
+        let state = |engine: &crate::engine::Engine| engine.list().unwrap().remove(0).state;
+        let read_all = || -> Vec<(String, SysState)> {
+            res.network_adapters()
+                .unwrap()
+                .into_iter()
+                .filter(|a| a.up)
+                .map(|a| {
+                    let item = SysItem::DnsServers {
+                        interface: a.guid.clone(),
+                    };
+                    (a.name, res.read_system(&item).unwrap())
+                })
+                .collect()
+        };
+
+        println!("Windows before: {:?}", show());
+        let before = read_all();
+        let before_state = state(&engine);
+        println!("before: {before_state:?} {before:?}");
+        if matches!(before_state, TweakState::Blocked { .. }) {
+            println!("NOT VERIFIED: no connected adapter here");
+            return;
+        }
+        assert!(!before.is_empty());
+
+        engine.apply(ID).unwrap();
+        println!("Windows with the tool applied: {:?}", show());
+        let during = read_all();
+        println!("applied: {:?} {during:?}", state(&engine));
+        assert_eq!(state(&engine), TweakState::Applied);
+        let wanted = SysState::List {
+            items: SERVERS.iter().map(|s| (*s).to_owned()).collect(),
+        };
+        for (name, servers) in &during {
+            assert_eq!(servers, &wanted, "{name}");
+        }
+
+        engine.revert(ID).unwrap();
+        println!("Windows after Undo: {:?}", show());
+        let after = read_all();
+        println!("after Undo: {:?} {after:?}", state(&engine));
+        assert_eq!(after, before);
+        assert_eq!(state(&engine), before_state);
+    }
+
     /// Game traffic priority (catalogue H26) on this PC, through this
     /// backend as the tool uses it: a policy for a program that does not
     /// exist is added, must read back and show in Windows' active QoS

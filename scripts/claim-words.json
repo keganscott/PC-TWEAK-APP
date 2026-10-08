@@ -19,8 +19,9 @@
     "lower latency",
     "guaranteed"
   ],
-  "names_description": "Names of Windows features that contain a claim word but say nothing about a result. They are removed from the text before the words are checked, so the same word anywhere else is still caught.",
+  "names_description": "Names of Windows and graphics driver features that contain a claim word but say nothing about a result. They are removed from the text before the words are checked, so the same word anywhere else is still caught.",
   "names": [
-    "Customer Experience Improvement Program"
+    "Customer Experience Improvement Program",
+    "Anti-Lag"
   ]
 }

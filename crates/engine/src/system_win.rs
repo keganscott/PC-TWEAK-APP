@@ -9,7 +9,8 @@
 //! script text. Services use the Win32 service API and scheduled tasks the
 //! Task Scheduler COM API directly.
 //!
-//! NVIDIA settings go through NvAPI (`nvapi.rs`), base profile only.
+//! NVIDIA settings go through NvAPI (`nvapi.rs`), base profile only; AMD
+//! settings through ADLX (`adlx.rs`).
 //!
 //! Not yet built here, and refused with a plain message: `netsh` TCP globals
 //! (its catalogue step adds them; NOTES N66).
@@ -41,6 +42,7 @@ pub struct WinSystem {
     /// dropped on every metric write.
     metrics: std::sync::Mutex<Option<(std::time::Instant, Vec<Metric>)>>,
     nvapi: crate::nvapi::NvApi,
+    adlx: crate::adlx::Adlx,
 }
 
 impl WinSystem {
@@ -50,6 +52,7 @@ impl WinSystem {
             adapters: std::sync::Mutex::new(None),
             metrics: std::sync::Mutex::new(None),
             nvapi: crate::nvapi::NvApi::new(),
+            adlx: crate::adlx::Adlx::new(),
         }
     }
 
@@ -171,6 +174,32 @@ fn nvidia(e: crate::nvapi::NvError) -> EngineError {
         },
         crate::nvapi::NvError::Failed(detail) => fail("NVIDIA settings", detail),
     }
+}
+
+/// No AMD card is an answer about this PC; anything else a failed command.
+fn amd(e: crate::adlx::AdlxError) -> EngineError {
+    match e {
+        crate::adlx::AdlxError::NoAmd => EngineError::Blocked {
+            reason: crate::types::BlockedReason::new(
+                crate::types::BlockedCode::HardwareUnsupported,
+                "This PC has no AMD graphics card.",
+            ),
+        },
+        crate::adlx::AdlxError::Failed(detail) => fail("AMD graphics settings", detail),
+    }
+}
+
+fn amd_setting(key: &str) -> Result<crate::adlx::Setting> {
+    crate::adlx::Setting::from_key(key).ok_or_else(|| {
+        fail(
+            "AMD graphics settings",
+            format!("{key:?} is not a setting PeakTweaks changes"),
+        )
+    })
+}
+
+fn no_such_card(gpu: &str) -> EngineError {
+    fail("AMD graphics settings", format!("no AMD graphics card {gpu} was found"))
 }
 
 /// Only the base profile (Control Panel's global settings) is changed.
@@ -303,6 +332,14 @@ impl SystemBackend for WinSystem {
         Ok(list)
     }
 
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        match self.adlx.gpus() {
+            Ok(list) => Ok(list),
+            Err(crate::adlx::AdlxError::NoAmd) => Ok(Vec::new()),
+            Err(e) => Err(amd(e)),
+        }
+    }
+
     fn pci_devices(&self) -> Result<Vec<PciDevice>> {
         let out = powershell(
             "devices",
@@ -414,6 +451,14 @@ impl SystemBackend for WinSystem {
                     Some(value) => SysState::Dword { value },
                     None => SysState::Absent,
                 })
+            }
+            SysItem::AmdSetting { gpu, setting } => {
+                match self.adlx.get(gpu, amd_setting(setting)?).map_err(amd)? {
+                    Some(Some(value)) => Ok(SysState::Dword { value }),
+                    // This card does not have the setting.
+                    Some(None) => Ok(SysState::Absent),
+                    None => Err(no_such_card(gpu)),
+                }
             }
             SysItem::TcpGlobal { .. } => Err(EngineError::Internal {
                 detail: format!("this version cannot change the {} yet", item.describe()),
@@ -528,6 +573,15 @@ impl SystemBackend for WinSystem {
                 need_base_profile(profile)?;
                 self.nvapi.set(*setting, None).map_err(nvidia)
             }
+            (SysItem::AmdSetting { gpu, setting }, SysState::Dword { value }) => {
+                if self.adlx.set(gpu, amd_setting(setting)?, *value).map_err(amd)? {
+                    Ok(())
+                } else {
+                    Err(no_such_card(gpu))
+                }
+            }
+            // A setting the card does not have: nothing to put back.
+            (SysItem::AmdSetting { setting, .. }, SysState::Absent) => amd_setting(setting).map(drop),
             (item, state) => Err(wrong_state(item, state)),
         }
     }
@@ -923,6 +977,24 @@ mod tests {
                 assert_eq!(reason.code, crate::types::BlockedCode::HardwareUnsupported)
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    /// Read-only, against this PC: the AMD cards and their settings, or an
+    /// empty list (a runner has no AMD card), never a failed command.
+    #[test]
+    fn amd_cards_are_listed_or_there_are_none() {
+        let s = WinSystem::new();
+        let gpus = s.amd_gpus();
+        println!("AMD graphics cards: {gpus:?}");
+        for g in gpus.as_ref().unwrap() {
+            for setting in crate::adlx::Setting::ALL {
+                let item = SysItem::AmdSetting {
+                    gpu: g.id.clone(),
+                    setting: setting.key().into(),
+                };
+                println!("{}: {:?}", item.describe(), s.read(&item));
+            }
         }
     }
 

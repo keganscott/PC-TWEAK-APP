@@ -14,6 +14,16 @@ describe("system item wording", () => {
     expect(describeState({ state: "absent" }, { kind: "nvidia_setting", profile: "", setting: 0x1057eb71 })).toBe(
       "driver default",
     );
+    const antiLag = { kind: "amd_setting", gpu: "PCI\\VEN_1002&DEV_73BF", setting: "anti_lag" } as const;
+    const vsync = { ...antiLag, setting: "wait_for_vertical_refresh" } as const;
+    expect(describeItem(antiLag)).toBe("AMD Radeon Anti-Lag of graphics card PCI\\VEN_1002&DEV_73BF");
+    expect(describeState({ state: "dword", value: 1 }, antiLag)).toBe("on");
+    expect(describeState({ state: "dword", value: 0 }, vsync)).toBe("always off");
+    expect(describeState({ state: "dword", value: 1 }, vsync)).toBe("off unless the game asks");
+    expect(describeState({ state: "dword", value: 9 }, vsync)).toBe("9");
+    expect(describeState({ state: "dword", value: 1 }, { ...antiLag, setting: "anti_lag_level" })).toBe("Anti-Lag Next");
+    expect(describeItem({ ...antiLag, setting: "chill" })).toBe("AMD Radeon Chill of graphics card PCI\\VEN_1002&DEV_73BF");
+    expect(describeState({ state: "absent" }, vsync)).toBe("not on this card");
     expect(describeState({ state: "absent" })).toBe("not present");
     expect(describeState({ state: "list", items: [] })).toBe("automatic");
     expect(describeState({ state: "service", start: "delayed_automatic", running: true })).toBe(

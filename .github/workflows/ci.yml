@@ -271,12 +271,13 @@ jobs:
       # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
       # set by hand and put back (same gate). The runner has no Wi-Fi, so the
       # tool itself is not offered there. Read only: the devices MSI mode
-      # (H6) would list, and NVIDIA's settings (H20) through NvAPI, which on a
-      # runner without an NVIDIA card must say so rather than fail.
-      - name: Network adapter metric, MSI mode devices and NVIDIA settings on this runner
+      # (H6) would list, NVIDIA's settings (H20) through NvAPI and AMD's (H21)
+      # through ADLX, which on a runner without such a card must say so rather
+      # than fail.
+      - name: Network adapter metric, MSI mode devices, NVIDIA and AMD settings on this runner
         env:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing
 
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the

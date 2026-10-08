@@ -2682,6 +2682,283 @@ mod nvidia_tools {
     }
 }
 
+/// CATALOGUE H21 (tweaks/amd.rs).
+mod amd_tools {
+    use super::*;
+    use crate::adlx::{anti_lag_level, vsync, AmdGpu};
+    use crate::error::EngineError;
+    use crate::journal::Record;
+    use crate::system::{SysItem, SysState};
+    use crate::tweaks::amd;
+    use crate::types::BlockedCode;
+
+    const IGPU: &str = r"PCI\VEN_1002&DEV_164E&SUBSYS_88771043&REV_C1";
+    const RADEON: &str = r"PCI\VEN_1002&DEV_73BF&SUBSYS_23181458&REV_C1";
+
+    fn card(id: &str) -> AmdGpu {
+        AmdGpu {
+            id: id.into(),
+            name: format!("AMD Radeon {id}"),
+        }
+    }
+
+    fn setting(gpu: &str, key: &str) -> SysItem {
+        SysItem::AmdSetting {
+            gpu: gpu.into(),
+            setting: key.into(),
+        }
+    }
+
+    const fn v(value: u32) -> SysState {
+        SysState::Dword { value }
+    }
+
+    fn state(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    /// A PC with these AMD cards, each with every setting at AMD's default
+    /// (Anti-Lag off at plain Anti-Lag, Chill off, vertical refresh off
+    /// unless the game asks).
+    fn pc(cards: &[&str]) -> Harness {
+        let h = Harness::new(amd::all());
+        h.sys.set_amd_gpus(cards.iter().map(|c| card(c)).collect());
+        for c in cards {
+            h.sys.set(&setting(c, "anti_lag"), v(0));
+            h.sys.set(&setting(c, "anti_lag_level"), v(anti_lag_level::ANTI_LAG));
+            h.sys.set(&setting(c, "chill"), v(0));
+            h.sys.set(
+                &setting(c, "wait_for_vertical_refresh"),
+                v(vsync::OFF_UNLESS_APP_SPECIFIES),
+            );
+        }
+        h
+    }
+
+    /// The AMD settings the journal records changing, in order.
+    fn changed(h: &Harness) -> Vec<String> {
+        h.engine
+            .journal_view()
+            .records
+            .iter()
+            .filter_map(|r| match r {
+                Record::Change(c) => match &c.item {
+                    SysItem::AmdSetting { gpu, setting } => Some(format!("{setting} {gpu}")),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn anti_lag_never_turns_on_anti_lag_next_and_undo_puts_chill_and_the_level_back() {
+        let mut h = pc(&[RADEON]);
+        h.sys.set(&setting(RADEON, "anti_lag_level"), v(anti_lag_level::NEXT));
+        h.sys.set(&setting(RADEON, "chill"), v(1));
+
+        h.engine.apply("amd.antilag").unwrap();
+        assert_eq!(
+            h.sys.get(&setting(RADEON, "anti_lag_level")),
+            v(anti_lag_level::ANTI_LAG)
+        );
+        assert_eq!(h.sys.get(&setting(RADEON, "chill")), v(0));
+        assert_eq!(h.sys.get(&setting(RADEON, "anti_lag")), v(1));
+        assert_eq!(
+            changed(&h),
+            [
+                format!("anti_lag_level {RADEON}"),
+                format!("chill {RADEON}"),
+                format!("anti_lag {RADEON}")
+            ],
+            "the level and Chill are set before Anti-Lag is turned on"
+        );
+        assert_eq!(state(&h, "amd.antilag"), TweakState::Applied);
+
+        h.engine.revert("amd.antilag").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "anti_lag")), v(0));
+        assert_eq!(h.sys.get(&setting(RADEON, "chill")), v(1));
+        assert_eq!(h.sys.get(&setting(RADEON, "anti_lag_level")), v(anti_lag_level::NEXT));
+    }
+
+    #[test]
+    fn anti_lag_next_on_is_not_already_optimized() {
+        let h = pc(&[RADEON]);
+        h.sys.set(&setting(RADEON, "anti_lag"), v(1));
+        h.sys.set(&setting(RADEON, "anti_lag_level"), v(anti_lag_level::NEXT));
+        assert_eq!(state(&h, "amd.antilag"), TweakState::Default);
+        h.sys
+            .set(&setting(RADEON, "anti_lag_level"), v(anti_lag_level::ANTI_LAG));
+        assert_eq!(state(&h, "amd.antilag"), TweakState::Foreign);
+    }
+
+    #[test]
+    fn a_driver_without_levels_or_chill_still_gets_anti_lag() {
+        let mut h = pc(&[RADEON]);
+        h.sys.set(&setting(RADEON, "anti_lag_level"), SysState::Absent);
+        h.sys.set(&setting(RADEON, "chill"), SysState::Absent);
+        h.engine.apply("amd.antilag").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "anti_lag")), v(1));
+        assert_eq!(changed(&h), [format!("anti_lag {RADEON}")]);
+        assert_eq!(state(&h, "amd.antilag"), TweakState::Applied);
+    }
+
+    #[test]
+    fn both_cards_are_set_and_undo_puts_each_back() {
+        let mut h = pc(&[IGPU, RADEON]);
+        // Chosen by the user in AMD Software for the Radeon card only.
+        h.sys
+            .set(&setting(RADEON, "wait_for_vertical_refresh"), v(vsync::ALWAYS_ON));
+        assert_eq!(state(&h, "amd.vsyncoff"), TweakState::Default);
+
+        h.engine.apply("amd.vsyncoff").unwrap();
+        for c in [IGPU, RADEON] {
+            assert_eq!(
+                h.sys.get(&setting(c, "wait_for_vertical_refresh")),
+                v(vsync::ALWAYS_OFF)
+            );
+            assert_eq!(
+                h.sys.get(&setting(c, "anti_lag")),
+                v(0),
+                "the other setting is left alone"
+            );
+        }
+        assert_eq!(state(&h, "amd.vsyncoff"), TweakState::Applied);
+
+        h.engine.revert("amd.vsyncoff").unwrap();
+        assert_eq!(
+            h.sys.get(&setting(IGPU, "wait_for_vertical_refresh")),
+            v(vsync::OFF_UNLESS_APP_SPECIFIES)
+        );
+        assert_eq!(
+            h.sys.get(&setting(RADEON, "wait_for_vertical_refresh")),
+            v(vsync::ALWAYS_ON)
+        );
+        assert_eq!(state(&h, "amd.vsyncoff"), TweakState::Default);
+    }
+
+    #[test]
+    fn a_card_without_the_setting_is_left_out() {
+        let mut h = pc(&[IGPU, RADEON]);
+        h.sys.set(&setting(IGPU, "anti_lag"), SysState::Absent);
+        h.engine.apply("amd.antilag").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "anti_lag")), v(1));
+        assert_eq!(h.sys.get(&setting(IGPU, "anti_lag")), SysState::Absent);
+        assert_eq!(
+            state(&h, "amd.antilag"),
+            TweakState::Applied,
+            "every card that has it is on"
+        );
+    }
+
+    #[test]
+    fn no_card_with_the_setting_says_so() {
+        let mut h = pc(&[IGPU]);
+        h.sys.set(&setting(IGPU, "anti_lag"), SysState::Absent);
+        match state(&h, "amd.antilag") {
+            TweakState::Blocked { reason } => {
+                assert_eq!(reason.code, BlockedCode::HardwareUnsupported);
+                assert_eq!(reason.message, "This PC's AMD graphics does not have Radeon Anti-Lag.");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            h.engine.apply("amd.antilag"),
+            Err(EngineError::Blocked { .. })
+        ));
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn already_set_this_way_reads_as_already_optimized() {
+        let h = pc(&[IGPU, RADEON]);
+        h.sys.set(&setting(RADEON, "anti_lag"), v(1));
+        assert_eq!(
+            state(&h, "amd.antilag"),
+            TweakState::Default,
+            "the other card is still off"
+        );
+        h.sys.set(&setting(IGPU, "anti_lag"), v(1));
+        assert_eq!(state(&h, "amd.antilag"), TweakState::Foreign);
+    }
+
+    #[test]
+    fn a_pc_without_an_amd_card_is_not_offered_any_and_nothing_is_written() {
+        let mut h = pc(&[]);
+        for t in amd::all() {
+            match state(&h, t.id()) {
+                TweakState::Blocked { reason } => {
+                    assert_eq!(reason.code, BlockedCode::HardwareUnsupported);
+                    assert_eq!(reason.message, "This PC has no AMD graphics card.");
+                }
+                other => panic!("{}: {other:?}", t.id()),
+            }
+            assert!(matches!(h.engine.apply(t.id()), Err(EngineError::Blocked { .. })));
+        }
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn a_failed_listing_is_an_error_not_a_missing_card() {
+        let h = pc(&[RADEON]);
+        h.sys.fail_listing(true);
+        match state(&h, "amd.antilag") {
+            TweakState::Unknown { detail } => assert!(detail.contains("did not answer"), "{detail}"),
+            other => panic!("a failed listing must not read as no card: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn undo_after_a_card_is_removed_puts_back_the_others_and_says_so() {
+        let mut h = pc(&[IGPU, RADEON]);
+        h.engine.apply("amd.antilag").unwrap();
+        h.sys.set_amd_gpus(vec![card(IGPU)]);
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+        assert_eq!(h.sys.get(&setting(IGPU, "anti_lag")), v(0));
+        assert!(h.engine.journal_view().records.iter().any(
+            |r| matches!(r, Record::Note(n) if n.text.contains(RADEON) && n.text.contains("no longer on this PC"))
+        ));
+    }
+
+    #[test]
+    fn undo_after_amds_driver_is_removed_finishes() {
+        let mut h = pc(&[RADEON]);
+        h.engine.apply("amd.vsyncoff").unwrap();
+        h.sys.set_amd_gpus(Vec::new());
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn each_tool_changes_only_its_own_settings() {
+        let keys = |id: &str| -> Vec<String> {
+            amd::all()
+                .into_iter()
+                .find(|t| t.id() == id)
+                .unwrap()
+                .system_targets()
+                .into_iter()
+                .map(|t| match t {
+                    SysItem::AmdSetting { gpu, setting } if gpu == "*" => setting,
+                    other => panic!("{id}: {other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(keys("amd.antilag"), ["anti_lag_level", "chill", "anti_lag"]);
+        assert_eq!(keys("amd.vsyncoff"), ["wait_for_vertical_refresh"]);
+        assert!(amd::all().iter().all(|t| t.touches().is_empty()), "no registry writes");
+    }
+}
+
 /// CATALOGUE H14, H16-H18 (tweaks/services.rs).
 mod service_tools {
     use std::sync::Arc;

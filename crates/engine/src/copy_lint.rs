@@ -14,7 +14,8 @@ pub fn claim_words() -> Vec<String> {
         .collect()
 }
 
-/// Names of Windows features that contain a claim word (lower case).
+/// Names of Windows and driver features that contain a claim word (lower
+/// case).
 fn feature_names() -> Vec<String> {
     let v: serde_json::Value = serde_json::from_str(CLAIM_WORDS_JSON).expect("scripts/claim-words.json is valid JSON");
     v["names"]
@@ -30,7 +31,7 @@ fn feature_names() -> Vec<String> {
 
 /// The first claim word in `text`, if any. An entry that starts with a letter
 /// or digit only matches at the start of a word ("lag" in "laggy", not "flag").
-/// The Windows feature names in the shared list are removed first.
+/// The feature names in the shared list are removed first.
 pub fn find_claim(text: &str, words: &[String]) -> Option<String> {
     let mut lower = text.to_ascii_lowercase();
     for name in feature_names() {
@@ -89,10 +90,10 @@ mod tests {
         assert_eq!(find_claim("Turns off pointer acceleration", &w), None);
     }
 
-    /// A Windows feature's own name says nothing about a result; the same
-    /// word anywhere else in the text is still caught.
+    /// A Windows or driver feature's own name says nothing about a result;
+    /// the same word anywhere else in the text is still caught.
     #[test]
-    fn windows_feature_names_are_not_claims() {
+    fn feature_names_are_not_claims() {
         let w = claim_words();
         let path = r"\Microsoft\Windows\Customer Experience Improvement Program\Consolidator";
         assert_eq!(find_claim(path, &w), None);
@@ -100,6 +101,11 @@ mod tests {
             find_claim("The Customer Experience Improvement Program improves games", &w).as_deref(),
             Some("improv")
         );
+        assert_eq!(
+            find_claim("Radeon Anti-Lag: on (Anti-Lag, not Anti-Lag Next)", &w),
+            None
+        );
+        assert_eq!(find_claim("Radeon Anti-Lag cuts lag", &w).as_deref(), Some("lag"));
     }
 
     #[test]

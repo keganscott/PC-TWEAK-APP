@@ -1,6 +1,6 @@
 //! Changes that are not registry values: power plans, services, scheduled
-//! tasks, DNS servers, `netsh` TCP settings, NVIDIA profile settings and whole
-//! files (a game's settings file).
+//! tasks, DNS servers, `netsh` TCP settings, NVIDIA profile settings, AMD
+//! graphics settings and whole files (a game's settings file).
 //!
 //! Same rules as the registry (`transaction.rs`): a tweak declares what it may
 //! change (`Tweak::system_targets`), `Transaction` reads the state before,
@@ -63,6 +63,10 @@ pub enum SysItem {
     /// the base (global) profile. State: `Dword`, or `Absent` for the driver's
     /// default.
     NvidiaSetting { profile: String, setting: u32 },
+    /// One AMD graphics setting (ADLX, `adlx::Setting::key`) of the card with
+    /// Plug and Play id `gpu`. State: `Dword` (Anti-Lag 1 on / 0 off; a
+    /// vertical refresh mode), or `Absent` where the card lacks the setting.
+    AmdSetting { gpu: String, setting: String },
     /// A whole file. State: `File` (a copy kept with the backups) or `Absent`.
     File { path: String },
 }
@@ -137,6 +141,7 @@ impl SysItem {
             | Self::ScheduledTask { .. }
             | Self::TcpGlobal { .. }
             | Self::NvidiaSetting { .. }
+            | Self::AmdSetting { .. }
             | Self::File { .. } => Vec::new(),
         }
     }
@@ -167,6 +172,10 @@ impl SysItem {
             Self::NvidiaSetting { profile, setting } => {
                 let p = if profile.is_empty() { "global" } else { profile };
                 format!("NVIDIA setting 0x{setting:08X} ({p} profile)")
+            }
+            Self::AmdSetting { gpu, setting } => {
+                let label = crate::adlx::Setting::from_key(setting).map_or(setting.as_str(), |s| s.label());
+                format!("AMD {label} of graphics card {gpu}")
             }
             Self::File { path } => format!("file {path}"),
         }
@@ -299,6 +308,8 @@ pub trait SystemBackend: Send + Sync {
     fn network_adapters(&self) -> Result<Vec<NetAdapter>>;
     /// Graphics cards and network adapters on the PCI bus, present now.
     fn pci_devices(&self) -> Result<Vec<PciDevice>>;
+    /// AMD graphics cards as AMD's driver lists them; empty without one.
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>>;
     /// The current state of `item`. File items are read with `read_file`.
     fn read(&self, item: &SysItem) -> Result<SysState>;
     /// Make `item` be `state`. File items are written with `write_file`.
@@ -330,6 +341,9 @@ impl SystemBackend for Unavailable {
     }
     fn pci_devices(&self) -> Result<Vec<PciDevice>> {
         Err(Self::refuse("devices".into()))
+    }
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        Err(Self::refuse("AMD graphics settings".into()))
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Err(Self::refuse(item.describe()))
@@ -366,6 +380,7 @@ struct FakeInner {
     /// An NVIDIA card with its driver; without one, its settings are "not
     /// available", as on the real backend.
     nvidia: bool,
+    amd_gpus: Vec<crate::adlx::AmdGpu>,
     fail_listing: bool,
     fail_writes: bool,
     fail_effects: bool,
@@ -417,11 +432,30 @@ impl FakeSystem {
     pub fn set_nvidia(&self, present: bool) {
         self.inner.lock().unwrap().nvidia = present;
     }
+    pub fn set_amd_gpus(&self, gpus: Vec<crate::adlx::AmdGpu>) {
+        self.inner.lock().unwrap().amd_gpus = gpus;
+    }
     /// Make listing devices fail, as when Windows' device query does.
     pub fn fail_listing(&self, fail: bool) {
         self.inner.lock().unwrap().fail_listing = fail;
     }
-    fn check_nvidia(&self, item: &SysItem) -> Result<()> {
+    fn check_graphics(&self, item: &SysItem) -> Result<()> {
+        if let SysItem::AmdSetting { gpu, .. } = item {
+            let g = self.inner.lock().unwrap();
+            if g.amd_gpus.is_empty() {
+                return Err(EngineError::Blocked {
+                    reason: crate::types::BlockedReason::new(
+                        crate::types::BlockedCode::HardwareUnsupported,
+                        "This PC has no AMD graphics card.",
+                    ),
+                });
+            }
+            if !g.amd_gpus.iter().any(|c| c.id == *gpu) {
+                return Err(EngineError::Internal {
+                    detail: format!("test: no AMD graphics card {gpu}"),
+                });
+            }
+        }
         if matches!(item, SysItem::NvidiaSetting { .. }) && !self.inner.lock().unwrap().nvidia {
             return Err(EngineError::Blocked {
                 reason: crate::types::BlockedReason::new(
@@ -445,6 +479,15 @@ impl SystemBackend for FakeSystem {
     fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
         Ok(self.inner.lock().unwrap().adapters.clone())
     }
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: AMD's driver did not answer".into(),
+            });
+        }
+        Ok(g.amd_gpus.clone())
+    }
     fn pci_devices(&self) -> Result<Vec<PciDevice>> {
         let g = self.inner.lock().unwrap();
         if g.fail_listing {
@@ -455,11 +498,11 @@ impl SystemBackend for FakeSystem {
         Ok(g.devices.clone())
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
-        self.check_nvidia(item)?;
+        self.check_graphics(item)?;
         Ok(self.get(item))
     }
     fn write(&self, item: &SysItem, state: &SysState) -> Result<()> {
-        self.check_nvidia(item)?;
+        self.check_graphics(item)?;
         let mut g = self.inner.lock().unwrap();
         if g.fail_writes {
             return Err(EngineError::Internal {

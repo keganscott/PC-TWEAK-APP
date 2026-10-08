@@ -4,6 +4,7 @@
 //! The Windows-only pieces (`identity`, `registry::windows`, the ProgramData
 //! ACL code) sit behind `cfg(windows)`.
 
+pub mod adlx;
 pub mod background;
 pub mod cleanup;
 pub mod context;

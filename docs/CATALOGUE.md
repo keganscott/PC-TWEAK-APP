@@ -34,7 +34,7 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | H18 | Xbox services off (for PCs without Game Pass) | `XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc` | Service undo type; never offered when Game Pass is installed |
 | H19 | Fullscreen optimizations off per game | `AppCompatFlags\Layers\<game exe>="~ DISABLEDXMAXIMIZEDWINDOWEDMODE"` | Per installed game (exe from `game_installs.rs`) |
 | H20 | NVIDIA settings (low latency mode, power management "prefer maximum performance", shader cache size, texture filtering, threaded optimization, vertical sync) | NVIDIA driver profile (NvAPI DRS) | New undo type: previous setting values recorded |
-| H21 | AMD settings (Anti-Lag and others) | Per-adapter registry under the display class key | Per-device keys |
+| H21 | AMD settings (Anti-Lag and others) | ~~Per-adapter registry under the display class key~~ AMD's settings library ADLX, per graphics card (DECISIONS 15.24) | New undo type: previous setting values recorded |
 | H22 | Disable Nagle (Low Latency Mode) | `Tcpip\Parameters\Interfaces\{guid}\TcpAckFrequency=1`, `TCPNoDelay=1` | Per-adapter keys (wildcard allowlist) |
 | H23 | TCP settings | `netsh int tcp set global` (autotuning, RSS, ECN) | New undo type: previous `show global` values |
 | H24 | Network adapter settings (interrupt moderation, energy-efficient Ethernet, flow control, power saving) | Adapter advanced properties under `Class\{4d36e972-...}\00xx`, then adapter restart | Per-device keys + restart side effect |

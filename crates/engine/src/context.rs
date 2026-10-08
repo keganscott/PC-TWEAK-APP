@@ -97,6 +97,11 @@ impl ContextResolver {
         self.system.pci_devices()
     }
 
+    /// AMD graphics cards, empty without one (safe for tweaks).
+    pub fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        self.system.amd_gpus()
+    }
+
     /// A file's bytes, `None` when absent (safe for tweaks).
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         self.system.read_file(path)

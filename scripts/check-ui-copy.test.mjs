@@ -24,6 +24,8 @@ test("words match at word starts; symbols match anywhere (same rule as Rust)", (
 test("a Windows feature's own name is not a claim, the same word elsewhere is", () => {
   assert.equal(findClaim("\\Microsoft\\Windows\\Customer Experience Improvement Program\\UsbCeip", words), null);
   assert.equal(findClaim("The Customer Experience Improvement Program improves games", words), "improv");
+  assert.equal(findClaim("Radeon Anti-Lag: on (Anti-Lag, not Anti-Lag Next)", words), null);
+  assert.equal(findClaim("Radeon Anti-Lag cuts lag", words), "lag");
 });
 
 test("JSX text, attributes shown to users, and plain strings are copy", () => {

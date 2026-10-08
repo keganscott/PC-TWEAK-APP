@@ -2,6 +2,7 @@
 
 use crate::types::Tweak;
 
+pub mod amd;
 pub mod cable;
 pub mod dns;
 pub mod fullscreen;
@@ -29,6 +30,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     all.extend(services::all());
     all.extend(tasks::all());
     all.extend(nvidia::all());
+    all.extend(amd::all());
     all.push(Box::new(ifeo_priority::CsrssPriority));
     // Per game, for each offered game (`env::KNOWN_GAMES`).
     for t in ifeo_priority::IfeoPriority::offered() {

@@ -298,6 +298,13 @@ impl<'a> Transaction<'a> {
                         ))?;
                         continue;
                     }
+                    if self.amd_card_is_gone(&c.item) {
+                        self.note(format!(
+                            "the {} was not put back: that graphics card is no longer on this PC",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
                     if self.nvidia_is_gone(&c.item) {
                         self.note(format!(
                             "the NVIDIA driver is no longer on this PC, and its settings went with it, so the {} \
@@ -611,6 +618,20 @@ impl<'a> Transaction<'a> {
         };
         let adapters = self.resolver.system().network_adapters().ok()?;
         (!adapters.iter().any(|a| a.guid.eq_ignore_ascii_case(interface))).then(|| interface.clone())
+    }
+
+    /// True for an AMD setting when AMD's driver no longer lists its card
+    /// (removed, or no AMD driver at all): its settings went with it. A
+    /// failed listing is no proof, so Undo then tries, fails plainly and can
+    /// be retried.
+    fn amd_card_is_gone(&self, item: &SysItem) -> bool {
+        let SysItem::AmdSetting { gpu, .. } = item else {
+            return false;
+        };
+        self.resolver
+            .system()
+            .amd_gpus()
+            .is_ok_and(|cards| !cards.iter().any(|c| c.id == *gpu))
     }
 
     /// True for an NVIDIA setting when the PC no longer has an NVIDIA driver:

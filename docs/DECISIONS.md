@@ -246,3 +246,13 @@ Catalogue step 5 (NOTES N80).
 4. **Names only.** The watcher reads running program names; it never opens, reads or changes a game process (plan section 12). Programs whose name other software shares (Minecraft Java's `javaw.exe`) are not watched.
 5. **Not in Gaming Mode:** pausing Windows Update (Kegan's brief: never touch Windows Update) and raising the game's priority (the per-game tool H31).
 
+### 15.24 AMD settings through ADLX, not the registry (Claude, 2026-10-08)
+
+Catalogue H21 (NOTES N87). The catalogue planned per-adapter registry values under the display class key, as Hone does.
+
+1. **ADLX instead.** Those values are AMD's private storage: undocumented, named differently across driver versions, and AMD Software may not read a change made there until the driver reloads, if at all. ADLX (`amdadlx64.dll`, installed with AMD's driver) is the interface AMD publishes for changing these same settings, with a public SDK and headers. It is the same choice as NVIDIA's settings through NvAPI (H20) rather than raw driver files.
+2. **The safety net is unchanged.** Each card's previous value is read through ADLX and journalled before the write (`Transaction::set_system`), Undo sets it back, and a card that is no longer on the PC is skipped with a note. The restore point and `.reg` backup still come first, as for every change; they do not cover these values, which live in AMD's driver.
+3. **Loaded from System32 only.** AMD's own helper also searches the program's folder and the user's directories. An elevated program must not load a DLL from a folder a user could write to, so PeakTweaks looks only in System32, where the driver installs it (VERIFY, N87).
+4. **Two tools to start:** Radeon Anti-Lag on (safe) and Wait for Vertical Refresh always off (Advanced). Others ADLX offers (Radeon Chill, Boost, Image Sharpening, Enhanced Sync, frame rate target) change how games look or cap them; they wait for a reason to add them.
+5. **Plain Anti-Lag only.** Newer drivers have a second Anti-Lag level, "Anti-Lag Next", which AMD describes as "an advanced algorithm in supported DX11 and DX12 games", taken to be Anti-Lag+, the version that hooked into games (plan section 12 rules that out). The tool sets the level to plain Anti-Lag before turning Anti-Lag on, so it can never turn Next on.
+6. **No unrecorded side changes.** AMD's driver turns Radeon Chill off by itself when Anti-Lag goes on. Left to the driver, that change would have no journal record and Undo would not bring Chill back, so the tool turns Chill off itself first, recorded, and says so in its one cost line.

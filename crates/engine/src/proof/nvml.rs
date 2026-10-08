@@ -5,8 +5,10 @@
 //! Intel have no equivalent wired up yet; they report Unknown, they are not
 //! guessed at.
 //!
-//! The bit values are from NVML's `nvmlClocksThrottleReason*` constants, from
-//! memory and marked VERIFY in NOTES.md (N33).
+//! The bit values and function names match NVIDIA's `nvml.h` (13.x) and its
+//! `nvmlClocksEventReason*` constants (checked 2026-10-08, NOTES N33). Newer
+//! drivers also set 0x200 (board limit) and 0x400 (reliability), which this
+//! table does not decode yet.
 
 use std::collections::BTreeMap;
 
@@ -30,7 +32,7 @@ pub enum ThrottleReason {
     DisplayClock,
 }
 
-/// (bit, reason). VERIFY against nvml.h.
+/// (bit, reason), as `nvml.h` defines them.
 pub const REASON_BITS: [(u64, ThrottleReason); 9] = [
     (0x1, ThrottleReason::GpuIdle),
     (0x2, ThrottleReason::ApplicationClocks),
@@ -260,7 +262,13 @@ mod real {
         let init: Init = sym!("nvmlInit_v2", Init);
         let get_count: Count = sym!("nvmlDeviceGetCount_v2", Count);
         let get_handle: HandleByIndex = sym!("nvmlDeviceGetHandleByIndex_v2", HandleByIndex);
-        let get_reasons: Reasons = sym!("nvmlDeviceGetCurrentClocksThrottleReasons", Reasons);
+        // NVML 13 marks the throttle-reasons call deprecated in favour of the
+        // clocks-event one, same signature and bits; older drivers have only
+        // the first.
+        let get_reasons: Reasons = match GetProcAddress(module, s!("nvmlDeviceGetCurrentClocksEventReasons")) {
+            Some(f) => std::mem::transmute::<unsafe extern "system" fn() -> isize, Reasons>(f),
+            None => sym!("nvmlDeviceGetCurrentClocksThrottleReasons", Reasons),
+        };
         let rc = init();
         if rc != NVML_SUCCESS {
             return Err(format!("nvmlInit_v2 failed with code {rc}"));
@@ -302,9 +310,7 @@ mod real {
                     let mut mask = 0u64;
                     let rc = (lib.get_reasons)(handle, &mut mask);
                     if rc != NVML_SUCCESS {
-                        return Probe::unknown(format!(
-                            "nvmlDeviceGetCurrentClocksThrottleReasons failed with code {rc}"
-                        ));
+                        return Probe::unknown(format!("reading the clock limit reasons failed with code {rc}"));
                     }
                     all.extend(decode_reasons(mask));
                 }

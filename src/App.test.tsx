@@ -399,6 +399,32 @@ describe("agent brief", () => {
     expect(within(card).getByRole("button", { name: "Undo" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("a restart is said once: not twice beside a cost line that says it, nor for a setting already there", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    const listTweaks = async () =>
+      (await base.listTweaks()).map((t) =>
+        t.id === "fixture.default"
+          ? { ...t, safety: "moderate" as const, tradeoff: "Needs a restart.", requiresReboot: true }
+          : t.id === "fixture.foreign"
+            ? { ...t, requiresReboot: true }
+            : t,
+      );
+    renderApp({ ...base, listTweaks, rescan: listTweaks });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    await userEvent.click(screen.getByRole("switch", { name: /Advanced/ }));
+    const card = (await screen.findByText("Sample setting A")).closest("li") as HTMLElement;
+    expect(within(card).getByText("Needs a restart.")).toBeTruthy();
+    expect(within(card).queryByText("Takes effect after a restart.")).toBeNull();
+    const foreign = screen.getByText("Sample setting C").closest("li") as HTMLElement;
+    expect(within(foreign).queryByText("Takes effect after a restart.")).toBeNull();
+
+    await userEvent.click(within(card).getByLabelText("I have read this"));
+    await userEvent.click(within(card).getByRole("button", { name: "Apply" }));
+    expect(await within(card).findByText("Takes effect after a restart.")).toBeTruthy();
+    expect(within(card).queryByText("Needs a restart.")).toBeNull();
+  });
+
   it("a change the plan does not include says so and cannot be applied, without an error first", async () => {
     const base = createMockBackend({ gateOpen: true });
     const reason = { code: "tier_required" as const, trigger: "pro", message: "This change needs the Pro plan." };

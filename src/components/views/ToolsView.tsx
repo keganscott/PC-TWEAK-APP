@@ -583,6 +583,11 @@ export function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boo
   const canApply =
     !applied && !blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
+  // DECISIONS 15.22, fewer warnings: the restart is said once. Not for a
+  // setting this PC already has, nor when the cost line shown says it.
+  const tradeoffShown = !!tweak.tradeoff && !foreign && (!needsConfirm || !applied);
+  const restartLine =
+    tweak.requiresReboot && !foreign && !(tradeoffShown && /needs a restart/i.test(tweak.tradeoff ?? ""));
 
   return (
     <Card className="p-4">
@@ -613,7 +618,7 @@ export function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boo
               Windows no longer has the value PeakTweaks set. Undo puts back what was there before PeakTweaks changed it.
             </p>
           )}
-          {tweak.requiresReboot && <p className="mt-2 text-xs text-ink-faint">Takes effect after a restart.</p>}
+          {restartLine && <p className="mt-2 text-xs text-ink-faint">Takes effect after a restart.</p>}
           {technical && <p className="mt-2 break-all font-mono text-xs text-ink-faint">{tweak.target}</p>}
         </div>
         <div className="flex shrink-0 gap-2">

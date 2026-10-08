@@ -1464,18 +1464,16 @@ mod tests {
         println!("added: {added:?}; reads {read:?}");
         println!("active with it: {listed:?}");
         println!("in the registry: {:?}", find());
-        // The values Windows keeps for it (run 37785699537 found the policy
-        // under SOFTWARE\Policies\Microsoft\Windows\QoS\<name>).
-        println!(
-            "its values: {:?}",
-            tool(
-                "reg.exe",
-                &[
-                    "query",
-                    r"HKLM\SOFTWARE\Policies\Microsoft\Windows\QoS\PeakTweaks CI check"
-                ]
-            )
+        // The values Windows keeps for it: each must be one the change's
+        // `.reg` backup covers (`SysItem::registry_backing`).
+        let values = tool(
+            "reg.exe",
+            &[
+                "query",
+                r"HKLM\SOFTWARE\Policies\Microsoft\Windows\QoS\PeakTweaks CI check",
+            ],
         );
+        println!("its values: {values:?}");
         let removed = s.write(&item, &SysState::Absent);
         let after = s.read(&item);
         let listed_after = active();
@@ -1485,6 +1483,11 @@ mod tests {
 
         added.unwrap();
         assert_eq!(read.unwrap(), wanted);
+        let backed: Vec<&str> = item.registry_backing().iter().map(|(_, v)| *v).collect();
+        for line in values.unwrap().lines().filter(|l| l.contains("    REG_")) {
+            let name = line.trim().split("    ").next().unwrap_or_default();
+            assert!(backed.contains(&name), "{name} is not in the .reg backup: {line}");
+        }
         // The active store lists names in lower case (run 37785699537).
         let ours = |out: &str| {
             out.lines()

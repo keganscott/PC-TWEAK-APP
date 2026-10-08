@@ -140,12 +140,20 @@ impl SysItem {
                 format!(r"{SCHEMES}\{scheme}\{subgroup}\{setting}"),
                 if *ac { "ACSettingIndex" } else { "DCSettingIndex" },
             )],
+            // Where `New-NetQosPolicy` kept a policy, and the values it wrote,
+            // on Windows Server 2025 (run 37790684482, NOTES N91). Group
+            // Policy's own names for these differ, and Windows does not apply
+            // a policy from these values alone, so they are a record of the
+            // policy, not a way to make one.
+            Self::QosPolicy { name } => ["Version", "NetProfile", "Precedence", "AppName", "Protocol", "DSCP"]
+                .into_iter()
+                .map(|v| (format!(r"SOFTWARE\Policies\Microsoft\Windows\QoS\{name}"), v))
+                .collect(),
             Self::PowerScheme { .. }
             | Self::ScheduledTask { .. }
             | Self::TcpGlobal { .. }
             | Self::NvidiaSetting { .. }
             | Self::AmdSetting { .. }
-            | Self::QosPolicy { .. }
             | Self::File { .. } => Vec::new(),
         }
     }

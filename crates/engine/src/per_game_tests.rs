@@ -429,6 +429,43 @@ mod game_qos {
     }
 
     #[test]
+    fn the_values_windows_keeps_for_a_policy_are_backed_up_before_the_change() {
+        let mut r = rig(
+            vec![Box::new(GameQos::cleared_for_tests())],
+            Some(vec![install("fortnite", Some(FORTNITE))]),
+        );
+        let key = r"SOFTWARE\Policies\Microsoft\Windows\QoS\PeakTweaks FortniteClient-Win64-Shipping";
+        r.fake
+            .set_external(Hive::LocalMachine, key, "DSCP", RawValue::dword(40));
+        r.sys.set(
+            &policy(program("fortnite")),
+            SysState::QosPolicy {
+                program: program("fortnite").into(),
+                dscp: 40,
+            },
+        );
+        r.engine.apply(ID).unwrap();
+        let change = r
+            .engine
+            .journal_view()
+            .records
+            .into_iter()
+            .find_map(|rec| match rec {
+                crate::journal::Record::Change(c) => Some(c),
+                _ => None,
+            })
+            .unwrap();
+        let names: Vec<&str> = change.reg_backups.iter().map(|b| b.value_name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Version", "NetProfile", "Precedence", "AppName", "Protocol", "DSCP"]
+        );
+        let dscp = change.reg_backups.iter().find(|b| b.value_name == "DSCP").unwrap();
+        assert_eq!(dscp.previous, Some(RawValue::dword(40)));
+        assert!(dscp.display_path.ends_with(key), "{}", dscp.display_path);
+    }
+
+    #[test]
     fn a_policy_already_there_with_the_tag_reads_as_already_set() {
         let r = rig(
             vec![Box::new(GameQos::cleared_for_tests())],

@@ -480,8 +480,11 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
   // Our apply is still on record but Windows has another value now: both
   // directions stay open (set ours again, or put back what was there before).
   const drifted = tweak.state.status === "drifted";
+  // Why the engine does not offer it: its plan or its rules, or what this PC
+  // has (no such adapter, say), which only reading its state shows.
+  const blocked = tweak.blocked ?? (tweak.state.status === "blocked" ? tweak.state.reason : null);
   const canApply =
-    !applied && !tweak.blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
+    !applied && !blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
   const tier = TIER_LABEL[tweak.tier];
 
   return (
@@ -497,9 +500,9 @@ function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boolean | 
           </div>
           <p className="mt-1 text-sm text-ink-muted">{tweak.summary}</p>
           {/* The engine's reason, also when the change was applied before the block began (it keeps its Undo). */}
-          {tweak.blocked && (
+          {blocked && (
             <p className="mt-2 text-sm">
-              {tweak.blocked.message} <span className="text-ink-muted">{blockedHint(tweak.blocked)}</span>
+              {blocked.message} <span className="text-ink-muted">{blockedHint(blocked)}</span>
             </p>
           )}
           {tweak.state.status === "unknown" && technical && (

@@ -411,6 +411,19 @@ describe("review regressions", () => {
     expect(screen.queryByRole("button", { name: "Make a restore point" })).toBeNull();
   });
 
+  it("a change this PC cannot take (seen only when its state is read) shows why and offers no Apply", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    const reason = { code: "hardware_unsupported" as const, trigger: null, message: "This PC does not have both a network cable port and Wi-Fi." };
+    const listTweaks = async () =>
+      (await base.listTweaks()).map((t) => (t.id === "fixture.default" ? { ...t, state: { status: "blocked" as const, reason }, blocked: null } : t));
+    renderApp({ ...base, listTweaks, rescan: listTweaks });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = (await screen.findByText("Sample setting A")).closest("li") as HTMLElement;
+    expect(within(card).getByText(reason.message, { exact: false })).toBeTruthy();
+    expect((within(card).getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("a failed Undo on Backups shows why", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({ ...base, revertTweak: () => Promise.reject({ kind: "registry", path: "HKLM\\X", value: null, detail: "denied" }) });

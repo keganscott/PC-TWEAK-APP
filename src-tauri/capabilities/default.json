@@ -30,6 +30,7 @@
     "allow-cleanup-measure",
     "allow-cleanup-run",
     "allow-optimize-drive",
-    "allow-list-startup-apps"
+    "allow-list-startup-apps",
+    "allow-list-msi-devices"
   ]
 }

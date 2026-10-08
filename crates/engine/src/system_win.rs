@@ -21,7 +21,9 @@ use super::error::{EngineError, Result};
 use super::proc::run_limited;
 use super::registry::windows::WinRegistry;
 use super::registry::{Hive, RegistryBackend};
-use super::system::{guid, guids_in, setting_indexes, NetAdapter, SideEffect, SysItem, SysState, SystemBackend};
+use super::system::{
+    guid, guids_in, setting_indexes, DeviceClass, NetAdapter, PciDevice, SideEffect, SysItem, SysState, SystemBackend,
+};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const LIMIT: Duration = Duration::from_secs(60);
@@ -65,6 +67,29 @@ impl WinSystem {
         *cache = Some((std::time::Instant::now(), list.clone()));
         Ok(list)
     }
+}
+
+/// `InstanceId|Class|FriendlyName` lines from `Get-PnpDevice`: graphics
+/// cards and network adapters on the PCI bus. Anything else is skipped.
+pub(crate) fn parse_pci_devices(out: &str) -> Vec<PciDevice> {
+    out.lines()
+        .filter_map(|l| {
+            let mut parts = l.trim().splitn(3, '|');
+            let instance_id = parts.next()?.trim().to_owned();
+            let class = match parts.next()?.trim() {
+                c if c.eq_ignore_ascii_case("Display") => DeviceClass::Display,
+                c if c.eq_ignore_ascii_case("Net") => DeviceClass::Net,
+                _ => return None,
+            };
+            let name = parts.next()?.trim().to_owned();
+            crate::tweaks::msi::pci_instance(&instance_id)?;
+            Some(PciDevice {
+                instance_id,
+                name,
+                class,
+            })
+        })
+        .collect()
 }
 
 /// One adapter's interface metric for one protocol; `0` when automatic.
@@ -245,6 +270,17 @@ impl SystemBackend for WinSystem {
         let list = parse_adapters(&out);
         *cache = Some((std::time::Instant::now(), list.clone()));
         Ok(list)
+    }
+
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        let out = powershell(
+            "devices",
+            "Get-PnpDevice -PresentOnly -Class Display,Net -ErrorAction SilentlyContinue | Where-Object { \
+             $_.InstanceId -like 'PCI\\*' } | ForEach-Object { '{0}|{1}|{2}' -f $_.InstanceId, $_.Class, \
+             $_.FriendlyName }",
+            &[],
+        )?;
+        Ok(parse_pci_devices(&out))
     }
 
     fn read(&self, item: &SysItem) -> Result<SysState> {
@@ -803,6 +839,60 @@ mod tests {
         assert_eq!(a[0].guid, "4d86b570-2994-4eb0-a004-914ef65ff05a");
         assert!(a[0].wireless && !a[0].wired && !a[0].up);
         assert!(!a[1].wireless && a[1].wired && a[1].up && a[1].name == "Ethernet");
+    }
+
+    #[test]
+    fn pci_graphics_and_network_devices_are_parsed_and_others_skipped() {
+        let out =
+            "PCI\\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\\4&2B0B1F0C&0&0008|Display|NVIDIA GeForce RTX 3060 Ti\r\n\
+                   PCI\\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\\01000000684CE00000|Net|Realtek Gaming 2.5GbE\r\n\
+                   PCI\\VEN_8086&DEV_A0F0&SUBSYS_00748086&REV_20\\3&11583659&0&A3|Net|\r\n\
+                   PCI\\VEN_1022&DEV_1483\\3&2411E6FE&0&09|System|PCI bridge\r\n\
+                   USB\\VID_0BDA&PID_8153\\000001|Net|USB Ethernet\r\n";
+        let d = parse_pci_devices(out);
+        assert_eq!(d.len(), 3, "{d:?}");
+        assert_eq!(d[0].class, DeviceClass::Display);
+        assert_eq!(d[0].name, "NVIDIA GeForce RTX 3060 Ti");
+        assert_eq!(d[1].class, DeviceClass::Net);
+        assert_eq!(
+            d[2].name, "",
+            "a device without a name is kept; the app names it by its maker"
+        );
+    }
+
+    /// Read-only, against this PC: the graphics cards and network adapters
+    /// MSI mode would be offered for, each with its state.
+    #[test]
+    fn msi_mode_lists_this_pcs_devices() {
+        use std::sync::Arc;
+
+        use crate::context::{ContextResolver, UserContext, UserResolution};
+        use crate::engine::Engine;
+        use crate::env::{License, StubProbe};
+        use crate::journal::Journal;
+        use crate::secure_dir::TrustedDir;
+        use crate::types::Tier;
+
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserContext {
+            sid: crate::identity::current_process_sid().unwrap(),
+            resolution: UserResolution::OwnToken,
+            is_self: true,
+        };
+        let resolver = ContextResolver::new(user, crate::identity::is_elevated(), Arc::new(WinRegistry::new()))
+            .with_system(Arc::new(WinSystem::new()));
+        let mut engine = Engine::new(
+            resolver,
+            Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
+            Vec::new(),
+            Box::new(StubProbe::open_for_dev()),
+            License::dev(Tier::Ultimate),
+        );
+        let list = engine.msi_devices();
+        for d in &list.devices {
+            println!("{:?} {:?}: {:?}", d.class, d.tweak.metadata.name, d.tweak.state);
+        }
+        assert_eq!(list.problem, None);
     }
 
     #[test]

@@ -34,6 +34,11 @@ test("every screen loads and passes an accessibility scan", async ({ page }) => 
     await nav(page, name);
     await expectNoSeriousA11yIssues(page);
   }
+  // Tools with Advanced on adds the Advanced changes and the Devices section.
+  await nav(page, "Tools");
+  await page.getByRole("switch", { name: /Advanced/ }).check();
+  await expect(page.getByText("MSI mode: Sample graphics card")).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
 });
 
 test("changes stay locked until a restore point exists, then apply and undo", async ({ page }) => {

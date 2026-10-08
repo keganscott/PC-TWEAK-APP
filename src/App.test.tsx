@@ -195,6 +195,45 @@ describe("App", () => {
     expect(within(section).getByText(/Turned off outside PeakTweaks/)).toBeTruthy();
   });
 
+  it("Tools lists MSI mode per device only under Advanced, and applying one asks first", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const list = vi.spyOn(backend, "listMsiDevices");
+    const apply = vi.spyOn(backend, "applyTweak");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    expect(screen.queryByRole("region", { name: /Devices/ })).toBeNull();
+    expect(list).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("switch", { name: /Advanced/ }));
+    const section = await screen.findByRole("region", { name: /Devices/ });
+    const gpu = (await within(section).findByText("MSI mode: Sample graphics card")).closest("li") as HTMLElement;
+    const nic = within(section).getByText("MSI mode: Sample network adapter").closest("li") as HTMLElement;
+    expect(within(nic).getByText("Already optimized")).toBeTruthy();
+    expect(within(nic).queryByRole("button", { name: "Apply" })).toBeNull();
+
+    expect(within(gpu).getByText("Takes effect after a restart.")).toBeTruthy();
+    const button = within(gpu).getByRole("button", { name: "Apply" });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(within(gpu).getByLabelText("I have read this"));
+    await userEvent.click(button);
+    expect(apply).toHaveBeenLastCalledWith("msi.PCI\\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\\4&2b0b1f0c&0&0008");
+    expect(await within(gpu).findByText("Optimized")).toBeTruthy();
+    expect(within(gpu).getByRole("button", { name: "Undo" })).toBeTruthy();
+  });
+
+  it("Tools says plainly when the devices could not be listed", async () => {
+    const base = createMockBackend();
+    renderApp({ ...base, listMsiDevices: async () => ({ devices: [], problem: "SAMPLE: the device query did not answer." }) });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    await userEvent.click(screen.getByRole("switch", { name: /Advanced/ }));
+    const section = await screen.findByRole("region", { name: /Devices/ });
+    expect(await within(section).findByText("The devices could not be listed.")).toBeTruthy();
+    expect(within(section).getByText("SAMPLE: the device query did not answer.")).toBeTruthy();
+    expect(within(section).queryByText(/No graphics card/)).toBeNull();
+  });
+
   it("Tools keeps startup switches locked until there is a restore point", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

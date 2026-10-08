@@ -573,13 +573,18 @@ function LastChange() {
   const change = useStore((s) => s.lastChange);
   const tweaks = useStore((s) => s.tweaks);
   const startup = useStore((s) => s.startup);
+  const msi = useStore((s) => s.msi);
   const undoing = useStore((s) => s.applyManyOp.status === "running");
   const { dismissChange, revertMany } = useActions();
   const navigate = useNavigate();
   if (!change) return null;
 
   const name = (id: string) =>
-    (tweaks.find((t) => t.id === id) ?? startup?.apps.find((a) => a.tweak.id === id)?.tweak)?.name ?? id;
+    (
+      tweaks.find((t) => t.id === id) ??
+      startup?.apps.find((a) => a.tweak.id === id)?.tweak ??
+      msi?.devices.find((d) => d.tweak.id === id)?.tweak
+    )?.name ?? id;
   const verb = change.kind === "apply" ? "Applied" : "Undid";
   const what = change.tweakIds.length ? change.tweakIds.map(name).join(", ") : "nothing";
   return (

@@ -99,11 +99,68 @@ export function ToolsView() {
             </ul>
           </section>
         ))}
+        {advanced && <DevicesSection gateOpen={gateOpen} />}
         <PlaySection />
         <StartupSection />
         <OneTimeActions />
       </div>
     </>
+  );
+}
+
+/** Catalogue H6: MSI mode for each graphics card and network adapter. One
+ * change per device, listed by the engine from what this PC has; Advanced
+ * only, read when the section first shows. */
+function DevicesSection({ gateOpen }: { gateOpen: boolean | null }) {
+  const list = useStore((s) => s.msi);
+  const op = useStore((s) => s.msiOp);
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { loadMsi } = useActions();
+
+  useEffect(() => {
+    if (op.status === "idle") void loadMsi();
+  }, [op.status, loadMsi]);
+
+  return (
+    <section aria-labelledby="cat-devices">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id="cat-devices" className="text-base font-extrabold tracking-tight">
+              Devices
+            </h2>
+            {sample && <SampleBadge />}
+          </div>
+          <p className="mt-1 text-sm text-ink-muted">
+            This PC's graphics cards and network adapters. Most current drivers use MSI mode already; those are listed as
+            already optimized.
+          </p>
+        </div>
+        <Button variant="ghost" busy={op.status === "running"} onClick={() => void loadMsi()}>
+          Check again
+        </Button>
+      </div>
+      {!list && op.status === "running" && <p className="text-sm text-ink-muted">Looking for devices…</p>}
+      {list && list.devices.length === 0 && !list.problem && (
+        <p className="text-sm text-ink-muted">No graphics card or network adapter here can take this change.</p>
+      )}
+      {list && list.devices.length > 0 && (
+        <ul className="flex flex-col gap-3">
+          {list.devices.map((d) => (
+            <li key={d.tweak.id}>
+              <TweakCard tweak={d.tweak} gateOpen={gateOpen} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {list?.problem && (
+        <Callout tone="warn" title="The devices could not be listed.">
+          {list.problem}
+        </Callout>
+      )}
+      {op.status === "failed" && <ErrorCallout text={explain(op.error)} technical={technical} />}
+    </section>
   );
 }
 

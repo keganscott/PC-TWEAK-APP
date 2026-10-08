@@ -7,6 +7,7 @@ pub mod dns;
 pub mod fullscreen;
 pub mod ifeo_priority;
 pub mod mouse_accel;
+pub mod msi;
 pub mod nagle;
 pub mod power;
 pub mod registry_values;

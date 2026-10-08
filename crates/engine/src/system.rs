@@ -271,10 +271,34 @@ pub struct NetAdapter {
     pub wired: bool,
 }
 
+/// What a PCI device is, for the devices PeakTweaks offers changes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceClass {
+    /// A graphics card (Windows' Display class).
+    Display,
+    /// A network adapter, cable or Wi-Fi (Windows' Net class).
+    Net,
+}
+
+/// A graphics card or network adapter on the PCI bus that is present now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PciDevice {
+    /// Windows' device instance id, `PCI\VEN_xxxx&DEV_xxxx&...\<instance>`:
+    /// the path of its key under `HKLM\SYSTEM\CurrentControlSet\Enum`.
+    pub instance_id: String,
+    /// The name Windows shows in Device Manager.
+    pub name: String,
+    pub class: DeviceClass,
+}
+
 /// The operations on Windows for non-registry changes, and no more.
 pub trait SystemBackend: Send + Sync {
     /// Physical network adapters (no virtual switches or VPNs).
     fn network_adapters(&self) -> Result<Vec<NetAdapter>>;
+    /// Graphics cards and network adapters on the PCI bus, present now.
+    fn pci_devices(&self) -> Result<Vec<PciDevice>>;
     /// The current state of `item`. File items are read with `read_file`.
     fn read(&self, item: &SysItem) -> Result<SysState>;
     /// Make `item` be `state`. File items are written with `write_file`.
@@ -303,6 +327,9 @@ impl Unavailable {
 impl SystemBackend for Unavailable {
     fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
         Err(Self::refuse("network adapters".into()))
+    }
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        Err(Self::refuse("devices".into()))
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Err(Self::refuse(item.describe()))
@@ -335,6 +362,8 @@ struct FakeInner {
     files: BTreeMap<String, Vec<u8>>,
     effects: Vec<SideEffect>,
     adapters: Vec<NetAdapter>,
+    devices: Vec<PciDevice>,
+    fail_listing: bool,
     fail_writes: bool,
     fail_effects: bool,
 }
@@ -379,6 +408,13 @@ impl FakeSystem {
     pub fn set_adapters(&self, adapters: Vec<NetAdapter>) {
         self.inner.lock().unwrap().adapters = adapters;
     }
+    pub fn set_pci_devices(&self, devices: Vec<PciDevice>) {
+        self.inner.lock().unwrap().devices = devices;
+    }
+    /// Make listing devices fail, as when Windows' device query does.
+    pub fn fail_listing(&self, fail: bool) {
+        self.inner.lock().unwrap().fail_listing = fail;
+    }
     pub fn fail_writes(&self, fail: bool) {
         self.inner.lock().unwrap().fail_writes = fail;
     }
@@ -391,6 +427,15 @@ impl FakeSystem {
 impl SystemBackend for FakeSystem {
     fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
         Ok(self.inner.lock().unwrap().adapters.clone())
+    }
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: Windows did not answer the device query".into(),
+            });
+        }
+        Ok(g.devices.clone())
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Ok(self.get(item))

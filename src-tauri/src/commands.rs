@@ -26,6 +26,7 @@ use peaktweaks_engine::proof::verdict::Comparison;
 use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
 use peaktweaks_engine::settings::Settings;
 use peaktweaks_engine::startup::{StartupFolders, StartupList};
+use peaktweaks_engine::tweaks::msi::MsiDeviceList;
 use peaktweaks_engine::{ContextInfo, Engine, JournalView, Progress, RevertResult, SystemAudit, TweakView};
 
 use crate::play::SharedPlay;
@@ -508,6 +509,13 @@ pub async fn list_startup_apps(engine: State<'_, EngineHandle>) -> Result<Startu
         Ok(e.startup_apps(&folders))
     })
     .await
+}
+
+/// MSI mode for each graphics card and network adapter on the PCI bus
+/// (catalogue H6). Reads only; a device's change is `apply_tweak` with its id.
+#[tauri::command]
+pub async fn list_msi_devices(engine: State<'_, EngineHandle>) -> Result<MsiDeviceList> {
+    blocking(&engine, |e| Ok(e.msi_devices())).await
 }
 
 /// Delete the junk files in the chosen areas. Cannot be undone; the screen

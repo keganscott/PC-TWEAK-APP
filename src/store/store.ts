@@ -21,6 +21,7 @@ import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalView } from "../generated/JournalView";
+import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
@@ -110,6 +111,9 @@ export interface State {
    * while it is read again; `startupOp` says how the latest read went. */
   startup: StartupList | null;
   startupOp: Op;
+  /** MSI mode per device (H6), once the Advanced devices section has asked. */
+  msi: MsiDeviceList | null;
+  msiOp: Op;
   bus: BusEntry[];
 }
 
@@ -144,6 +148,8 @@ export function initialState(sample: boolean): State {
     play: null,
     startup: null,
     startupOp: IDLE,
+    msi: null,
+    msiOp: IDLE,
     bus: [],
   };
 }
@@ -301,14 +307,27 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     }
   }
 
+  /** The graphics and network devices and their MSI mode. The newest answer wins. */
+  async function refreshMsi() {
+    const current = tag("msi");
+    set((s) => ({ ...s, msiOp: RUNNING }));
+    try {
+      const msi = await backend.listMsiDevices();
+      if (current()) set((s) => ({ ...s, msi, msiOp: { status: "done", value: null } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, msiOp: failed(e) }));
+    }
+  }
+
   /** After anything that changed the PC: re-read what the engine now reports.
-   * The startup list only once something has shown it. */
+   * The startup and device lists only once something has shown them. */
   async function refreshAfterChange() {
     await Promise.allSettled([
       refreshTweaks(),
       refreshAudit(),
       refreshJournal(),
       ...(state.startupOp.status === "idle" ? [] : [refreshStartup()]),
+      ...(state.msiOp.status === "idle" ? [] : [refreshMsi()]),
     ]);
   }
 
@@ -458,6 +477,11 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     /** Read the startup apps. Reads only; a switch is turned with applyTweak / revertTweak. */
     async loadStartup() {
       await refreshStartup();
+    },
+
+    /** Read the graphics and network devices. Reads only; MSI mode is set with applyTweak / revertTweak. */
+    async loadMsi() {
+      await refreshMsi();
     },
 
     /** Look at what each junk-file area holds. Reads only. */

@@ -571,6 +571,44 @@ fn startup_list() -> StartupList {
     h.engine.startup_apps(&folders)
 }
 
+/// A real engine's MSI mode list: a graphics card with MSI off and a network
+/// adapter whose driver has it on. The device names are SAMPLE.
+fn msi_devices() -> crate::tweaks::msi::MsiDeviceList {
+    use crate::system::{DeviceClass, PciDevice};
+    const GPU: &str = r"PCI\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\4&2b0b1f0c&0&0008";
+    const NIC: &str = r"PCI\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\01000000684CE00000";
+    let mut h = Harness::new(Vec::new());
+    for i in [GPU, NIC] {
+        h.fake.set_external(
+            Hive::LocalMachine,
+            &format!(r"SYSTEM\CurrentControlSet\Enum\{i}"),
+            "DeviceDesc",
+            RawValue::sz("SAMPLE"),
+        );
+    }
+    h.fake.set_external(
+        Hive::LocalMachine,
+        &format!(
+            r"SYSTEM\CurrentControlSet\Enum\{NIC}\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
+        ),
+        "MSISupported",
+        RawValue::dword(1),
+    );
+    h.sys.set_pci_devices(vec![
+        PciDevice {
+            instance_id: GPU.into(),
+            name: "Sample graphics card".into(),
+            class: DeviceClass::Display,
+        },
+        PciDevice {
+            instance_id: NIC.into(),
+            name: "Sample network adapter".into(),
+            class: DeviceClass::Net,
+        },
+    ]);
+    h.engine.msi_devices()
+}
+
 #[test]
 fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
     let mut out = String::from(
@@ -583,6 +621,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { DriveOptimization } from \"./DriveOptimization\";\n\
          import type { EngineError } from \"./EngineError\";\n\
          import type { JournalView } from \"./JournalView\";\n\
+         import type { MsiDeviceList } from \"./MsiDeviceList\";\n\
          import type { PlayStatus } from \"./PlayStatus\";\n\
          import type { Progress } from \"./Progress\";\n\
          import type { ProofRun } from \"./ProofRun\";\n\
@@ -709,6 +748,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
     );
 
     ts_const(&mut out, "startupList", "StartupList", &startup_list());
+    ts_const(&mut out, "msiDevices", "MsiDeviceList", &msi_devices());
 
     let dir = generated_dir();
     std::fs::create_dir_all(&dir).unwrap();

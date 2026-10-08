@@ -2225,6 +2225,183 @@ mod dns {
     }
 }
 
+/// CATALOGUE H6 (tweaks/msi.rs).
+mod msi_mode {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::registry::Hive;
+    use crate::system::{DeviceClass, PciDevice};
+    use crate::tweaks::msi::{pci_instance, MsiMode, VALUE};
+    use crate::types::RawValue;
+
+    const GPU: &str = r"PCI\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\4&2b0b1f0c&0&0008";
+    const NIC: &str = r"PCI\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\01000000684CE00000";
+    const ENUM: &str = r"SYSTEM\CurrentControlSet\Enum";
+
+    fn msi_key(instance: &str) -> String {
+        format!(r"{ENUM}\{instance}\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties")
+    }
+
+    /// A graphics card whose driver left MSI off, and a network card whose
+    /// driver turned it on.
+    fn pc() -> Harness {
+        let h = Harness::new(Vec::new());
+        for (i, name) in [(GPU, "NVIDIA GeForce RTX 3060 Ti"), (NIC, "Realtek Gaming 2.5GbE")] {
+            h.fake.set_external(
+                Hive::LocalMachine,
+                &format!(r"{ENUM}\{i}"),
+                "DeviceDesc",
+                RawValue::sz(name),
+            );
+        }
+        h.fake
+            .set_external(Hive::LocalMachine, &msi_key(NIC), VALUE, RawValue::dword(1));
+        h.sys.set_pci_devices(vec![
+            PciDevice {
+                instance_id: NIC.into(),
+                name: "Realtek Gaming 2.5GbE Family Controller".into(),
+                class: DeviceClass::Net,
+            },
+            PciDevice {
+                instance_id: GPU.into(),
+                name: "NVIDIA GeForce RTX 3060 Ti".into(),
+                class: DeviceClass::Display,
+            },
+        ]);
+        h
+    }
+
+    fn id(instance: &str) -> String {
+        format!("msi.{instance}")
+    }
+
+    #[test]
+    fn lists_the_graphics_card_first_with_each_devices_state() {
+        let mut h = pc();
+        let list = h.engine.msi_devices();
+        assert_eq!(list.problem, None);
+        let shown: Vec<(&str, DeviceClass, &TweakState)> = list
+            .devices
+            .iter()
+            .map(|d| (d.tweak.metadata.id.as_ref(), d.class, &d.tweak.state))
+            .collect();
+        let (gpu, nic) = (id(GPU), id(NIC));
+        assert_eq!(
+            shown,
+            [
+                (gpu.as_str(), DeviceClass::Display, &TweakState::Default),
+                (nic.as_str(), DeviceClass::Net, &TweakState::Foreign),
+            ]
+        );
+        assert_eq!(
+            list.devices[0].tweak.metadata.name,
+            "MSI mode: NVIDIA GeForce RTX 3060 Ti"
+        );
+        assert!(list.devices[0].tweak.metadata.requires_reboot);
+    }
+
+    #[test]
+    fn apply_writes_only_msisupported_and_undo_removes_it_and_its_keys() {
+        let mut h = pc();
+        h.engine.msi_devices();
+        let before = h.fake.snapshot();
+        h.engine.apply(&id(GPU)).unwrap();
+        assert_eq!(
+            h.fake.read_value_for_test(Hive::LocalMachine, &msi_key(GPU), VALUE),
+            Some(RawValue::dword(1))
+        );
+        let after = h.fake.snapshot();
+        assert_eq!(after.len(), before.len() + 1, "one value written");
+        assert_eq!(
+            h.engine.journal_view().applied[0].name,
+            "MSI mode: NVIDIA GeForce RTX 3060 Ti"
+        );
+
+        h.engine.revert(&id(GPU)).unwrap();
+        assert_eq!(h.fake.snapshot(), before);
+        assert!(!h.fake.key_exists_for_test(
+            Hive::LocalMachine,
+            &format!(r"{ENUM}\{GPU}\Device Parameters\Interrupt Management")
+        ));
+    }
+
+    #[test]
+    fn undo_after_the_card_is_removed_finishes_without_recreating_its_key() {
+        let mut h = pc();
+        h.engine.msi_devices();
+        h.engine.apply(&id(GPU)).unwrap();
+        h.fake
+            .remove_key_external(Hive::LocalMachine, &format!(r"{ENUM}\{GPU}"));
+        h.restart(Vec::new());
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(!h
+            .fake
+            .key_exists_for_test(Hive::LocalMachine, &format!(r"{ENUM}\{GPU}")));
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn a_failed_listing_says_why_and_withdraws_the_last_list() {
+        let mut h = pc();
+        h.engine.msi_devices();
+        h.sys.fail_listing(true);
+        let list = h.engine.msi_devices();
+        assert!(list.devices.is_empty());
+        assert!(list.problem.as_deref().is_some_and(|p| p.contains("did not answer")));
+        assert!(
+            matches!(h.engine.apply(&id(GPU)), Err(EngineError::UnknownTweak { .. })),
+            "nothing is offered that the app no longer shows"
+        );
+    }
+
+    #[test]
+    fn only_listed_pci_devices_can_be_changed() {
+        let mut h = pc();
+        let before = h.fake.snapshot();
+        assert!(
+            matches!(h.engine.apply(&id(GPU)), Err(EngineError::UnknownTweak { .. })),
+            "not listed yet"
+        );
+        h.engine.msi_devices();
+        for bad in [
+            r"msi.PCI\VEN_10DE&DEV_2484\..\..\Control",
+            r"msi.PCI\VEN_10DE&DEV_2484\4&2b0b1f0c&0&0008\Device Parameters",
+            r"msi.ACPI\PNP0A08\0",
+            r"msi.PCI\DEV_2484\x",
+            r"msi.PCI\VEN_10DE&DEV_2484\a b",
+            "msi.",
+        ] {
+            assert!(
+                matches!(h.engine.apply(bad), Err(EngineError::UnknownTweak { .. })),
+                "{bad}"
+            );
+        }
+        assert_eq!(h.fake.snapshot(), before);
+        assert_eq!(
+            pci_instance(GPU),
+            Some(("VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1", "4&2b0b1f0c&0&0008"))
+        );
+        assert_eq!(
+            MsiMode::from_id(&id(GPU)).unwrap().name,
+            "NVIDIA device DEV_2484",
+            "named by its maker when only the id is known"
+        );
+    }
+
+    #[test]
+    fn its_target_stays_under_the_devices_own_key() {
+        let t = MsiMode::new(GPU, "x").unwrap();
+        let targets = t.touches();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            targets[0].key,
+            r"SYSTEM\CurrentControlSet\Enum\PCI\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\*\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
+        );
+        assert_eq!(targets[0].values, [VALUE]);
+    }
+}
+
 /// CATALOGUE E5 (tweaks/cable.rs).
 mod prefer_cable {
     use super::*;

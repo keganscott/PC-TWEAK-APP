@@ -8,7 +8,8 @@
 //! Non-registry targets (`system_targets()`) are held to the same list: a
 //! service's start type lives in its registry key, so a service under a
 //! forbidden key is forbidden too, and no declared file may be the blocklist,
-//! a driver or a boot file.
+//! a driver or a boot file. Kegan's brief adds Windows Update, Defender and
+//! anti-cheat services, and Windows Update's and Defender's scheduled tasks.
 //!
 //! Source: no code for game memory access or injection, CPU affinity, Roblox
 //! fast flags, loading drivers, boot configuration or clearing the TPM.
@@ -86,6 +87,16 @@ const FORBIDDEN_SERVICES: &[(&str, &str)] = &[
     ("PnkBstrB", "anti-cheat (PunkBuster)"),
 ];
 
+/// Task Scheduler folders no declared task may be in (Kegan's brief): Windows
+/// Update's and Defender's own tasks. Lower case, with the closing `\`.
+const FORBIDDEN_TASK_FOLDERS: &[(&str, &str)] = &[
+    (r"\microsoft\windows\windowsupdate\", "Windows Update"),
+    (r"\microsoft\windows\updateorchestrator\", "Windows Update"),
+    (r"\microsoft\windows\waasmedic\", "Windows Update"),
+    (r"\microsoft\windows\windows defender\", "Microsoft Defender"),
+    (r"\microsoft\windows\exploitguard\", "Microsoft Defender"),
+];
+
 /// Folders no declared file may be in, matched without the drive and ignoring
 /// case: code-integrity policy (the vulnerable-driver blocklist is a file
 /// there), kernel drivers, and the boot files on the EFI partition.
@@ -115,6 +126,15 @@ fn forbidden_system_targets(id: &str, items: &[SysItem]) -> Vec<String> {
                     if name == "*" || name.eq_ignore_ascii_case(forbidden) {
                         found.push(format!("{id}: service {name} ({what})"));
                     }
+                }
+            }
+            SysItem::ScheduledTask { path } => {
+                let p = path.to_ascii_lowercase();
+                let hit = FORBIDDEN_TASK_FOLDERS
+                    .iter()
+                    .find(|(folder, _)| path == "*" || p.starts_with(folder));
+                if let Some((_, what)) = hit {
+                    found.push(format!("{id}: task {path} ({what})"));
                 }
             }
             SysItem::File { path } => {
@@ -230,6 +250,27 @@ fn update_defender_and_anti_cheat_services_are_caught() {
     assert_eq!(found.len(), 4, "{found:#?}");
     assert!(found[0].contains("Windows Update") && found[1].contains("Defender"));
     assert!(found[2].contains("Vanguard") && found[3].contains("Easy Anti-Cheat"));
+}
+
+/// Scheduled tasks are held to the same brief: nothing in Windows Update's or
+/// Defender's own task folders.
+#[test]
+fn update_and_defender_scheduled_tasks_are_caught() {
+    let task = |p: &str| SysItem::ScheduledTask { path: p.into() };
+    let found = forbidden_system_targets(
+        "planted",
+        &[
+            task(r"\Microsoft\Windows\WindowsUpdate\Scheduled Start"),
+            task(r"\microsoft\windows\updateorchestrator\Schedule Scan"),
+            task(r"\Microsoft\Windows\Windows Defender\Windows Defender Scheduled Scan"),
+            task("*"),
+            task(r"\Microsoft\Windows\Autochk\Proxy"),
+            task(r"\Microsoft\Windows\WindowsUpdateHelper\Other"),
+        ],
+    );
+    assert_eq!(found.len(), 4, "{found:#?}");
+    assert!(found[0].contains("Windows Update") && found[2].contains("Defender"));
+    assert!(found[3].contains("task *"));
 }
 
 /// Win32 calls and strings that only the forbidden features need.

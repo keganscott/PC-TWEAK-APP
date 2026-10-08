@@ -33,9 +33,18 @@ export function loadClaimWords(path = join(here, "claim-words.json")) {
 
 const isWordChar = (c) => /[a-z0-9]/i.test(c);
 
-/** The first claim word in `text`, or null. Same rule as the Rust `find_claim`. */
+/** Lower-case names of Windows features that contain a claim word. */
+const featureNames = (JSON.parse(readFileSync(join(here, "claim-words.json"), "utf8")).names ?? []).map((n) =>
+  String(n).toLowerCase(),
+);
+
+/**
+ * The first claim word in `text`, or null. Same rule as the Rust `find_claim`:
+ * the Windows feature names in the shared list are removed first.
+ */
 export function findClaim(text, words) {
-  const lower = text.toLowerCase();
+  let lower = text.toLowerCase();
+  for (const name of featureNames) lower = lower.split(name).join(" ");
   for (const word of words) {
     const wordLike = isWordChar(word[0] ?? "");
     let from = 0;

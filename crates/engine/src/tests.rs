@@ -2557,3 +2557,108 @@ mod power_tools {
         assert_eq!(status(&h, HIBERNATION_ID), TweakState::Foreign);
     }
 }
+
+/// CATALOGUE H14, the scheduled-task half (tweaks/tasks.rs).
+mod task_tools {
+    use crate::error::EngineError;
+    use crate::system::{SysItem, SysState};
+    use crate::testutil::Harness;
+    use crate::tweaks::tasks::TELEMETRY_TASKS;
+    use crate::types::{BlockedCode, SafetyTier, Tweak, TweakState};
+
+    fn task(path: &str) -> SysItem {
+        SysItem::ScheduledTask { path: path.into() }
+    }
+
+    fn on(on: bool) -> SysState {
+        SysState::Bool { on }
+    }
+
+    fn status(h: &Harness) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == TELEMETRY_TASKS.id)
+            .unwrap()
+            .state
+    }
+
+    /// Every task but the last exists on this PC, all enabled.
+    fn pc() -> Harness {
+        let h = Harness::new(vec![Box::new(TELEMETRY_TASKS)]);
+        for path in &TELEMETRY_TASKS.tasks[..TELEMETRY_TASKS.tasks.len() - 1] {
+            h.sys.set(&task(path), on(true));
+        }
+        h
+    }
+
+    #[test]
+    fn the_tasks_on_this_pc_are_disabled_and_undo_enables_them_again() {
+        let mut h = pc();
+        assert_eq!(status(&h), TweakState::Default);
+        h.engine.apply(TELEMETRY_TASKS.id).unwrap();
+        let (last, present) = TELEMETRY_TASKS.tasks.split_last().unwrap();
+        for path in present {
+            assert_eq!(h.sys.get(&task(path)), on(false), "{path}");
+        }
+        assert_eq!(h.sys.get(&task(last)), SysState::Absent, "a missing task is left alone");
+        assert_eq!(status(&h), TweakState::Applied);
+
+        h.engine.revert(TELEMETRY_TASKS.id).unwrap();
+        for path in present {
+            assert_eq!(h.sys.get(&task(path)), on(true), "{path}");
+        }
+        assert_eq!(status(&h), TweakState::Default);
+    }
+
+    #[test]
+    fn a_task_the_user_had_already_disabled_stays_disabled_after_undo() {
+        let mut h = pc();
+        let first = TELEMETRY_TASKS.tasks[0];
+        h.sys.set(&task(first), on(false));
+        assert_eq!(status(&h), TweakState::Default);
+        h.engine.apply(TELEMETRY_TASKS.id).unwrap();
+        h.engine.revert(TELEMETRY_TASKS.id).unwrap();
+        assert_eq!(h.sys.get(&task(first)), on(false));
+        assert_eq!(h.sys.get(&task(TELEMETRY_TASKS.tasks[1])), on(true));
+    }
+
+    #[test]
+    fn all_tasks_already_disabled_is_listed_as_done() {
+        let h = pc();
+        for path in TELEMETRY_TASKS.tasks {
+            if h.sys.get(&task(path)) != SysState::Absent {
+                h.sys.set(&task(path), on(false));
+            }
+        }
+        assert_eq!(status(&h), TweakState::Foreign);
+    }
+
+    #[test]
+    fn with_none_of_the_tasks_on_this_pc_it_is_not_offered() {
+        let mut h = Harness::new(vec![Box::new(TELEMETRY_TASKS)]);
+        match status(&h) {
+            TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::OsVersionUnsupported),
+            other => panic!("{other:?}"),
+        }
+        let err = h.engine.apply(TELEMETRY_TASKS.id).unwrap_err();
+        assert!(matches!(err, EngineError::Blocked { .. }), "{err:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn it_declares_every_task_it_may_change_and_is_safe_tier() {
+        let targets = TELEMETRY_TASKS.system_targets();
+        assert_eq!(targets.len(), TELEMETRY_TASKS.tasks.len());
+        for path in TELEMETRY_TASKS.tasks {
+            assert!(targets.contains(&task(path)), "{path}");
+            assert!(path.starts_with(r"\Microsoft\Windows\"), "{path}");
+        }
+        let m = TELEMETRY_TASKS.metadata();
+        assert_eq!(m.category, "privacy");
+        assert_eq!(m.safety, SafetyTier::Safe);
+        assert!(m.tradeoff.is_none());
+        assert!(TELEMETRY_TASKS.touches().is_empty());
+    }
+}

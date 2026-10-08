@@ -4,9 +4,10 @@
 //! (`powercfg.exe`, `gpupdate.exe`) are started by absolute path under
 //! `%SystemRoot%\System32` with an argument list, and every argument is checked
 //! first (GUIDs must be GUIDs, names a short safe character set). The few
-//! things only PowerShell exposes (scheduled tasks, DNS, adapter restart) run
-//! as fixed scripts that read their inputs from environment variables, so no
-//! input becomes script text. Services use the Win32 service API directly.
+//! things only PowerShell exposes (DNS, adapter restart) run as fixed scripts
+//! that read their inputs from environment variables, so no input becomes
+//! script text. Services use the Win32 service API and scheduled tasks the
+//! Task Scheduler COM API directly.
 //!
 //! Not yet built here, and refused with a plain message: `netsh` TCP globals
 //! and NVIDIA profile settings (their catalogue steps add them; NOTES N66).
@@ -144,6 +145,17 @@ fn need_name(s: &str, what: &str) -> Result<()> {
     }
 }
 
+/// A task's full path from the root folder, as Task Scheduler shows it:
+/// `\Folder\Sub\Name`. A name as `need_name` allows, plus the leading `\`.
+fn need_task_path(s: &str) -> Result<()> {
+    need_name(s, "scheduled task")?;
+    if s.starts_with('\\') && !s.ends_with('\\') && !s.contains("\\\\") {
+        Ok(())
+    } else {
+        Err(fail("scheduled task", format!("{s:?} is not a full task path")))
+    }
+}
+
 fn need_ip(s: &str) -> Result<()> {
     // IPv4 only: the before-state read is the IPv4 NameServer value, so an
     // IPv6 server could not be put back. Windows checks the address itself.
@@ -242,17 +254,8 @@ impl SystemBackend for WinSystem {
                 services::read(name)
             }
             SysItem::ScheduledTask { path } => {
-                need_name(path, "scheduled task")?;
-                let out = powershell(
-                    "scheduled task",
-                    "$p = $env:PT_TASK; $i = $p.LastIndexOf('\\'); \
-                     (Get-ScheduledTask -TaskPath $p.Substring(0, $i + 1) -TaskName $p.Substring($i + 1) \
-                     -ErrorAction Stop).State",
-                    &[("PT_TASK", path)],
-                )?;
-                Ok(SysState::Bool {
-                    on: out.trim() != "Disabled",
-                })
+                need_task_path(path)?;
+                tasks::read(path)
             }
             SysItem::DnsServers { interface } => {
                 let g = need_guid(interface, "network adapter")?;
@@ -334,17 +337,8 @@ impl SystemBackend for WinSystem {
                 services::write(name, *start, *running)
             }
             (SysItem::ScheduledTask { path }, SysState::Bool { on }) => {
-                need_name(path, "scheduled task")?;
-                let script = if *on {
-                    "$p = $env:PT_TASK; $i = $p.LastIndexOf('\\'); \
-                     Enable-ScheduledTask -TaskPath $p.Substring(0, $i + 1) -TaskName $p.Substring($i + 1) \
-                     -ErrorAction Stop | Out-Null"
-                } else {
-                    "$p = $env:PT_TASK; $i = $p.LastIndexOf('\\'); \
-                     Disable-ScheduledTask -TaskPath $p.Substring(0, $i + 1) -TaskName $p.Substring($i + 1) \
-                     -ErrorAction Stop | Out-Null"
-                };
-                powershell("scheduled task", script, &[("PT_TASK", path)]).map(drop)
+                need_task_path(path)?;
+                tasks::write(path, *on)
             }
             (SysItem::DnsServers { interface }, SysState::List { items }) => {
                 let g = need_guid(interface, "network adapter")?;
@@ -578,6 +572,115 @@ mod services {
     }
 }
 
+mod tasks {
+    //! Scheduled tasks through the Task Scheduler COM API: whether a task is
+    //! enabled. Not localized, and no PowerShell start on every refresh.
+    //! Each call runs on a short-lived thread of its own in the multithreaded
+    //! apartment, so the caller's COM state (the Tauri main thread is a
+    //! single-threaded apartment) never matters.
+
+    use windows::core::{BSTR, VARIANT};
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, VARIANT_FALSE, VARIANT_TRUE};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::System::TaskScheduler::{IRegisteredTask, ITaskService, TaskScheduler};
+
+    use super::super::error::{EngineError, Result};
+    use super::super::system::SysState;
+
+    fn err(path: &str, what: &str, e: windows::core::Error) -> EngineError {
+        EngineError::Command {
+            what: format!("scheduled task {path}"),
+            exit_code: None,
+            detail: format!("{what}: {e}"),
+        }
+    }
+
+    fn is_missing(e: &windows::core::Error) -> bool {
+        e.code() == ERROR_FILE_NOT_FOUND.to_hresult() || e.code() == ERROR_PATH_NOT_FOUND.to_hresult()
+    }
+
+    /// Run `f` with the task at `path`, or `None` when there is no such task.
+    fn with_task<T: Send + 'static>(
+        path: &str,
+        f: impl FnOnce(Option<IRegisteredTask>) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let path = path.to_owned();
+        std::thread::spawn(move || {
+            // SAFETY: COM is started on this new thread, and stopped only after
+            // every interface it handed out has been dropped (they live inside
+            // the inner closure).
+            unsafe {
+                CoInitializeEx(None, COINIT_MULTITHREADED)
+                    .ok()
+                    .map_err(|e| err(&path, "could not start COM", e))?;
+                let result = (|| {
+                    let svc: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)
+                        .map_err(|e| err(&path, "could not reach the Task Scheduler", e))?;
+                    let local = VARIANT::default();
+                    svc.Connect(&local, &local, &local, &local)
+                        .map_err(|e| err(&path, "could not connect to the Task Scheduler", e))?;
+                    let root = svc
+                        .GetFolder(&BSTR::from("\\"))
+                        .map_err(|e| err(&path, "could not open the task folders", e))?;
+                    let task = match root.GetTask(&BSTR::from(path.as_str())) {
+                        Ok(t) => Some(t),
+                        Err(e) if is_missing(&e) => None,
+                        Err(e) => return Err(err(&path, "could not open it", e)),
+                    };
+                    f(task)
+                })();
+                CoUninitialize();
+                result
+            }
+        })
+        .join()
+        .unwrap_or_else(|_| {
+            Err(EngineError::Internal {
+                detail: "the scheduled task thread stopped unexpectedly".into(),
+            })
+        })
+    }
+
+    /// `Bool { on }` for a task that exists, `Absent` for one that does not.
+    pub fn read(path: &str) -> Result<SysState> {
+        let p = path.to_owned();
+        with_task(path, move |task| match task {
+            None => Ok(SysState::Absent),
+            // SAFETY: a valid interface pointer.
+            Some(t) => unsafe { t.Enabled() }
+                .map(|on| SysState::Bool {
+                    on: on != VARIANT_FALSE,
+                })
+                .map_err(|e| err(&p, "could not read whether it is enabled", e)),
+        })
+    }
+
+    pub fn write(path: &str, on: bool) -> Result<()> {
+        let p = path.to_owned();
+        with_task(path, move |task| {
+            let t = task.ok_or_else(|| EngineError::Command {
+                what: format!("scheduled task {p}"),
+                exit_code: None,
+                detail: "there is no such task".into(),
+            })?;
+            // SAFETY: a valid interface pointer.
+            unsafe { t.SetEnabled(if on { VARIANT_TRUE } else { VARIANT_FALSE }) }.map_err(|e| {
+                err(
+                    &p,
+                    if on {
+                        "could not enable it"
+                    } else {
+                        "could not disable it"
+                    },
+                    e,
+                )
+            })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +698,10 @@ mod tests {
             "IPv6 could not be put back yet"
         );
         assert!(need_ip("1.1.1.1; rm").is_err());
+        assert!(need_task_path(r"\Microsoft\Windows\Autochk\Proxy").is_ok());
+        for bad in ["Proxy", r"\Microsoft\Windows\", r"\Microsoft\\Proxy", r"\..\x", "*"] {
+            assert!(need_task_path(bad).is_err(), "{bad:?}");
+        }
     }
 
     /// Real output from Kegan's PC (2026-10-07).
@@ -625,9 +732,38 @@ mod tests {
         assert!(s.network_adapters().is_ok());
     }
 
-    /// Evidence for CATALOGUE step 3 (NOTES N76, N77): the power plan,
-    /// hibernation and telemetry service tools applied and undone through the
-    /// real engine, and this PC read back the same as before each undo. It
+    /// Read-only, against this PC: scheduled tasks through the Task Scheduler
+    /// COM API, from a thread that is a single-threaded apartment (as the
+    /// Tauri main thread is). A task that does not exist reads as Absent.
+    #[test]
+    fn reads_scheduled_tasks_through_the_task_scheduler_on_this_pc() {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+
+        std::thread::spawn(|| {
+            // SAFETY: COM on a thread of our own, never uninitialised (the
+            // thread ends).
+            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap() };
+            let s = WinSystem::new();
+            let read = |p: &str| s.read(&SysItem::ScheduledTask { path: p.into() }).unwrap();
+            assert_eq!(
+                read(r"\Microsoft\Windows\PeakTweaks Test\No Such Task"),
+                SysState::Absent
+            );
+            assert_eq!(read(r"\No Such Folder PeakTweaks\Task"), SysState::Absent);
+            for p in crate::tweaks::tasks::TELEMETRY_TASKS.tasks {
+                println!("scheduled task {p}: {:?}", read(p));
+            }
+            let defrag = read(r"\Microsoft\Windows\Defrag\ScheduledDefrag");
+            println!("scheduled task \\Microsoft\\Windows\\Defrag\\ScheduledDefrag: {defrag:?}");
+            assert!(matches!(defrag, SysState::Bool { .. } | SysState::Absent), "{defrag:?}");
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// Evidence for CATALOGUE step 3 (NOTES N76-N78): the power plan,
+    /// hibernation, telemetry service and telemetry task tools applied and
+    /// undone through the real engine, and this PC read back the same as before each undo. It
     /// changes real settings, so it runs only where
     /// `PEAKTWEAKS_REAL_SYSTEM_CHANGES=1` (the CI runner sets it); anywhere
     /// else, Kegan's PC included, it prints SKIPPED and changes nothing.
@@ -643,12 +779,13 @@ mod tests {
         use crate::secure_dir::TrustedDir;
         use crate::tweaks::power::{self, PLAN_ID, PLAN_SETTINGS};
         use crate::tweaks::services::TELEMETRY_SERVICE;
+        use crate::tweaks::tasks::TELEMETRY_TASKS;
         use crate::types::{Tier, TweakState};
 
         if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
             println!(
-                "SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change this PC's power plan, hibernation and \
-                 DiagTrack service for real"
+                "SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change this PC's power plan, hibernation, \
+                 DiagTrack service and telemetry tasks for real"
             );
             return;
         }
@@ -675,6 +812,12 @@ mod tests {
             },
         ];
         watched.extend(PLAN_SETTINGS.iter().map(|(sub, set, _, _)| on(&original, sub, set)));
+        watched.extend(
+            TELEMETRY_TASKS
+                .tasks
+                .iter()
+                .map(|p| SysItem::ScheduledTask { path: (*p).to_owned() }),
+        );
         let snapshot = |s: &WinSystem| -> Vec<(String, String)> {
             watched
                 .iter()
@@ -703,6 +846,7 @@ mod tests {
             .with_system(sys.clone());
         let mut tweaks = power::all();
         tweaks.push(Box::new(TELEMETRY_SERVICE));
+        tweaks.push(Box::new(TELEMETRY_TASKS));
         let ids: Vec<String> = tweaks.iter().map(|t| t.id().to_owned()).collect();
         let mut engine = Engine::new(
             resolver,
@@ -764,6 +908,21 @@ mod tests {
                     "  powercfg /list: {}",
                     ours.unwrap_or("(PeakTweaks plan not listed)").trim()
                 );
+            }
+            if id == TELEMETRY_TASKS.id {
+                // A second reader, so the change is not only what our own
+                // COM code reports.
+                for p in TELEMETRY_TASKS.tasks {
+                    let state = powershell(
+                        "scheduled task",
+                        "$p = $env:PT_TASK; $i = $p.LastIndexOf('\\'); \
+                         $t = Get-ScheduledTask -TaskPath $p.Substring(0, $i + 1) -TaskName $p.Substring($i + 1) \
+                         -ErrorAction SilentlyContinue; if ($t) { $t.State } else { 'not on this PC' }",
+                        &[("PT_TASK", p)],
+                    )
+                    .unwrap_or_else(|e| format!("error: {e}"));
+                    println!("  Get-ScheduledTask {p}: {}", state.trim());
+                }
             }
             engine.revert(id).unwrap_or_else(|e| panic!("{id}: undo failed: {e}"));
             let (reverted, _) = state_of(&engine, id);

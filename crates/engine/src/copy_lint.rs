@@ -14,10 +14,28 @@ pub fn claim_words() -> Vec<String> {
         .collect()
 }
 
+/// Names of Windows features that contain a claim word (lower case).
+fn feature_names() -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(CLAIM_WORDS_JSON).expect("scripts/claim-words.json is valid JSON");
+    v["names"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|n| n.as_str())
+                .map(str::to_ascii_lowercase)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The first claim word in `text`, if any. An entry that starts with a letter
 /// or digit only matches at the start of a word ("lag" in "laggy", not "flag").
+/// The Windows feature names in the shared list are removed first.
 pub fn find_claim(text: &str, words: &[String]) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
+    let mut lower = text.to_ascii_lowercase();
+    for name in feature_names() {
+        lower = lower.replace(&name, " ");
+    }
     words.iter().find(|w| matches_at_word_start(&lower, w)).cloned()
 }
 
@@ -69,6 +87,19 @@ mod tests {
         assert_eq!(find_claim("Up to 30% more", &w).as_deref(), Some("% "));
         assert_eq!(find_claim("Higher FPS", &w).as_deref(), Some("fps"));
         assert_eq!(find_claim("Turns off pointer acceleration", &w), None);
+    }
+
+    /// A Windows feature's own name says nothing about a result; the same
+    /// word anywhere else in the text is still caught.
+    #[test]
+    fn windows_feature_names_are_not_claims() {
+        let w = claim_words();
+        let path = r"\Microsoft\Windows\Customer Experience Improvement Program\Consolidator";
+        assert_eq!(find_claim(path, &w), None);
+        assert_eq!(
+            find_claim("The Customer Experience Improvement Program improves games", &w).as_deref(),
+            Some("improv")
+        );
     }
 
     #[test]

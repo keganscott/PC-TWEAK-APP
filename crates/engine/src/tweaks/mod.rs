@@ -10,6 +10,7 @@ pub mod power;
 pub mod registry_values;
 pub mod services;
 pub mod system_restore;
+pub mod tasks;
 
 /// Every tweak the engine knows about, in display order.
 pub fn catalogue() -> Vec<Box<dyn Tweak>> {
@@ -19,6 +20,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     all.push(Box::new(dns::CloudflareDns));
     all.extend(power::all());
     all.extend(services::all());
+    all.extend(tasks::all());
     all.push(Box::new(ifeo_priority::IfeoPriority::fortnite()));
     all
 }

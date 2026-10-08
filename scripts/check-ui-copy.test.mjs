@@ -21,6 +21,11 @@ test("words match at word starts; symbols match anywhere (same rule as Rust)", (
   assert.equal(findClaim("Turns off pointer acceleration", words), null);
 });
 
+test("a Windows feature's own name is not a claim, the same word elsewhere is", () => {
+  assert.equal(findClaim("\\Microsoft\\Windows\\Customer Experience Improvement Program\\UsbCeip", words), null);
+  assert.equal(findClaim("The Customer Experience Improvement Program improves games", words), "improv");
+});
+
 test("JSX text, attributes shown to users, and plain strings are copy", () => {
   assert.deepEqual(lint(`export const A = () => <p>Boost your games</p>;`), ["boost"]);
   assert.deepEqual(lint(`export const A = () => <button aria-label="Get more FPS" />;`), ["fps"]);

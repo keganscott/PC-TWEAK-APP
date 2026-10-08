@@ -10,7 +10,8 @@
 //!
 //! Each target gets `ECHOES` echoes `GAP_MS` apart, the targets side by side.
 //! Jitter is the mean difference between one answered round trip and the
-//! next, as RFC 3550 (section 6.4.1) describes it without its smoothing.
+//! next: RFC 3550's interarrival jitter (section 6.4.1) applied to round
+//! trips instead of one-way transit times, and without its smoothing.
 //! Game servers are not asked yet: their addresses are not published in a
 //! form this can use (NOTES N88).
 //!
@@ -340,8 +341,13 @@ mod imp {
     /// What every echo carries: the letters Windows' `ping` sends.
     const PAYLOAD: &[u8; 32] = b"abcdefghijklmnopqrstuvwabcdefghi";
     /// `IP_STATUS` codes (`ipexport.h`) run from 11000 (`IP_STATUS_BASE`) to
-    /// 11050 (`IP_GENERAL_FAILURE`); each means no answer came back.
+    /// 11050 (`IP_GENERAL_FAILURE`); each means no answer came back, except
+    /// `LOCAL_FAILURES`.
     const IP_STATUS: std::ops::RangeInclusive<u32> = 11000..=11050;
+    /// A failure on this PC, not an echo lost on the way: `IP_BUF_TOO_SMALL`,
+    /// `IP_NO_RESOURCES`, `IP_BAD_OPTION`, `IP_HW_ERROR` (Microsoft's
+    /// `ICMP_ECHO_REPLY` documentation). Reported as a problem, not as loss.
+    const LOCAL_FAILURES: [u32; 4] = [11001, 11006, 11007, 11008];
     /// `ERROR_HOST_UNREACHABLE`: no route to the host, also no answer.
     const ERROR_HOST_UNREACHABLE: u32 = 1232;
 
@@ -381,8 +387,8 @@ mod imp {
             }
             let via = alias(row.dwForwardIfIndex);
             let hop = Ipv4Addr::from(row.dwForwardNextHop.to_ne_bytes());
-            // A direct route has no router: its next hop is unset or this
-            // PC's own address on that connection (a VPN tunnel, say).
+            // A direct route has no router: its next hop is unset (0.0.0.0)
+            // or the destination itself.
             // VERIFY (NOTES N88): what Windows reports for a VPN's route.
             let direct = unsafe { row.Anonymous1.ForwardType } == MIB_IPROUTE_TYPE_DIRECT;
             Ok(if direct || hop.is_unspecified() || hop == towards {
@@ -414,8 +420,8 @@ mod imp {
             let error = unsafe { GetLastError() }.0;
             let _ = unsafe { IcmpCloseHandle(handle) };
             if n == 0 {
-                if IP_STATUS.contains(&error) || error == ERROR_NETWORK_UNREACHABLE.0 || error == ERROR_HOST_UNREACHABLE
-                {
+                let lost = IP_STATUS.contains(&error) && !LOCAL_FAILURES.contains(&error);
+                if lost || error == ERROR_NETWORK_UNREACHABLE.0 || error == ERROR_HOST_UNREACHABLE {
                     return Ok(None);
                 }
                 return Err(EngineError::Internal {

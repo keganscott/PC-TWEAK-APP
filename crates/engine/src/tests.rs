@@ -2612,6 +2612,22 @@ mod prefer_cable {
         }
     }
 
+    /// A Hyper-V host whose cable and Wi-Fi are both in virtual switches: the
+    /// addresses live on the virtual adapters, so neither has an IP interface
+    /// of its own and there is no metric to set.
+    #[test]
+    fn with_no_ip_settings_on_either_it_is_not_offered() {
+        let mut h = Harness::new(vec![Box::new(PreferCable)]);
+        h.sys
+            .set_adapters(vec![adapter("cab", "cable", true), adapter("wif", "wifi", true)]);
+        match state(&h) {
+            TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::HardwareUnsupported),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(h.engine.apply(ID), Err(EngineError::Blocked { .. })));
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
     #[test]
     fn its_registry_backing_names_each_protocols_key() {
         assert_eq!(

@@ -8,7 +8,9 @@
 //! connected, traffic goes over the cable; unplugged, Wi-Fi carries it as
 //! before. Each adapter's previous metric (automatic or a number) is
 //! journalled and Undo puts it back. Other adapters (virtual, VPN, Bluetooth)
-//! are left as they are.
+//! are left as they are, and so is a protocol an adapter does not have. With
+//! no IP settings on either (both in Hyper-V virtual switches, whose virtual
+//! adapters hold the addresses), the tool is not offered.
 //!
 //! VERIFY (NOTES N83): the metric survives a restart; the numbers sit below
 //! and above Windows' automatic metrics.
@@ -56,6 +58,13 @@ fn wanted(res: &ContextResolver) -> Result<Vec<(NetAdapter, u32)>> {
             Some((a, metric))
         })
         .collect())
+}
+
+fn no_ip_settings() -> BlockedReason {
+    BlockedReason::new(
+        BlockedCode::HardwareUnsupported,
+        "Neither the network cable port nor Wi-Fi has IP settings of its own here.",
+    )
 }
 
 fn items(a: &NetAdapter) -> [SysItem; 2] {
@@ -123,8 +132,11 @@ impl Tweak for PreferCable {
                 }
             }
         }
+        // Every item matched or was Absent: none present means no IP here.
         Ok(match (seen, has_journal_entry) {
-            (false, _) => TweakState::Default,
+            (false, _) => TweakState::Blocked {
+                reason: no_ip_settings(),
+            },
             (true, true) => TweakState::Applied,
             (true, false) => TweakState::Foreign,
         })
@@ -132,12 +144,19 @@ impl Tweak for PreferCable {
 
     fn apply(&self, tx: &mut Transaction) -> Result<()> {
         let adapters = wanted(tx.resolver())?;
+        let mut present = false;
         for (a, metric) in &adapters {
             for item in items(a) {
                 if tx.resolver().read_system(&item)? != SysState::Absent {
                     tx.set_system(item, SysState::Dword { value: *metric })?;
+                    present = true;
                 }
             }
+        }
+        if !present {
+            return Err(EngineError::Blocked {
+                reason: no_ip_settings(),
+            });
         }
         Ok(())
     }

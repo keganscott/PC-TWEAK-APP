@@ -1740,6 +1740,7 @@ mod system_changes {
             up: true,
             wireless: false,
             wired: true,
+            pnp_id: String::new(),
         }]);
         h.engine.apply("sys").unwrap();
         h.engine.revert("sys").unwrap();
@@ -2072,6 +2073,7 @@ mod nagle {
                 up: eth_up,
                 wireless: false,
                 wired: true,
+                pnp_id: String::new(),
             },
             NetAdapter {
                 guid: WIFI.into(),
@@ -2079,6 +2081,7 @@ mod nagle {
                 up: false,
                 wireless: true,
                 wired: false,
+                pnp_id: String::new(),
             },
         ]
     }
@@ -2160,6 +2163,7 @@ mod dns {
             up,
             wireless: false,
             wired: true,
+            pnp_id: String::new(),
         }
     }
 
@@ -2417,6 +2421,7 @@ mod prefer_cable {
             up,
             wireless: kind == "wifi",
             wired: kind == "cable",
+            pnp_id: String::new(),
         }
     }
 
@@ -2553,6 +2558,335 @@ mod prefer_cable {
             )]
         );
         assert_eq!(metric("ab", false).describe(), "IPv4 interface metric of adapter ab");
+    }
+}
+
+/// CATALOGUE H24 (tweaks/adapter_props.rs).
+mod adapter_tools {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::registry::Hive;
+    use crate::system::{NetAdapter, SideEffect};
+    use crate::tweaks::adapter_props::{
+        AdapterSetting, ENERGY_EFFICIENT_ETHERNET, FLOW_CONTROL, INTERRUPT_MODERATION, POWER_SAVING,
+    };
+    use crate::types::{BlockedCode, RawValue, RegRoot};
+
+    const NET: &str = "{4d36e972-e325-11ce-bfc1-08002be10318}";
+    const ENUM: &str = r"SYSTEM\CurrentControlSet\Enum";
+    const CABLE: &str = "0a1b2c3d-0000-4000-8000-000000000001";
+    const WIFI: &str = "0a1b2c3d-0000-4000-8000-000000000002";
+    const BLUETOOTH: &str = "0a1b2c3d-0000-4000-8000-000000000003";
+    const CABLE_PNP: &str = r"PCI\VEN_8086&DEV_15F3&SUBSYS_86721043&REV_03\6&1f1b5a0&0&00E0";
+    const WIFI_PNP: &str = r"PCI\VEN_8086&DEV_2723&SUBSYS_00848086&REV_1A\4&2a3f6c1&0&00E1";
+    const BT_PNP: &str = r"BTH\MS_BTHPAN\7&30f1a3d&0&2";
+    const IM: &str = "*InterruptModeration";
+
+    fn class_key(index: &str) -> String {
+        format!(r"SYSTEM\CurrentControlSet\Control\Class\{NET}\{index}")
+    }
+
+    fn adapter(guid: &str, name: &str, pnp: &str) -> NetAdapter {
+        NetAdapter {
+            guid: guid.into(),
+            name: name.into(),
+            up: true,
+            wireless: name == "Wi-Fi",
+            wired: name == "Ethernet",
+            pnp_id: pnp.into(),
+        }
+    }
+
+    /// An adapter's `Enum` and driver keys, as Windows writes them: `Driver`
+    /// names the class key, which names the adapter back.
+    fn install(h: &Harness, pnp: &str, index: &str, guid: &str) {
+        h.fake.set_external(
+            Hive::LocalMachine,
+            &format!(r"{ENUM}\{pnp}"),
+            "Driver",
+            RawValue::sz(&format!(r"{NET}\{index}")),
+        );
+        h.fake.set_external(
+            Hive::LocalMachine,
+            &class_key(index),
+            "NetCfgInstanceId",
+            RawValue::sz(&format!("{{{}}}", guid.to_ascii_uppercase())),
+        );
+    }
+
+    /// The driver offers `keyword` with these choices and this default.
+    fn offer(h: &Harness, index: &str, keyword: &str, choices: &[&str], default: &str) {
+        let params = format!(r"{}\Ndi\params\{keyword}", class_key(index));
+        h.fake
+            .set_external(Hive::LocalMachine, &params, "default", RawValue::sz(default));
+        for c in choices {
+            h.fake.set_external(
+                Hive::LocalMachine,
+                &format!(r"{params}\enum"),
+                c,
+                RawValue::sz(&format!("choice {c}")),
+            );
+        }
+    }
+
+    fn store(h: &Harness, index: &str, name: &str, v: RawValue) {
+        h.fake.set_external(Hive::LocalMachine, &class_key(index), name, v);
+    }
+
+    fn stored(h: &Harness, index: &str, name: &str) -> Option<RawValue> {
+        h.fake.read_value_for_test(Hive::LocalMachine, &class_key(index), name)
+    }
+
+    fn restart(guid: &str) -> SideEffect {
+        SideEffect::RestartAdapter { interface: guid.into() }
+    }
+
+    fn state(h: &Harness, t: &AdapterSetting) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == t.id)
+            .unwrap()
+            .state
+    }
+
+    fn blocked(h: &Harness, t: &AdapterSetting) -> String {
+        match state(h, t) {
+            TweakState::Blocked { reason } => {
+                assert_eq!(reason.code, BlockedCode::HardwareUnsupported);
+                reason.message
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// An Intel cable adapter with interrupt moderation on (stored), an Intel
+    /// Wi-Fi adapter with it already off, and a Bluetooth adapter whose
+    /// driver has no such setting.
+    fn pc(tool: AdapterSetting) -> Harness {
+        let h = Harness::new(vec![Box::new(tool)]);
+        h.sys.set_adapters(vec![
+            adapter(CABLE, "Ethernet", CABLE_PNP),
+            adapter(WIFI, "Wi-Fi", WIFI_PNP),
+            adapter(BLUETOOTH, "Bluetooth Network Connection", BT_PNP),
+        ]);
+        install(&h, CABLE_PNP, "0001", CABLE);
+        install(&h, WIFI_PNP, "0002", WIFI);
+        install(&h, BT_PNP, "0003", BLUETOOTH);
+        offer(&h, "0001", IM, &["0", "1"], "1");
+        store(&h, "0001", IM, RawValue::sz("1"));
+        offer(&h, "0002", IM, &["0", "1"], "1");
+        store(&h, "0002", IM, RawValue::sz("0"));
+        h
+    }
+
+    #[test]
+    fn turns_the_setting_off_where_it_is_on_and_restarts_only_that_adapter() {
+        let mut h = pc(INTERRUPT_MODERATION);
+        let before = h.fake.snapshot();
+        assert_eq!(state(&h, &INTERRUPT_MODERATION), TweakState::Default);
+
+        h.engine.apply(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(stored(&h, "0001", IM), Some(RawValue::sz("0")));
+        assert_eq!(stored(&h, "0002", IM), Some(RawValue::sz("0")));
+        assert_eq!(stored(&h, "0003", IM), None, "its driver has no such setting");
+        assert_eq!(h.sys.effects(), [restart(CABLE)], "Wi-Fi was already off");
+        assert_eq!(state(&h, &INTERRUPT_MODERATION), TweakState::Applied);
+
+        h.engine.revert(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(h.fake.snapshot(), before);
+        assert_eq!(h.sys.effects(), [restart(CABLE), restart(CABLE)]);
+        assert_eq!(state(&h, &INTERRUPT_MODERATION), TweakState::Default);
+    }
+
+    #[test]
+    fn a_value_the_driver_stored_as_a_number_stays_a_number() {
+        let mut h = pc(INTERRUPT_MODERATION);
+        store(&h, "0001", IM, RawValue::dword(1));
+        h.engine.apply(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(stored(&h, "0001", IM), Some(RawValue::dword(0)));
+        h.engine.revert(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(stored(&h, "0001", IM), Some(RawValue::dword(1)));
+    }
+
+    #[test]
+    fn a_setting_the_key_does_not_hold_is_at_the_drivers_default() {
+        let mut h = pc(INTERRUPT_MODERATION);
+        h.fake.remove_external(Hive::LocalMachine, &class_key("0001"), IM);
+        offer(&h, "0001", IM, &[], "0");
+        assert_eq!(
+            state(&h, &INTERRUPT_MODERATION),
+            TweakState::Foreign,
+            "the driver's default is off: already optimized"
+        );
+
+        offer(&h, "0001", IM, &[], "1");
+        let before = h.fake.snapshot();
+        assert_eq!(state(&h, &INTERRUPT_MODERATION), TweakState::Default);
+        h.engine.apply(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(stored(&h, "0001", IM), Some(RawValue::sz("0")));
+        h.engine.revert(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(h.fake.snapshot(), before, "the value is removed again");
+    }
+
+    #[test]
+    fn a_value_the_driver_does_not_offer_is_never_written() {
+        let mut h = Harness::new(vec![Box::new(FLOW_CONTROL)]);
+        h.sys.set_adapters(vec![adapter(CABLE, "Ethernet", CABLE_PNP)]);
+        install(&h, CABLE_PNP, "0001", CABLE);
+        // Only "Rx & Tx Enabled" and "Rx Enabled": no "Disabled" (0).
+        offer(&h, "0001", "*FlowControl", &["3", "2"], "3");
+        let before = h.fake.snapshot();
+        assert_eq!(blocked(&h, &FLOW_CONTROL), "No network adapter here has flow control.");
+        assert!(matches!(
+            h.engine.apply(FLOW_CONTROL.id),
+            Err(EngineError::Blocked { .. })
+        ));
+        assert_eq!(h.fake.snapshot(), before);
+        assert!(h.sys.effects().is_empty());
+    }
+
+    #[test]
+    fn a_driver_key_that_is_not_this_adapters_is_left_alone() {
+        type Spoil = fn(&Harness);
+        let cases: [(&str, Spoil); 4] = [
+            ("names another adapter", |h| {
+                store(
+                    h,
+                    "0001",
+                    "NetCfgInstanceId",
+                    RawValue::sz("{0A1B2C3D-0000-4000-8000-0000000000FF}"),
+                )
+            }),
+            ("another class", |h| {
+                h.fake.set_external(
+                    Hive::LocalMachine,
+                    &format!(r"{ENUM}\{CABLE_PNP}"),
+                    "Driver",
+                    RawValue::sz(r"{4d36e968-e325-11ce-bfc1-08002be10318}\0001"),
+                )
+            }),
+            ("not an index", |h| {
+                h.fake.set_external(
+                    Hive::LocalMachine,
+                    &format!(r"{ENUM}\{CABLE_PNP}"),
+                    "Driver",
+                    RawValue::sz(&format!(r"{NET}\..\0001")),
+                )
+            }),
+            ("no driver named", |h| {
+                h.fake
+                    .remove_external(Hive::LocalMachine, &format!(r"{ENUM}\{CABLE_PNP}"), "Driver")
+            }),
+        ];
+        for (why, spoil) in cases {
+            let h = Harness::new(vec![Box::new(INTERRUPT_MODERATION)]);
+            h.sys.set_adapters(vec![adapter(CABLE, "Ethernet", CABLE_PNP)]);
+            install(&h, CABLE_PNP, "0001", CABLE);
+            offer(&h, "0001", IM, &["0", "1"], "1");
+            spoil(&h);
+            assert_eq!(
+                blocked(&h, &INTERRUPT_MODERATION),
+                "No network adapter here has interrupt moderation.",
+                "{why}"
+            );
+        }
+
+        // Windows gave no device id, or a path out of Enum.
+        for pnp in ["", r"..\..\Control", r"\PCI\x"] {
+            let h = Harness::new(vec![Box::new(INTERRUPT_MODERATION)]);
+            h.sys.set_adapters(vec![adapter(CABLE, "Ethernet", pnp)]);
+            assert!(
+                matches!(state(&h, &INTERRUPT_MODERATION), TweakState::Blocked { .. }),
+                "{pnp}"
+            );
+        }
+    }
+
+    #[test]
+    fn power_saving_sets_two_bits_keeps_the_others_and_waits_for_a_restart() {
+        let mut h = Harness::new(vec![Box::new(POWER_SAVING)]);
+        h.sys.set_adapters(vec![
+            adapter(CABLE, "Ethernet", CABLE_PNP),
+            adapter(WIFI, "Wi-Fi", WIFI_PNP),
+        ]);
+        install(&h, CABLE_PNP, "0001", CABLE);
+        install(&h, WIFI_PNP, "0002", WIFI);
+        store(&h, "0002", "PnPCapabilities", RawValue::dword(0x100));
+        let before = h.fake.snapshot();
+        assert_eq!(state(&h, &POWER_SAVING), TweakState::Default);
+
+        h.engine.apply(POWER_SAVING.id).unwrap();
+        assert_eq!(stored(&h, "0001", "PnPCapabilities"), Some(RawValue::dword(0x18)));
+        assert_eq!(stored(&h, "0002", "PnPCapabilities"), Some(RawValue::dword(0x118)));
+        assert!(
+            h.sys.effects().is_empty(),
+            "no adapter restarts: the PC's restart does it"
+        );
+        assert_eq!(state(&h, &POWER_SAVING), TweakState::Applied);
+
+        h.engine.revert(POWER_SAVING.id).unwrap();
+        assert_eq!(h.fake.snapshot(), before);
+        assert!(h.sys.effects().is_empty());
+
+        // One bit of the two is not enough.
+        store(&h, "0001", "PnPCapabilities", RawValue::dword(0x18));
+        store(&h, "0002", "PnPCapabilities", RawValue::dword(0x10));
+        assert_eq!(state(&h, &POWER_SAVING), TweakState::Default);
+        store(&h, "0002", "PnPCapabilities", RawValue::dword(0x118));
+        assert_eq!(state(&h, &POWER_SAVING), TweakState::Foreign);
+    }
+
+    #[test]
+    fn an_adapter_removed_before_undo_is_noted_and_the_rest_put_back() {
+        let mut h = pc(INTERRUPT_MODERATION);
+        store(&h, "0002", IM, RawValue::sz("1"));
+        h.engine.apply(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(h.sys.effects(), [restart(CABLE), restart(WIFI)]);
+
+        h.fake.remove_key_external(Hive::LocalMachine, &class_key("0002"));
+        h.sys.set_adapters(vec![adapter(CABLE, "Ethernet", CABLE_PNP)]);
+        h.engine.revert(INTERRUPT_MODERATION.id).unwrap();
+        assert_eq!(stored(&h, "0001", IM), Some(RawValue::sz("1")));
+        assert!(
+            !h.fake.key_exists_for_test(Hive::LocalMachine, &class_key("0002")),
+            "not created again"
+        );
+        assert_eq!(h.sys.effects(), [restart(CABLE), restart(WIFI), restart(CABLE)]);
+        assert!(h.engine.applied_tweak_ids().is_empty());
+        assert!(h
+            .engine
+            .journal_view()
+            .records
+            .iter()
+            .any(|r| matches!(r, Record::Note(n) if n.text.contains("no longer exists"))));
+    }
+
+    #[test]
+    fn each_tool_may_write_only_its_own_value_in_a_network_driver_key() {
+        for t in [
+            INTERRUPT_MODERATION,
+            FLOW_CONTROL,
+            ENERGY_EFFICIENT_ETHERNET,
+            POWER_SAVING,
+        ] {
+            let touches = t.touches();
+            assert_eq!(touches.len(), 1, "{}", t.id);
+            assert_eq!(touches[0].root, RegRoot::LocalMachine);
+            assert_eq!(touches[0].key, class_key("*"));
+            assert_eq!(touches[0].values, [t.value_name.to_owned()]);
+            let m = t.metadata();
+            assert_eq!(m.category, "network");
+            let keyword = t.value_name.starts_with('*');
+            assert_eq!(m.requires_reboot, !keyword, "{}", t.id);
+            assert_eq!(
+                t.effect_targets(),
+                if keyword { vec![restart("*")] } else { Vec::new() },
+                "{}",
+                t.id
+            );
+        }
     }
 }
 

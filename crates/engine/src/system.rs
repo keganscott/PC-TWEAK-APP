@@ -278,6 +278,9 @@ pub struct NetAdapter {
     /// A network cable (Ethernet). Neither this nor `wireless` for others,
     /// such as Bluetooth.
     pub wired: bool,
+    /// Its Plug and Play device instance id (`PCI\VEN_…\…`), the name of
+    /// its `Enum` key; empty when Windows gave none.
+    pub pnp_id: String,
 }
 
 /// What a PCI device is, for the devices PeakTweaks offers changes on.

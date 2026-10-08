@@ -142,14 +142,16 @@ impl Default for WinSystem {
 
 const ADAPTER_CACHE: Duration = Duration::from_secs(30);
 
-/// `guid|Status|PhysicalMediaType|Name` lines from `Get-NetAdapter -Physical`.
+/// `guid|Status|PhysicalMediaType|PnPDeviceID|Name` lines from
+/// `Get-NetAdapter -Physical`.
 pub(crate) fn parse_adapters(out: &str) -> Vec<NetAdapter> {
     out.lines()
         .filter_map(|l| {
-            let mut parts = l.trim().splitn(4, '|');
+            let mut parts = l.trim().splitn(5, '|');
             let g = guid(parts.next()?)?;
             let status = parts.next()?;
             let media = parts.next()?;
+            let pnp_id = parts.next()?.trim().to_owned();
             let name = parts.next()?.to_owned();
             Some(NetAdapter {
                 guid: g,
@@ -157,6 +159,7 @@ pub(crate) fn parse_adapters(out: &str) -> Vec<NetAdapter> {
                 up: status.eq_ignore_ascii_case("Up"),
                 wireless: media.contains("802.11"),
                 wired: media.trim() == "802.3",
+                pnp_id,
             })
         })
         .collect()
@@ -323,8 +326,8 @@ impl SystemBackend for WinSystem {
         }
         let out = powershell(
             "network adapters",
-            "Get-NetAdapter -Physical | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.InterfaceGuid, $_.Status, \
-             $_.PhysicalMediaType, $_.Name }",
+            "Get-NetAdapter -Physical | ForEach-Object { '{0}|{1}|{2}|{3}|{4}' -f $_.InterfaceGuid, $_.Status, \
+             $_.PhysicalMediaType, $_.PnPDeviceID, $_.Name }",
             &[],
         )?;
         let list = parse_adapters(&out);
@@ -611,8 +614,10 @@ impl SystemBackend for WinSystem {
                 let g = need_guid(interface, "network adapter")?;
                 powershell(
                     "restart network adapter",
-                    "Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq ('{' + $env:PT_GUID + '}') } \
-                     | Restart-NetAdapter -Confirm:$false -ErrorAction Stop",
+                    // A disabled adapter stays disabled: Restart-NetAdapter
+                    // would turn it on, and it reads its settings when it is.
+                    "Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq ('{' + $env:PT_GUID + '}') \
+                     -and $_.Status -ne 'Disabled' } | Restart-NetAdapter -Confirm:$false -ErrorAction Stop",
                     &[("PT_GUID", &g)],
                 )
                 .map(drop)
@@ -929,16 +934,23 @@ mod tests {
         }
     }
 
-    /// Real output from Kegan's PC (2026-10-07).
+    /// Real output from Kegan's PC (2026-10-07), with device ids in the
+    /// form Windows gives them added since.
     #[test]
     fn adapters_are_parsed_from_the_listing() {
-        let out = "{4D86B570-2994-4EB0-A004-914EF65FF05A}|Disconnected|Native 802.11|Wi-Fi\r\n\
-                   {3F504232-CECB-4118-B4D8-5A5E72D677C3}|Up|802.3|Ethernet\r\n";
+        let out = "{4D86B570-2994-4EB0-A004-914EF65FF05A}|Disconnected|Native 802.11|\
+                   PCI\\VEN_8086&DEV_2725&SUBSYS_00248086&REV_1A\\4&1B2C3D4E&0&00E4|Wi-Fi\r\n\
+                   {3F504232-CECB-4118-B4D8-5A5E72D677C3}|Up|802.3|\
+                   PCI\\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\\01000000684CE00000|Ethernet | home\r\n";
         let a = parse_adapters(out);
         assert_eq!(a.len(), 2);
         assert_eq!(a[0].guid, "4d86b570-2994-4eb0-a004-914ef65ff05a");
         assert!(a[0].wireless && !a[0].wired && !a[0].up);
-        assert!(!a[1].wireless && a[1].wired && a[1].up && a[1].name == "Ethernet");
+        assert_eq!(
+            a[0].pnp_id,
+            r"PCI\VEN_8086&DEV_2725&SUBSYS_00248086&REV_1A\4&1B2C3D4E&0&00E4"
+        );
+        assert!(!a[1].wireless && a[1].wired && a[1].up && a[1].name == "Ethernet | home");
     }
 
     #[test]
@@ -998,10 +1010,11 @@ mod tests {
         }
     }
 
-    /// Read-only, against this PC: the graphics cards and network adapters
-    /// MSI mode would be offered for, each with its state.
-    #[test]
-    fn msi_mode_lists_this_pcs_devices() {
+    /// A resolver and an engine on this PC's real registry and system.
+    fn real_engine(
+        dir: &std::path::Path,
+        tweaks: Vec<Box<dyn crate::types::Tweak>>,
+    ) -> (crate::context::ContextResolver, crate::engine::Engine) {
         use std::sync::Arc;
 
         use crate::context::{ContextResolver, UserContext, UserResolution};
@@ -1011,26 +1024,104 @@ mod tests {
         use crate::secure_dir::TrustedDir;
         use crate::types::Tier;
 
-        let dir = tempfile::tempdir().unwrap();
-        let user = UserContext {
-            sid: crate::identity::current_process_sid().unwrap(),
-            resolution: UserResolution::OwnToken,
-            is_self: true,
+        let resolver = || {
+            let user = UserContext {
+                sid: crate::identity::current_process_sid().unwrap(),
+                resolution: UserResolution::OwnToken,
+                is_self: true,
+            };
+            ContextResolver::new(user, crate::identity::is_elevated(), Arc::new(WinRegistry::new()))
+                .with_system(Arc::new(WinSystem::new()))
         };
-        let resolver = ContextResolver::new(user, crate::identity::is_elevated(), Arc::new(WinRegistry::new()))
-            .with_system(Arc::new(WinSystem::new()));
-        let mut engine = Engine::new(
-            resolver,
-            Journal::open(&TrustedDir::insecure_for_tests(dir.path())).unwrap(),
-            Vec::new(),
+        let engine = Engine::new(
+            resolver(),
+            Journal::open(&TrustedDir::insecure_for_tests(dir)).unwrap(),
+            tweaks,
             Box::new(StubProbe::open_for_dev()),
             License::dev(Tier::Ultimate),
         );
+        (resolver(), engine)
+    }
+
+    /// Read-only, against this PC: the graphics cards and network adapters
+    /// MSI mode would be offered for, each with its state.
+    #[test]
+    fn msi_mode_lists_this_pcs_devices() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, mut engine) = real_engine(dir.path(), Vec::new());
         let list = engine.msi_devices();
         for d in &list.devices {
             println!("{:?} {:?}: {:?}", d.class, d.tweak.metadata.name, d.tweak.state);
         }
         assert_eq!(list.problem, None);
+    }
+
+    /// Against this PC: each adapter's driver key and the state of each
+    /// network adapter setting (catalogue H24). With
+    /// PEAKTWEAKS_REAL_SYSTEM_CHANGES=1, power saving is also turned off and
+    /// back through the engine; it restarts no adapter, so the runner keeps
+    /// its connection.
+    #[test]
+    fn network_adapter_settings_read_on_this_pc() {
+        use crate::tweaks::adapter_props::{self, driver_key, POWER_SAVING};
+        use crate::types::{RawValue, RegRoot, TweakState};
+
+        let dir = tempfile::tempdir().unwrap();
+        let (res, mut engine) = real_engine(dir.path(), adapter_props::all());
+        let keys: Vec<String> = res
+            .network_adapters()
+            .unwrap()
+            .iter()
+            .filter_map(|a| {
+                let key = driver_key(&res, a);
+                println!("{} ({}): driver key {key:?}", a.name, a.pnp_id);
+                key.unwrap()
+            })
+            .collect();
+        let states = |engine: &crate::engine::Engine| -> Vec<(String, TweakState)> {
+            engine
+                .list()
+                .unwrap()
+                .into_iter()
+                .map(|v| (v.metadata.id.into_owned(), v.state))
+                .collect()
+        };
+        let before = states(&engine);
+        println!("states: {before:?}");
+        for (id, state) in &before {
+            assert!(!matches!(state, TweakState::Unknown { .. }), "{id} could not be read");
+        }
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to turn adapter power saving off and back");
+            return;
+        }
+        let power = |res: &crate::context::ContextResolver| -> Vec<Option<RawValue>> {
+            keys.iter()
+                .map(|k| res.read_raw(RegRoot::LocalMachine, k, POWER_SAVING.value_name).unwrap())
+                .collect()
+        };
+        let (pc_before, state_before) = (
+            power(&res),
+            &before.iter().find(|(id, _)| id == POWER_SAVING.id).unwrap().1,
+        );
+        println!("PnPCapabilities before: {pc_before:?}");
+        if !matches!(state_before, TweakState::Default) {
+            println!("SKIPPED: power saving reads {state_before:?} here, so there is nothing to turn off");
+            return;
+        }
+        engine.apply(POWER_SAVING.id).unwrap();
+        let during = power(&res);
+        println!("PnPCapabilities after apply: {during:?}");
+        assert!(during.iter().all(|v| v
+            .as_ref()
+            .and_then(RawValue::as_dword)
+            .is_some_and(|d| d & 0x18 == 0x18)));
+        engine.revert(POWER_SAVING.id).unwrap();
+        let after = power(&res);
+        println!("PnPCapabilities after Undo: {after:?}");
+        assert_eq!(after, pc_before);
+        assert_eq!(states(&engine), before);
     }
 
     #[test]

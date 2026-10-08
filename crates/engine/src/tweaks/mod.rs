@@ -2,6 +2,7 @@
 
 use crate::types::Tweak;
 
+pub mod adapter_props;
 pub mod amd;
 pub mod cable;
 pub mod dns;
@@ -26,6 +27,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     all.push(Box::new(nagle::Nagle));
     all.push(Box::new(dns::CloudflareDns));
     all.push(Box::new(cable::PreferCable));
+    all.extend(adapter_props::all());
     all.extend(power::all());
     all.extend(services::all());
     all.extend(tasks::all());

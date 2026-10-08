@@ -355,6 +355,7 @@ mod tests {
             up,
             wireless: !wired,
             wired,
+            pnp_id: String::new(),
         };
         assert!(wifi_only(&[a(false, true)]));
         assert!(wifi_only(&[a(false, true), a(true, false)]), "an unplugged cable");

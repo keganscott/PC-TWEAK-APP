@@ -21,4 +21,9 @@ up: boolean, wireless: boolean,
  * A network cable (Ethernet). Neither this nor `wireless` for others,
  * such as Bluetooth.
  */
-wired: boolean, };
+wired: boolean, 
+/**
+ * Its Plug and Play device instance id (`PCI\VEN_…\…`), the name of
+ * its `Enum` key; empty when Windows gave none.
+ */
+pnpId: string, };

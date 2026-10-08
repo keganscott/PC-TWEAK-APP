@@ -275,11 +275,13 @@ jobs:
       # through ADLX, which on a runner without such a card must say so rather
       # than fail. The connection check (E4) echoes this PC and then runs in
       # full; a cloud runner may drop echoes to the internet, so its figures
-      # are printed, not judged.
-      - name: Network adapter metric, connection check, MSI mode devices, NVIDIA and AMD settings on this runner
+      # are printed, not judged. Network adapter settings (H24): each adapter's
+      # driver key and setting states are read, and adapter power saving is
+      # turned off and back (no adapter restart, so the runner stays online).
+      - name: Network adapter metric and settings, connection check, MSI mode devices, NVIDIA and AMD settings on this runner
         env:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing this_pc_answers_its_own_echoes the_connection_check_runs_on_this_pc
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing this_pc_answers_its_own_echoes the_connection_check_runs_on_this_pc network_adapter_settings_read_on_this_pc
 
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the

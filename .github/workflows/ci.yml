@@ -222,7 +222,26 @@ jobs:
       - name: Power and service tools on this runner
         env:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 power_and_service_tools_apply_and_undo_on_this_pc reads_scheduled_tasks_through_the_task_scheduler_on_this_pc
+        shell: pwsh
+        run: |
+          # The runner image ships with these already off, so the tools would
+          # be skipped as already optimized (run 37717494960). Turn them on
+          # first so apply and undo run for real; the runner is thrown away.
+          foreach ($p in @(
+              '\Microsoft\Windows\Customer Experience Improvement Program\Consolidator',
+              '\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip',
+              '\Microsoft\Windows\Application Experience\ProgramDataUpdater',
+              '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector',
+              '\Microsoft\Windows\Autochk\Proxy')) {
+            $i = $p.LastIndexOf('\')
+            $t = Enable-ScheduledTask -TaskPath $p.Substring(0, $i + 1) -TaskName $p.Substring($i + 1) -ErrorAction SilentlyContinue
+            Write-Host "prepared $p : $(if ($t) { $t.State } else { 'not on this runner' })"
+          }
+          Set-Service DiagTrack -StartupType Manual -ErrorAction Continue
+          Write-Host "prepared DiagTrack: $((Get-Service DiagTrack -ErrorAction SilentlyContinue).StartType)"
+          powercfg /hibernate on
+          Write-Host "prepared hibernation: powercfg exit code $LASTEXITCODE"
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 power_and_service_tools_apply_and_undo_on_this_pc reads_scheduled_tasks_through_the_task_scheduler_on_this_pc
 
       # Catalogue step 5: the running programs and the timer read (and the
       # timer held for a moment) by the game watcher's own code, and Gaming
@@ -230,7 +249,16 @@ jobs:
       - name: Game watcher and Gaming Mode on this runner
         env:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 lists_running_programs_and_reads_the_timer_on_this_pc gaming_mode_starts_and_ends_on_this_pc
+        shell: pwsh
+        run: |
+          # Gaming Mode stops Windows Search only when it runs; start it if
+          # this runner has it, so that change is made and put back too.
+          if (Get-Service WSearch -ErrorAction SilentlyContinue) {
+            Set-Service WSearch -StartupType Manual -ErrorAction Continue
+            Start-Service WSearch -ErrorAction Continue
+          }
+          Write-Host "prepared WSearch: $((Get-Service WSearch -ErrorAction SilentlyContinue).Status)"
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 lists_running_programs_and_reads_the_timer_on_this_pc gaming_mode_starts_and_ends_on_this_pc
 
       # The only code that writes the real registry, on the real registry: the
       # RegistryBackend contract, engine apply/revert, and reg.exe import of the

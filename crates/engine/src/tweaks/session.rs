@@ -11,7 +11,7 @@
 //! Windows Update); the second is the per-game tool H31.
 //!
 //! VERIFY: that a changed `ToastEnabled` takes effect without signing out, as
-//! the switch in Settings does (NOTES N79).
+//! the switch in Settings does (NOTES N80).
 
 use std::borrow::Cow;
 

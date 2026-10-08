@@ -224,10 +224,13 @@ impl SystemBackend for WinSystem {
                     need_guid(subgroup, "power setting")?,
                     need_guid(setting, "power setting")?,
                 );
-                let out = tool("powercfg.exe", &["/query", &s, &sub, &set])?;
-                // Hidden settings print nothing; their index then counts as
-                // not set (PeakTweaks only changes settings on its own copy,
-                // which Undo deletes).
+                // `/qh` also prints hidden settings, such as core parking
+                // (VERIFY, NOTES N77: run 37717494960 read it as not set with
+                // `/query`); a Windows without `/qh` falls back to `/query`.
+                let out = tool("powercfg.exe", &["/qh", &s, &sub, &set])
+                    .or_else(|_| tool("powercfg.exe", &["/query", &s, &sub, &set]))?;
+                // A setting neither prints counts as not set (PeakTweaks only
+                // changes such settings on its own copy, which Undo deletes).
                 Ok(match setting_indexes(&out) {
                     Some((a, d)) => SysState::Dword {
                         value: if *ac { a } else { d },
@@ -902,6 +905,18 @@ mod tests {
                     let got = sys.read(&on(PEAKTWEAKS, sub, set)).unwrap();
                     println!("  PeakTweaks plan, plugged in, {label}: {got:?} (wanted {want})");
                 }
+                let hidden = tool(
+                    "powercfg.exe",
+                    &["/qh", PEAKTWEAKS, PLAN_SETTINGS[1].0, PLAN_SETTINGS[1].1],
+                );
+                println!(
+                    "  powercfg /qh, {}: {}",
+                    PLAN_SETTINGS[1].3,
+                    match &hidden {
+                        Ok(out) => out.lines().rev().take(3).collect::<Vec<_>>().join(" | "),
+                        Err(e) => format!("error: {e}"),
+                    }
+                );
                 let list = tool("powercfg.exe", &["/list"]).unwrap();
                 let ours = list.lines().find(|l| l.to_ascii_lowercase().contains(PEAKTWEAKS));
                 println!(
@@ -937,7 +952,7 @@ mod tests {
         );
     }
 
-    /// Evidence for CATALOGUE step 5 (NOTES N79): Gaming Mode made and put
+    /// Evidence for CATALOGUE step 5 (NOTES N80): Gaming Mode made and put
     /// back through the real engine, as the game watcher does when a game
     /// starts and closes, with this PC read before, during and after. Gated
     /// like the test above: it changes nothing unless

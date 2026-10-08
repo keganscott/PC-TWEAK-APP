@@ -289,8 +289,9 @@ struct Requirement {
     source: &'static str,
 }
 
-/// Requirements we know about. Only the plan's Fortnite entry exists; adding a
-/// title here is a product decision (plan section 11, item 5).
+/// Requirements we know about, one entry per `ALL_GAMES` game in the same
+/// order. Only the offered games are reported (`env::KNOWN_GAMES`); offering
+/// a title is a product decision (plan section 11, item 5; NOTES N75).
 const REQUIREMENTS: &[Requirement] = &[
     Requirement {
         game_id: "fortnite",
@@ -307,6 +308,26 @@ const REQUIREMENTS: &[Requirement] = &[
     },
     Requirement {
         game_id: "roblox",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "valorant",
+        requires: &[SecurityFeature::Tpm, SecurityFeature::SecureBoot],
+        scope: "playing on Windows 11",
+        // VERIFY against Riot's articles before offering Valorant (NOTES N75).
+        source: "Riot's support articles for the VAN 9001 and VAN 9003 errors, from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "cs2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "apex",
         requires: &[],
         scope: "",
         source: "",
@@ -358,6 +379,7 @@ pub fn anti_cheat_readiness(report: &SecurityReport) -> AntiCheatReadiness {
         iommu: report.iommu.clone(),
         per_game: REQUIREMENTS
             .iter()
+            .filter(|r| crate::env::is_offered(r.game_id))
             .map(|r| GameReadiness {
                 game_id: r.game_id.to_owned(),
                 requires: r.requires.to_vec(),
@@ -586,13 +608,19 @@ mod tests {
 
     #[test]
     fn per_game_table_covers_the_known_games_and_no_others() {
+        let table: Vec<&str> = REQUIREMENTS.iter().map(|r| r.game_id).collect();
+        let all: Vec<&str> = crate::env::ALL_GAMES.iter().map(|g| g.id).collect();
+        assert_eq!(
+            table, all,
+            "requirements table and ALL_GAMES must list the same games in the same order"
+        );
         let r = anti_cheat_readiness(&report(Probe::yes(()), tpm2(), Probe::unknown("?")));
         let ids: Vec<&str> = r.per_game.iter().map(|g| g.game_id.as_str()).collect();
         let known: Vec<&str> = crate::env::KNOWN_GAMES.iter().map(|g| g.id).collect();
-        assert_eq!(
-            ids, known,
-            "requirements table and KNOWN_GAMES must list the same games in the same order"
-        );
+        assert_eq!(ids, known, "only the offered games are reported");
         assert!(r.per_game[0].source.contains("Not independently verified"));
+        for req in REQUIREMENTS.iter().filter(|r| !r.requires.is_empty()) {
+            assert!(req.source.contains("Not independently verified"), "{}", req.game_id);
+        }
     }
 }

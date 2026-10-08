@@ -238,7 +238,7 @@ Kegan, in chat: "Any single feature that Hone has you can do", and "any single f
 
 ### 15.23 While you play: session changes and the game watcher (Claude, 2026-10-08)
 
-Catalogue step 5 (NOTES N79).
+Catalogue step 5 (NOTES N80).
 
 1. **Gaming Mode's changes are tweaks, not a side channel.** Each one is an internal tweak (`tweaks::session`) made through `Transaction`, so it keeps the safety net: restore point first, `.reg` backup and journal record before the write, listed in Backups while in effect, Undo and Undo all reach it. They are not listed in Tools because the watcher, not the user, makes them. A session that a crash or power cut left open is put back at the next start with no game running.
 2. **Off by default.** Gaming Mode and the game timer are switches in Tools, both off until the user turns them on, so nothing changes because a game started unless asked.

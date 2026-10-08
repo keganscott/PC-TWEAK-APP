@@ -11,7 +11,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use peaktweaks_engine::play::{
-    game_running, running_images, PlayStatus, TimerRequest, Watch, WatchEvent, GAME_PROCESSES,
+    game_processes, game_running, running_images, watched_ids, PlayStatus, TimerRequest, Watch, WatchEvent,
 };
 
 use crate::commands::SharedEngine;
@@ -62,13 +62,12 @@ pub fn start(app: AppHandle, engine: SharedEngine, status: SharedPlay) {
 }
 
 fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
+    let games = game_processes();
     let mut watch = Watch::new();
     let mut session = Session::default();
     let mut first = true;
     loop {
-        let running = running_images()
-            .ok()
-            .and_then(|images| game_running(&images, GAME_PROCESSES));
+        let running = running_images().ok().and_then(|images| game_running(&images, &games));
         let event = watch.look(running);
         // Engine work only while the lock is free of an earlier panic; the
         // next look tries again.
@@ -138,7 +137,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 gaming_mode_active: e.play_session_open(),
                 timer_held: session.timer.as_ref().map(TimerRequest::granted),
                 problem: session.problem(),
-                watched: GAME_PROCESSES.iter().map(|g| g.game_id.to_owned()).collect(),
+                watched: watched_ids(&games),
             };
             drop(e);
             let mut shown = status.lock().unwrap_or_else(PoisonError::into_inner);

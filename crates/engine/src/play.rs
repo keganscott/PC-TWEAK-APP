@@ -19,10 +19,10 @@
 //! programs only with `GlobalTimerResolutionRequests` set (the "Global timer
 //! requests" tool, `scheduling.timerrequests`).
 //!
-//! VERIFY: the program names below are each game's own as recalled (Fortnite's
-//! is NOTES N7), and `NtQueryTimerResolution` / `NtSetTimerResolution` are
+//! VERIFY: the program names are each game's own as recalled (`games.rs`
+//! `GAME_FACTS`; Fortnite's is NOTES N7), and `NtQueryTimerResolution` / `NtSetTimerResolution` are
 //! undocumented; their parameters follow System Informer's `phnt` as recalled
-//! (NOTES N79).
+//! (NOTES N80).
 
 use serde::Serialize;
 use ts_rs::TS;
@@ -35,23 +35,31 @@ pub struct GameProcess {
     pub image: &'static str,
 }
 
-/// Programs that mean a known game is running. Minecraft Java Edition runs as
-/// `javaw.exe`, which many other programs share, so only the Bedrock Edition
-/// is recognised.
-pub const GAME_PROCESSES: &[GameProcess] = &[
-    GameProcess {
-        game_id: "fortnite",
-        image: "FortniteClient-Win64-Shipping.exe",
-    },
-    GameProcess {
-        game_id: "roblox",
-        image: "RobloxPlayerBeta.exe",
-    },
-    GameProcess {
-        game_id: "minecraft",
-        image: "Minecraft.Windows.exe",
-    },
-];
+/// Minecraft Bedrock Edition's program. It is watched for but has no entry in
+/// `GAME_FACTS.programs`, which also keys the per-game tools; Java Edition runs
+/// as `javaw.exe`, which many other programs share, so it is not watched.
+const MINECRAFT_BEDROCK: GameProcess = GameProcess {
+    game_id: "minecraft",
+    image: "Minecraft.Windows.exe",
+};
+
+/// Programs that mean a game PeakTweaks offers (`env::KNOWN_GAMES`) is
+/// running: each one's programs from `games::GAME_FACTS`, and Minecraft
+/// Bedrock Edition.
+pub fn game_processes() -> Vec<GameProcess> {
+    let mut list: Vec<GameProcess> = crate::env::KNOWN_GAMES
+        .iter()
+        .filter_map(|g| crate::games::facts(g.id))
+        .flat_map(|f| f.programs.iter().map(|image| GameProcess { game_id: f.id, image }))
+        .collect();
+    if crate::env::KNOWN_GAMES
+        .iter()
+        .any(|g| g.id == MINECRAFT_BEDROCK.game_id)
+    {
+        list.push(MINECRAFT_BEDROCK);
+    }
+    list
+}
 
 /// The first known game among the running program names (any case).
 pub fn game_running(images: &[String], games: &[GameProcess]) -> Option<&'static str> {
@@ -130,7 +138,7 @@ pub struct PlayStatus {
     pub timer_held: Option<u32>,
     /// Why something the user turned on is not in effect, in plain words.
     pub problem: Option<String>,
-    /// Ids of the games watched for (`GAME_PROCESSES`).
+    /// Ids of the games watched for (`game_processes`), each once.
     pub watched: Vec<String>,
 }
 
@@ -138,10 +146,21 @@ impl PlayStatus {
     /// Nothing running yet, and what is watched for.
     pub fn watching() -> Self {
         Self {
-            watched: GAME_PROCESSES.iter().map(|g| g.game_id.to_owned()).collect(),
+            watched: watched_ids(&game_processes()),
             ..Self::default()
         }
     }
+}
+
+/// The game ids in `games`, each once, in order.
+pub fn watched_ids(games: &[GameProcess]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for g in games {
+        if !ids.iter().any(|i| i == g.game_id) {
+            ids.push(g.game_id.to_owned());
+        }
+    }
+    ids
 }
 
 /// Every program running on this PC, by file name.
@@ -310,13 +329,35 @@ mod tests {
     #[test]
     fn a_known_game_is_found_by_its_program_name_in_any_case() {
         let running = names(&["explorer.exe", "fortniteclient-win64-shipping.EXE", "Discord.exe"]);
-        assert_eq!(game_running(&running, GAME_PROCESSES), Some("fortnite"));
-        assert_eq!(game_running(&names(&["javaw.exe", "chrome.exe"]), GAME_PROCESSES), None);
+        let games = game_processes();
+        assert_eq!(game_running(&running, &games), Some("fortnite"));
+        assert_eq!(game_running(&names(&["javaw.exe", "chrome.exe"]), &games), None);
+        assert_eq!(
+            game_running(&names(&["Minecraft.Windows.exe"]), &games),
+            Some("minecraft")
+        );
+    }
+
+    #[test]
+    fn every_offered_game_with_a_program_of_its_own_is_watched_once() {
+        let games = game_processes();
+        let ids = watched_ids(&games);
+        for known in crate::env::KNOWN_GAMES {
+            let has_program = crate::games::facts(known.id).is_some_and(|f| !f.programs.is_empty());
+            assert_eq!(
+                ids.iter().any(|i| i == known.id),
+                has_program || known.id == "minecraft",
+                "{}",
+                known.id
+            );
+        }
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "each game once: {ids:?}");
     }
 
     #[test]
     fn every_watched_game_is_a_known_game() {
-        for g in GAME_PROCESSES {
+        for g in game_processes() {
             assert!(
                 crate::env::KNOWN_GAMES.iter().any(|k| k.id == g.game_id),
                 "{} is not in KNOWN_GAMES",

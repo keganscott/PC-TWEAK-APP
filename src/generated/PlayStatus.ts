@@ -23,6 +23,6 @@ timerHeld: number | null,
  */
 problem: string | null, 
 /**
- * Ids of the games watched for (`GAME_PROCESSES`).
+ * Ids of the games watched for (`game_processes`), each once.
  */
 watched: Array<string>, };

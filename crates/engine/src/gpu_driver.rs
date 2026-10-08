@@ -109,8 +109,9 @@ fn cim_date(s: &str) -> Option<String> {
 /// Which of NVIDIA's driver lines a card is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NvidiaBranch {
-    /// Pascal and older: no new Game Ready drivers, security updates only
-    /// (plan 6.2 item 8). `generation` names it for the user.
+    /// Pascal, Volta and older: no new Game Ready drivers (plan 6.2 item 8);
+    /// `security_updates` says which still get security updates.
+    /// `generation` names it for the user.
     Legacy { generation: &'static str },
     /// Turing and newer (GTX 16, RTX, MX 450 and later): still current.
     Current,
@@ -118,17 +119,34 @@ pub enum NvidiaBranch {
     Unrecognised,
 }
 
+/// Whether NVIDIA still publishes security updates for a legacy generation:
+/// Maxwell, Pascal and Volta get them quarterly "through October 2028"
+/// (NVIDIA's Game Ready driver announcement for Mafia: The Old Country,
+/// 2025); desktop Kepler's ended with "September 2024" (NVIDIA's GeForce
+/// Security Update Driver 475.14 page). Both checked 2026-10-08. `None`
+/// when the generation name covers both.
+pub fn security_updates(generation: &str) -> Option<bool> {
+    match generation {
+        "Maxwell" | "Pascal" | "Volta" => Some(true),
+        KEPLER_OR_OLDER => Some(false),
+        _ => None,
+    }
+}
+
+const KEPLER_OR_OLDER: &str = "Kepler or older";
+
 /// Classify by the product name, e.g. `NVIDIA GeForce GTX 1060 6GB`.
 pub fn nvidia_branch(name: &str) -> NvidiaBranch {
     use NvidiaBranch::*;
     let n = name.to_ascii_uppercase();
-    const KEPLER_OR_OLDER: &str = "Kepler or older";
 
     if n.contains("RTX") {
         return Current;
     }
     if n.contains("TITAN") {
-        return if n.contains("TITAN XP") || n.contains("(PASCAL)") {
+        return if n.contains("TITAN V") {
+            Legacy { generation: "Volta" }
+        } else if n.contains("TITAN XP") || n.contains("(PASCAL)") {
             Legacy { generation: "Pascal" }
         } else if n.contains("TITAN X") {
             Legacy { generation: "Maxwell" }
@@ -145,7 +163,7 @@ pub fn nvidia_branch(name: &str) -> NvidiaBranch {
             1600..=1699 => Current,
             1000..=1099 => Legacy { generation: "Pascal" },
             900..=999 | 745 | 750 => Legacy { generation: "Maxwell" },
-            // 800M laptops mix Kepler and Maxwell; both are past support.
+            // 800M laptops mix Kepler and Maxwell; neither gets Game Ready drivers.
             800..=899 => Legacy {
                 generation: "Maxwell or older",
             },
@@ -320,10 +338,23 @@ mod tests {
             ("NVIDIA GeForce MX450", Current),
             ("NVIDIA T1000", Unrecognised),
             ("NVIDIA Quadro T2000", Current),
-            ("NVIDIA TITAN V", Unrecognised),
+            ("NVIDIA TITAN V", Legacy { generation: "Volta" }),
             ("Example GPU", Unrecognised),
         ] {
             assert_eq!(nvidia_branch(name), want, "{name}");
+        }
+    }
+
+    #[test]
+    fn kepler_gets_no_security_updates_any_more() {
+        for (generation, want) in [
+            ("Maxwell", Some(true)),
+            ("Pascal", Some(true)),
+            ("Volta", Some(true)),
+            ("Kepler or older", Some(false)),
+            ("Maxwell or older", None),
+        ] {
+            assert_eq!(security_updates(generation), want, "{generation}");
         }
     }
 }

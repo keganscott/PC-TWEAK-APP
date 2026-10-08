@@ -397,7 +397,9 @@ fn windows_support(hw: &HardwareReport) -> Option<Finding> {
 /// Plan 6.2 item 8: NVIDIA's older generations no longer get new game drivers.
 /// Only NVIDIA cards are judged; the plan names no rule for other makers, so
 /// they get no finding rather than an invented one. The generation table is
-/// from memory (VERIFY, NOTES.md N47); an unknown name is reported as unknown.
+/// partly from memory (VERIFY, NOTES.md N47); an unknown name is reported as
+/// unknown. Which generations still get security updates is NVIDIA's own
+/// (`gpu_driver::security_updates`).
 fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
     const ID: &str = "gpu.driver_branch";
     const TITLE: &str = "Graphics driver";
@@ -418,10 +420,22 @@ fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
     };
     Some(match nvidia_branch(&card.name) {
         NvidiaBranch::Legacy { generation } => Finding {
-            remedy: Some(format!(
-                "NVIDIA no longer releases new Game Ready drivers for {generation} cards. Keep installing the \
-                 security updates NVIDIA still publishes for them. Getting new game drivers needs a newer card."
-            )),
+            remedy: Some(match crate::gpu_driver::security_updates(generation) {
+                Some(true) => format!(
+                    "NVIDIA no longer releases new Game Ready drivers for {generation} cards. It publishes \
+                     security updates for them until October 2028; keep installing those. Getting new game \
+                     drivers needs a newer card."
+                ),
+                Some(false) => format!(
+                    "NVIDIA no longer releases any drivers for {generation} cards: their security updates ended \
+                     in September 2024. Getting new drivers needs a newer card."
+                ),
+                None => format!(
+                    "NVIDIA no longer releases new Game Ready drivers for {generation} cards. It publishes \
+                     security updates for Maxwell cards until October 2028, not for older ones. Getting new game \
+                     drivers needs a newer card."
+                ),
+            }),
             ..finding(
                 ID,
                 Status::Attention,

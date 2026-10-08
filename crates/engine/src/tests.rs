@@ -2833,3 +2833,167 @@ mod play_session {
         assert_eq!(toast(&h), None);
     }
 }
+
+mod windows11_tools {
+    use crate::hardware::{HardwareReport, OsInfo};
+    use crate::probe::Probe;
+    use crate::registry::Hive;
+    use crate::testutil::Harness;
+    use crate::tweaks::registry_values::{list_get, list_set, FULL_CONTEXT_MENU, NEW_MENU_SERVER, WINDOWED_GAMES};
+    use crate::types::{BlockedCode, PredicateOutcome, RawValue, SystemEnv, Tweak, TweakState};
+
+    const DIRECTX: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
+    const GLOBAL: &str = "DirectXUserGlobalSettings";
+
+    fn status(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    fn global(h: &Harness) -> Option<String> {
+        h.fake
+            .read_value_for_test(Hive::CurrentUser, DIRECTX, GLOBAL)
+            .and_then(|v| v.as_sz())
+    }
+
+    fn windowed(existing: Option<&str>) -> Harness {
+        let h = Harness::new(vec![Box::new(WINDOWED_GAMES)]);
+        if let Some(list) = existing {
+            h.fake
+                .set_external(Hive::CurrentUser, DIRECTX, GLOBAL, RawValue::sz(list));
+        }
+        h
+    }
+
+    fn unknown<T>() -> Probe<T> {
+        Probe::unknown("not needed here")
+    }
+
+    fn env(build: Option<u32>) -> SystemEnv {
+        SystemEnv {
+            hardware: build.map(|build| HardwareReport {
+                os: Probe::yes(OsInfo {
+                    build,
+                    caption: "Windows".into(),
+                    is_server: false,
+                }),
+                cpu: unknown(),
+                memory: unknown(),
+                gpus: unknown(),
+                gpu_drivers: unknown(),
+                boot_disk: unknown(),
+                display: unknown(),
+                is_laptop: unknown(),
+                rig_class: unknown(),
+            }),
+            ..SystemEnv::default()
+        }
+    }
+
+    #[test]
+    fn list_entries_are_set_in_place_and_every_other_entry_is_kept() {
+        assert_eq!(
+            list_get("A=1;swapeffectupgradeenable=0;", "SwapEffectUpgradeEnable"),
+            Some("0")
+        );
+        assert_eq!(list_get("A=1;", "SwapEffectUpgradeEnable"), None);
+        assert_eq!(list_set("", "S", "1"), "S=1;");
+        assert_eq!(list_set("A=1;B=2", "S", "1"), "A=1;B=2;S=1;");
+        assert_eq!(list_set("A=1;s=0;B=2;", "S", "1"), "A=1;S=1;B=2;");
+        // A repeated entry is folded into one; an entry without `=` is kept.
+        assert_eq!(list_set("S=0;odd;S=0;", "S", "1"), "S=1;odd;");
+    }
+
+    #[test]
+    fn windowed_games_adds_its_entry_and_undo_puts_the_list_back_exactly() {
+        let mut h = windowed(Some("VRROptimizeEnable=0;AutoHDREnable=1;"));
+        assert_eq!(status(&h, WINDOWED_GAMES.0.id), TweakState::Default);
+        h.engine.apply(WINDOWED_GAMES.0.id).unwrap();
+        assert_eq!(
+            global(&h).as_deref(),
+            Some("VRROptimizeEnable=0;AutoHDREnable=1;SwapEffectUpgradeEnable=1;")
+        );
+        assert_eq!(status(&h, WINDOWED_GAMES.0.id), TweakState::Applied);
+        h.engine.revert(WINDOWED_GAMES.0.id).unwrap();
+        assert_eq!(global(&h).as_deref(), Some("VRROptimizeEnable=0;AutoHDREnable=1;"));
+    }
+
+    #[test]
+    fn windowed_games_turned_off_by_the_user_is_turned_on_in_place() {
+        let mut h = windowed(Some("SwapEffectUpgradeEnable=0;VRROptimizeEnable=1;"));
+        h.engine.apply(WINDOWED_GAMES.0.id).unwrap();
+        assert_eq!(
+            global(&h).as_deref(),
+            Some("SwapEffectUpgradeEnable=1;VRROptimizeEnable=1;")
+        );
+    }
+
+    #[test]
+    fn windowed_games_already_on_is_already_optimized_and_none_set_is_not_applied() {
+        assert_eq!(
+            status(&windowed(Some("SwapEffectUpgradeEnable=1;")), WINDOWED_GAMES.0.id),
+            TweakState::Foreign
+        );
+        let mut h = windowed(None);
+        assert_eq!(status(&h, WINDOWED_GAMES.0.id), TweakState::Default);
+        h.engine.apply(WINDOWED_GAMES.0.id).unwrap();
+        assert_eq!(global(&h).as_deref(), Some("SwapEffectUpgradeEnable=1;"));
+        h.engine.revert(WINDOWED_GAMES.0.id).unwrap();
+        assert_eq!(global(&h), None);
+    }
+
+    #[test]
+    fn the_full_menu_registers_an_empty_server_and_undo_removes_the_keys_it_made() {
+        let mut h = Harness::new(vec![Box::new(FULL_CONTEXT_MENU)]);
+        let other = r"Software\Classes\CLSID\{00000000-0000-0000-0000-000000000001}";
+        h.fake
+            .set_external(Hive::CurrentUser, other, "", RawValue::sz("someone else's"));
+        assert_eq!(status(&h, FULL_CONTEXT_MENU.0.id), TweakState::Default);
+
+        let written = h.engine.apply(FULL_CONTEXT_MENU.0.id).unwrap();
+        assert_eq!(written.len(), 1);
+        assert_eq!(
+            h.fake
+                .read_value_for_test(Hive::CurrentUser, NEW_MENU_SERVER, "")
+                .and_then(|v| v.as_sz())
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(status(&h, FULL_CONTEXT_MENU.0.id), TweakState::Applied);
+
+        h.engine.revert(FULL_CONTEXT_MENU.0.id).unwrap();
+        let class = NEW_MENU_SERVER.rsplit_once('\\').unwrap().0;
+        assert!(
+            !h.fake.key_exists_for_test(Hive::CurrentUser, class),
+            "the class key is gone"
+        );
+        assert!(
+            h.fake.key_exists_for_test(Hive::CurrentUser, other),
+            "other classes are kept"
+        );
+        assert_eq!(status(&h, FULL_CONTEXT_MENU.0.id), TweakState::Default);
+    }
+
+    #[test]
+    fn windows_11_settings_are_not_offered_on_windows_10() {
+        for t in [&FULL_CONTEXT_MENU as &dyn Tweak, &WINDOWED_GAMES] {
+            match t.evaluate_predicate(&env(Some(19045))) {
+                PredicateOutcome::Block(reason) => assert_eq!(reason.code, BlockedCode::OsVersionUnsupported),
+                PredicateOutcome::Allow => panic!("{} offered on Windows 10", t.id()),
+            }
+            assert!(matches!(
+                t.evaluate_predicate(&env(Some(22631))),
+                PredicateOutcome::Allow
+            ));
+            assert!(
+                matches!(t.evaluate_predicate(&env(None)), PredicateOutcome::Allow),
+                "an unknown build is not rounded to Windows 10"
+            );
+        }
+    }
+}

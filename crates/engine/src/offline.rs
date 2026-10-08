@@ -133,6 +133,14 @@ pub fn remap(display_path: &str, facts: &Facts) -> std::result::Result<(String, 
             .flatten()
             .ok_or_else(|| format!("the profile folder of {sid} is not known"))?;
         profile_on_windows_drive(&image, &facts.system_drive)?;
+        // A user's `Software\Classes` is their UsrClass.dat, linked in at sign
+        // in; it is not in NTUSER.DAT, the file the script loads.
+        if is(2, "Software") && is(3, "Classes") {
+            return Err(format!(
+                "{display_path} is in {sid}'s own file types and programs (UsrClass.dat), which the recovery \
+                 script does not load"
+            ));
+        }
         return Ok((
             format!("HKEY_LOCAL_MACHINE\\{USER_MOUNT_PREFIX}{sid}{}", tail(2)),
             Some(sid.to_owned()),
@@ -350,6 +358,19 @@ mod tests {
         e.value_name = name.into();
         e.previous = previous;
         e
+    }
+
+    #[test]
+    fn a_users_own_classes_are_not_covered() {
+        let why = remap(
+            &format!(
+                r"HKEY_USERS\{SID}\Software\Classes\CLSID\{{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}}\InprocServer32"
+            ),
+            &facts(),
+        )
+        .unwrap_err();
+        assert!(why.contains("UsrClass.dat"), "{why}");
+        assert!(remap(&format!(r"HKEY_USERS\{SID}\Software\Microsoft\GameBar"), &facts()).is_ok());
     }
 
     #[test]

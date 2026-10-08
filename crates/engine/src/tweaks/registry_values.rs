@@ -26,7 +26,10 @@ use std::borrow::Cow;
 use crate::context::ContextResolver;
 use crate::error::Result;
 use crate::transaction::Transaction;
-use crate::types::{ExecutionContext, Impact, RegRoot, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState};
+use crate::types::{
+    BlockedCode, BlockedReason, ExecutionContext, Impact, PredicateOutcome, RegRoot, RegTarget, SafetyTier, SystemEnv,
+    Tier, Tweak, TweakMetadata, TweakState,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Data {
@@ -40,6 +43,42 @@ pub enum Data {
         clear: u32,
         default: u32,
     },
+    /// One `Name=Value;` entry in a `REG_SZ` list of them, the form DirectX
+    /// keeps its settings in; every other entry is kept as it is.
+    ListEntry {
+        name: &'static str,
+        value: &'static str,
+    },
+}
+
+/// The value of `name` in a `Name=Value;` list (any case), if it has one.
+pub(crate) fn list_get<'a>(list: &'a str, name: &str) -> Option<&'a str> {
+    list.split(';').find_map(|item| {
+        let (k, v) = item.split_once('=')?;
+        k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+    })
+}
+
+/// `list` with `name` set to `value`: replaced where it is, added at the end
+/// where it is not. Every other entry keeps its own text and place.
+pub(crate) fn list_set(list: &str, name: &str, value: &str) -> String {
+    let mut found = false;
+    let mut items: Vec<String> = Vec::new();
+    for item in list.split(';').filter(|i| !i.trim().is_empty()) {
+        let ours = item
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(name));
+        if ours && !found {
+            items.push(format!("{name}={value}"));
+            found = true;
+        } else if !ours {
+            items.push(item.to_owned());
+        }
+    }
+    if !found {
+        items.push(format!("{name}={value}"));
+    }
+    items.iter().map(|i| format!("{i};")).collect()
 }
 
 impl Data {
@@ -73,6 +112,15 @@ const fn string(key: &'static str, value: &'static str, data: &'static str) -> S
         key,
         value,
         data: Data::Str(data),
+        absent_matches: false,
+    }
+}
+
+const fn list_entry(key: &'static str, value: &'static str, name: &'static str, data: &'static str) -> Setting {
+    Setting {
+        key,
+        value,
+        data: Data::ListEntry { name, value: data },
         absent_matches: false,
     }
 }
@@ -111,6 +159,7 @@ impl ValueTweak {
                 Data::Dword(n) => format!(r"{root}\{}\{} = {n}", s.key, s.value),
                 Data::Str(v) => format!(r#"{root}\{}\{} = "{v}""#, s.key, s.value),
                 Data::StrClearBits { clear, .. } => format!(r"{root}\{}\{} &= ~{clear}", s.key, s.value),
+                Data::ListEntry { name, value } => format!(r"{root}\{}\{}: {name}={value};", s.key, s.value),
             };
             parts.push(shown);
         }
@@ -122,12 +171,16 @@ impl ValueTweak {
             let current = Data::flags(res.read_string(self.root, s.key, s.value)?, default);
             return Ok(current & clear == 0);
         }
+        if let Data::ListEntry { name, value } = s.data {
+            let list = res.read_string(self.root, s.key, s.value)?.unwrap_or_default();
+            return Ok(list_get(&list, name) == Some(value));
+        }
         Ok(match res.read_raw(self.root, s.key, s.value)? {
             None => s.absent_matches,
             Some(raw) => match s.data {
                 Data::Dword(n) => raw.as_dword() == Some(n),
                 Data::Str(v) => raw.as_sz().as_deref() == Some(v),
-                Data::StrClearBits { .. } => unreachable!("handled above"),
+                Data::StrClearBits { .. } | Data::ListEntry { .. } => unreachable!("handled above"),
             },
         })
     }
@@ -189,6 +242,13 @@ impl Tweak for ValueTweak {
                 Data::StrClearBits { clear, default } => {
                     let current = Data::flags(tx.resolver().read_string(self.root, s.key, s.value)?, default);
                     tx.set_string(self.root, s.key, s.value, &(current & !clear).to_string())?
+                }
+                Data::ListEntry { name, value } => {
+                    let list = tx
+                        .resolver()
+                        .read_string(self.root, s.key, s.value)?
+                        .unwrap_or_default();
+                    tx.set_string(self.root, s.key, s.value, &list_set(&list, name, value))?
                 }
             }
         }
@@ -608,11 +668,96 @@ pub const TIMER_REQUESTS: ValueTweak = ValueTweak {
     settings: &[dword(KERNEL, "GlobalTimerResolutionRequests", 1)],
 };
 
+/// First Windows 11 build.
+pub const WINDOWS_11_BUILD: u32 = 22000;
+
+/// A setting only Windows 11 has. Blocked on Windows 10, where it would be a
+/// change that does nothing; allowed when the build is not known, since
+/// Windows ignores the value where it has no such setting.
+pub struct Windows11(pub ValueTweak);
+
+impl Tweak for Windows11 {
+    fn id(&self) -> &str {
+        self.0.id()
+    }
+
+    fn metadata(&self) -> TweakMetadata {
+        self.0.metadata()
+    }
+
+    fn execution_context(&self) -> ExecutionContext {
+        self.0.execution_context()
+    }
+
+    fn touches(&self) -> Vec<RegTarget> {
+        self.0.touches()
+    }
+
+    fn evaluate_predicate(&self, env: &SystemEnv) -> PredicateOutcome {
+        match env.os_build() {
+            Some(build) if build < WINDOWS_11_BUILD => PredicateOutcome::Block(BlockedReason::new(
+                BlockedCode::OsVersionUnsupported,
+                "Only Windows 11 has this setting.",
+            )),
+            _ => PredicateOutcome::Allow,
+        }
+    }
+
+    fn read_state(&self, res: &ContextResolver, has_journal_entry: bool) -> Result<TweakState> {
+        self.0.read_state(res, has_journal_entry)
+    }
+
+    fn apply(&self, tx: &mut Transaction) -> Result<()> {
+        self.0.apply(tx)
+    }
+}
+
+// ---- Windows 11 (catalogue H1 windowed games, H27 right-click menu) --------
+
+const DIRECTX_PREFS: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
+/// The new right-click menu's COM class. A per-user registration with an
+/// empty server makes File Explorer fall back to the full menu.
+pub const NEW_MENU_SERVER: &str = r"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32";
+
+/// Settings > System > Display > Graphics > Optimizations for windowed games.
+pub const WINDOWED_GAMES: Windows11 = Windows11(ValueTweak {
+    id: "gaming.windowedgames",
+    name: "Optimizations for windowed games",
+    summary: "Turns on Windows' setting for games that use DirectX 10 or 11 in a window or a borderless window, \
+              so they hand their frames to Windows the way full-screen games do.",
+    category: "gaming",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: None,
+    requires_reboot: false,
+    settings: &[list_entry(
+        DIRECTX_PREFS,
+        "DirectXUserGlobalSettings",
+        "SwapEffectUpgradeEnable",
+        "1",
+    )],
+});
+
+/// Windows 11's short right-click menu, replaced by the full one.
+pub const FULL_CONTEXT_MENU: Windows11 = Windows11(ValueTweak {
+    id: "explorer.fullmenu",
+    name: "Full right-click menu",
+    summary: "Shows the full right-click menu in File Explorer and on the desktop straight away, as in Windows \
+              10, instead of the short menu with Show more options.",
+    category: "appearance",
+    root: RegRoot::InteractiveUser,
+    safety: SafetyTier::Safe,
+    tradeoff: Some("Takes effect after you sign out and back in."),
+    requires_reboot: false,
+    settings: &[string(NEW_MENU_SERVER, "", "")],
+});
+
 /// Every value tweak, in display order within the catalogue.
 pub fn all() -> Vec<Box<dyn Tweak>> {
     vec![
         Box::new(GAME_MODE),
         Box::new(BACKGROUND_CAPTURE),
+        Box::new(WINDOWED_GAMES),
         Box::new(ACCESSIBILITY_SHORTCUTS),
         Box::new(TRANSPARENCY),
         Box::new(GPU_SCHEDULING),
@@ -627,6 +772,7 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
         Box::new(ANIMATIONS),
         Box::new(WALLPAPER_QUALITY),
         Box::new(FILE_EXTENSIONS),
+        Box::new(FULL_CONTEXT_MENU),
         Box::new(WEB_SEARCH),
         Box::new(ADVERTISING_ID),
         Box::new(TIPS),

@@ -74,30 +74,31 @@ fn is_plain_string(v: &RawValue) -> bool {
             .is_some_and(|s| !s.chars().any(char::is_control) && RawValue::sz(&s) == *v)
 }
 
-/// One `.reg` value line. `None` produces a deletion directive.
+/// One `.reg` value line. `None` produces a deletion directive. The empty
+/// name is the key's default value, written `@`.
 pub fn reg_value_line(name: &str, value: Option<&RawValue>) -> String {
-    let escaped = escape(name);
+    let lhs = if name.is_empty() {
+        "@".to_owned()
+    } else {
+        format!("\"{}\"", escape(name))
+    };
 
     let Some(v) = value else {
         // The value did not exist. Restoring means removing it.
-        return format!("\"{escaped}\"=-");
+        return format!("{lhs}=-");
     };
 
     match v.vtype {
         1 if is_plain_string(v) => {
             let s = v.as_sz().unwrap_or_default();
-            format!("\"{escaped}\"=\"{}\"", escape(&s))
+            format!("{lhs}=\"{}\"", escape(&s))
         }
-        4 if v.bytes.len() == 4 => format!("\"{escaped}\"=dword:{:08x}", v.as_dword().unwrap_or(0)),
-        3 => format!("\"{escaped}\"=hex:{}", hex_wrapped(&v.bytes, escaped.len() + 7)),
+        4 if v.bytes.len() == 4 => format!("{lhs}=dword:{:08x}", v.as_dword().unwrap_or(0)),
+        3 => format!("{lhs}=hex:{}", hex_wrapped(&v.bytes, lhs.len() + 5)),
         // Everything else uses the typed hex form, exact for any bytes:
         // hex(1) sz that is not plain, hex(2) expand_sz, hex(4) malformed
         // dword, hex(7) multi_sz, hex(b) qword.
-        other => format!(
-            "\"{escaped}\"=hex({:x}):{}",
-            other,
-            hex_wrapped(&v.bytes, escaped.len() + 12)
-        ),
+        other => format!("{lhs}=hex({:x}):{}", other, hex_wrapped(&v.bytes, lhs.len() + 10)),
     }
 }
 
@@ -134,6 +135,13 @@ mod tests {
             reg_value_line("Win32PrioritySeparation", None),
             "\"Win32PrioritySeparation\"=-"
         );
+    }
+
+    #[test]
+    fn the_default_value_is_written_as_at() {
+        assert_eq!(reg_value_line("", None), "@=-");
+        assert_eq!(reg_value_line("", Some(&RawValue::sz(""))), "@=\"\"");
+        assert_eq!(reg_value_line("", Some(&RawValue::dword(1))), "@=dword:00000001");
     }
 
     #[test]

@@ -1254,6 +1254,88 @@ mod tests {
         println!("netsh after: {:?}", show());
     }
 
+    /// Game traffic priority (catalogue H26) on this PC: a policy with the
+    /// tool's values, written where Group Policy keeps them, for a program
+    /// that does not exist, must show in Windows' active QoS policies after a
+    /// policy refresh, with DSCP 46; then it is removed and refreshed away.
+    /// Run only with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1.
+    #[test]
+    fn a_qos_policy_written_like_the_tool_reaches_windows_on_this_pc() {
+        use crate::tweaks::qos::{APPLICATION, FIXED, NO_NLA, POLICIES, TCPIP_QOS};
+        use crate::types::RawValue;
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to add a QoS policy for real");
+            return;
+        }
+        let reg = WinRegistry::new();
+        let key = format!(r"{POLICIES}\PeakTweaks CI check");
+        let qos_key_existed = reg.key_exists(Hive::LocalMachine, POLICIES).unwrap();
+        let nla_before = reg.read_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA).unwrap();
+        println!("{NO_NLA} before: {nla_before:?}; QoS policy key existed: {qos_key_existed}");
+        let active = || {
+            powershell(
+                "QoS policies",
+                "Get-NetQosPolicy -PolicyStore ActiveStore -ErrorAction SilentlyContinue | ForEach-Object { \
+                 '{0}|{1}|{2}|{3}' -f $_.Name, $_.AppPathNameMatchCondition, $_.DSCPAction, $_.Owner }",
+                &[],
+            )
+        };
+        println!("active before: {:?}", active());
+
+        reg.write_value(
+            Hive::LocalMachine,
+            &key,
+            APPLICATION,
+            &RawValue::sz("peaktweaks-ci-check.exe"),
+        )
+        .unwrap();
+        for (name, value) in FIXED {
+            reg.write_value(Hive::LocalMachine, &key, name, &RawValue::sz(value))
+                .unwrap();
+        }
+        reg.write_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA, &RawValue::sz("1"))
+            .unwrap();
+        let refresh = WinSystem::new().run(&SideEffect::RefreshPolicy);
+        println!("policy refresh: {refresh:?}");
+        let during = active();
+        println!("active with the policy: {during:?}");
+
+        // Put everything back before judging.
+        for (name, _) in FIXED {
+            reg.delete_value(Hive::LocalMachine, &key, name).unwrap();
+        }
+        reg.delete_value(Hive::LocalMachine, &key, APPLICATION).unwrap();
+        reg.delete_key_if_empty(Hive::LocalMachine, &key).unwrap();
+        if !qos_key_existed {
+            reg.delete_key_if_empty(Hive::LocalMachine, POLICIES).unwrap();
+        }
+        match &nla_before {
+            Some(v) => reg.write_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA, v).unwrap(),
+            None => drop(reg.delete_value(Hive::LocalMachine, TCPIP_QOS, NO_NLA).unwrap()),
+        }
+        println!(
+            "policy refresh after: {:?}",
+            WinSystem::new().run(&SideEffect::RefreshPolicy)
+        );
+        let after = active();
+        println!("active after: {after:?}");
+
+        refresh.unwrap();
+        let line = during
+            .unwrap()
+            .lines()
+            .find(|l| l.starts_with("PeakTweaks CI check|"))
+            .map(str::to_owned);
+        let line = line.expect("the policy is active after a refresh");
+        assert!(line.contains("peaktweaks-ci-check.exe"), "{line}");
+        assert!(line.contains("|46|"), "{line}");
+        assert!(
+            !after.unwrap().contains("PeakTweaks CI check"),
+            "gone after Undo and a refresh"
+        );
+    }
+
     #[test]
     fn interface_metrics_are_parsed_with_automatic_as_zero() {
         let out = "{3F504232-CECB-4118-B4D8-5A5E72D677C3}|IPv6|Enabled|25\r\n\

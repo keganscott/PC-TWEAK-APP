@@ -13,6 +13,7 @@ pub mod msi;
 pub mod nagle;
 pub mod nvidia;
 pub mod power;
+pub mod qos;
 pub mod registry_values;
 pub mod services;
 pub mod session;
@@ -30,6 +31,7 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     all.push(Box::new(dns::CloudflareDns));
     all.push(Box::new(cable::PreferCable));
     all.extend(adapter_props::all());
+    all.push(Box::new(qos::GameQos::new()));
     all.extend(power::all());
     all.extend(services::all());
     all.extend(tasks::all());

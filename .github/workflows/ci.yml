@@ -270,6 +270,16 @@ jobs:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 startup_apps_turn_off_and_back_on_on_this_pc
 
+      # Every tool that only writes registry values, applied and undone one at
+      # a time through the engine on this runner's real registry, then all
+      # together with Undo all; after each undo every value it may write must
+      # hold what it held before (same gate as above). Tools this runner cannot
+      # take are named as skipped.
+      - name: Every registry tool applied and undone on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_registry_tool_applies_and_undoes_on_this_pc
+
       # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
       # set by hand and put back (same gate). The runner has no Wi-Fi, so the
       # tool itself is not offered there. Read only: the devices MSI mode

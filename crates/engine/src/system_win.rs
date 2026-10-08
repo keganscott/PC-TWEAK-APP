@@ -1273,6 +1273,182 @@ mod tests {
         assert!(unread.is_empty(), "could not be read here: {unread:?}");
     }
 
+    /// What a tool's registry targets hold, one line per key and value. Keys
+    /// with a `*` segment are left out: the tools that have them find their
+    /// keys at run time (one per network interface or device).
+    fn registry_snapshot(res: &crate::context::ContextResolver, targets: &[crate::types::RegTarget]) -> Vec<String> {
+        use crate::registry::value_name_matches;
+
+        let mut out = Vec::new();
+        for t in targets {
+            if t.key.split('\\').any(|c| c == "*") {
+                continue;
+            }
+            let shown = res.display_path(t.root, &t.key);
+            match res.key_exists(t.root, &t.key) {
+                Ok(true) => {}
+                Ok(false) => {
+                    out.push(format!("{shown}: no key"));
+                    continue;
+                }
+                Err(e) => {
+                    out.push(format!("{shown}: error {e}"));
+                    continue;
+                }
+            }
+            let names = res.value_names(t.root, &t.key).unwrap_or_default();
+            for pattern in &t.values {
+                let mut found = false;
+                for n in names.iter().filter(|n| value_name_matches(pattern, n)) {
+                    found = true;
+                    out.push(format!("{shown}\\{n} = {:?}", res.read_raw(t.root, &t.key, n)));
+                }
+                if !found {
+                    out.push(format!("{shown}\\{pattern}: absent"));
+                }
+            }
+        }
+        out
+    }
+
+    /// The lines of two registry snapshots that differ.
+    fn snapshot_changes(before: &[String], after: &[String]) -> Vec<String> {
+        let gone = before
+            .iter()
+            .filter(|l| !after.contains(l))
+            .map(|l| format!("was: {l}"));
+        let new = after
+            .iter()
+            .filter(|l| !before.contains(l))
+            .map(|l| format!("now: {l}"));
+        gone.chain(new).collect()
+    }
+
+    /// Changes this PC's registry, then puts it back: each tool that only
+    /// writes registry values (no Windows command, no device list) is applied
+    /// and undone through the engine, one at a time, and then all together
+    /// with Undo all. After each undo the tool must read as it did before and
+    /// every value it may write must hold what it held before, byte for byte,
+    /// with any key the apply created removed again. Tools this PC cannot
+    /// take (blocked, already set) are named and skipped.
+    #[test]
+    fn every_registry_tool_applies_and_undoes_on_this_pc() {
+        use crate::types::TweakState;
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to change this PC's registry for real");
+            return;
+        }
+
+        let registry_only: Vec<Box<dyn crate::types::Tweak>> = crate::tweaks::catalogue()
+            .into_iter()
+            .filter(|t| t.system_targets().is_empty() && t.effect_targets().is_empty() && !t.touches().is_empty())
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let (res, mut engine) = real_engine(dir.path(), crate::tweaks::catalogue());
+        // Read through the tool itself, as the engine's list does, without
+        // listing the whole catalogue after every step.
+        let state_of = |engine: &crate::engine::Engine, t: &dyn crate::types::Tweak| -> TweakState {
+            let journalled = engine.applied_tweak_ids().iter().any(|a| a == t.id());
+            t.read_state(&res, journalled)
+                .unwrap_or_else(|e| TweakState::Unknown { detail: e.to_string() })
+        };
+        let listed = engine.list().unwrap();
+
+        let mut tried = Vec::new();
+        let mut failed = Vec::new();
+        for tweak in &registry_only {
+            let id = tweak.id();
+            let targets = &tweak.touches();
+            let view = listed.iter().find(|v| v.metadata.id == id).expect("listed");
+            if let Some(reason) = &view.blocked {
+                println!("{id}: skipped, blocked here ({:?}) {}", reason.code, reason.message);
+                continue;
+            }
+            if view.state != TweakState::Default {
+                println!("{id}: skipped, reads {:?} here", view.state);
+                continue;
+            }
+            let before = registry_snapshot(&res, targets);
+            if let Err(e) = engine.apply(id) {
+                println!("{id}: APPLY FAILED: {e}");
+                failed.push(format!("{id}: apply: {e}"));
+                continue;
+            }
+            let applied = state_of(&engine, tweak.as_ref());
+            let during = registry_snapshot(&res, targets);
+            if let Err(e) = engine.revert(id) {
+                println!("{id}: UNDO FAILED: {e}");
+                failed.push(format!("{id}: undo: {e}"));
+                continue;
+            }
+            let after_state = state_of(&engine, tweak.as_ref());
+            let after = registry_snapshot(&res, targets);
+            let mut problems = Vec::new();
+            if applied != TweakState::Applied {
+                problems.push(format!("read {applied:?} after Apply"));
+            }
+            if before.is_empty() {
+                println!("{id}: its keys are found at run time, so only its state is compared");
+            } else if during == before {
+                problems.push("Apply changed none of its values".to_owned());
+            }
+            if after_state != TweakState::Default {
+                problems.push(format!("read {after_state:?} after Undo"));
+            }
+            problems.extend(snapshot_changes(&before, &after));
+            if problems.is_empty() {
+                println!("{id}: applied and undone, {} values as before", before.len());
+                tried.push(id.to_owned());
+            } else {
+                for p in &problems {
+                    println!("{id}: {p}");
+                }
+                failed.push(format!("{id}: {}", problems.join("; ")));
+            }
+        }
+
+        // All together, then Undo all.
+        let all_targets: Vec<crate::types::RegTarget> = registry_only
+            .iter()
+            .filter(|t| tried.iter().any(|id| id == t.id()))
+            .flat_map(|t| t.touches())
+            .collect();
+        let before = registry_snapshot(&res, &all_targets);
+        for id in &tried {
+            if let Err(e) = engine.apply(id) {
+                failed.push(format!("{id}: apply with the others: {e}"));
+            }
+        }
+        for r in engine.revert_all() {
+            println!("Undo all: {r:?}");
+        }
+        assert!(
+            engine.applied_tweak_ids().is_empty(),
+            "left applied: {:?}",
+            engine.applied_tweak_ids()
+        );
+        let after = registry_snapshot(&res, &all_targets);
+        failed.extend(
+            snapshot_changes(&before, &after)
+                .into_iter()
+                .map(|c| format!("Undo all: {c}")),
+        );
+
+        println!(
+            "{} registry tools, {} applied and undone here, {} failed",
+            registry_only.len(),
+            tried.len(),
+            failed.len()
+        );
+        assert!(failed.is_empty(), "failed: {failed:#?}");
+        assert!(
+            tried.len() >= 10,
+            "only {} tools could be tried here: {tried:?}",
+            tried.len()
+        );
+    }
+
     /// Read-only, against this PC: the graphics cards and network adapters
     /// MSI mode would be offered for, each with its state.
     #[test]

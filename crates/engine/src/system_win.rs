@@ -96,7 +96,7 @@ type TcpGlobals = Vec<(String, String)>;
 
 /// The settings `netsh interface tcp set global` changes, read where Windows
 /// keeps them as names that are never translated (`netsh`'s own output is).
-/// VERIFY (NOTES N90): that `netsh` sets the Internet template's values.
+/// CI run 37778720202 showed `netsh` changes these values (NOTES N90).
 const TCP_SCRIPT: &str = "$t = Get-NetTCPSetting -SettingName Internet -ErrorAction Stop; $o = \
                           Get-NetOffloadGlobalSetting -ErrorAction Stop; 'autotuninglevel|{0}' -f \
                           $t.AutoTuningLevelLocal; 'rss|{0}' -f $o.ReceiveSideScaling; 'ecncapability|{0}' -f \

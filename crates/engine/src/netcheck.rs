@@ -95,6 +95,9 @@ pub enum ConnectionReading {
     /// Neither public server answered at all: no internet, or something on
     /// the way drops these echoes.
     NoInternetAnswers,
+    /// The router answered no echo but the public servers did: many routers
+    /// are set not to answer, so that alone points at nothing.
+    RouterSilent,
     /// Not enough answered to tell (no router found, a target not asked).
     Unclear,
 }
@@ -235,11 +238,15 @@ pub fn read(results: &[PingResult]) -> ConnectionReading {
     if publics.len() < 2 {
         return ConnectionReading::Unclear;
     }
-    if !all(router) {
-        return ConnectionReading::LossToRouter;
-    }
+    // The biggest fact first: nothing came back from the internet at all.
     if publics.iter().all(|r| r.received == 0) {
         return ConnectionReading::NoInternetAnswers;
+    }
+    if router.received == 0 {
+        return ConnectionReading::RouterSilent;
+    }
+    if !all(router) {
+        return ConnectionReading::LossToRouter;
     }
     if publics.iter().any(|r| !all(r)) {
         return ConnectionReading::LossPastRouter;
@@ -509,6 +516,23 @@ mod tests {
         assert_eq!(c.reading, ConnectionReading::NoInternetAnswers);
         assert_eq!(c.results[1].received, 0);
         assert_eq!(c.results[1].avg_ms, None);
+    }
+
+    #[test]
+    fn a_router_that_answers_no_echo_is_not_read_as_loss() {
+        let p = Scripted::new(Some(ROUTER))
+            .answers(CF, &[Some(12), None, Some(13)])
+            .answers(G, &[Some(15), Some(15), Some(16)]);
+        assert_eq!(check(&p, 3).reading, ConnectionReading::RouterSilent);
+    }
+
+    #[test]
+    fn nothing_answering_at_all_reads_as_no_internet_answers_not_router_loss() {
+        // As on a cloud runner, whose network drops every echo.
+        let p = Scripted::new(Some(ROUTER));
+        assert_eq!(check(&p, 3).reading, ConnectionReading::NoInternetAnswers);
+        let p = Scripted::new(Some(ROUTER)).answers(ROUTER, &[Some(1), None, Some(2)]);
+        assert_eq!(check(&p, 3).reading, ConnectionReading::NoInternetAnswers);
     }
 
     #[test]

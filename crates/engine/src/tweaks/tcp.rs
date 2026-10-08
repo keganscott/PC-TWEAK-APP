@@ -6,13 +6,14 @@
 //! which limits how much a connection can receive at once (auto-tuning) or
 //! puts all incoming traffic on one processor core (RSS). ECN (Explicit
 //! Congestion Notification) `disabled` keeps routers and firewalls that
-//! mishandle ECN marks out of the way. Each value before the change is
+//! mishandle ECN marks out of the way; recent Windows has it on by default
+//! (Windows Server 2025 on CI, NOTES N90). Each value before the change is
 //! journalled as text and Undo sets it back with `netsh`.
 //!
-//! VERIFY (NOTES N90): Windows' default for ECN on Windows 10 and 11, and
-//! that the values `netsh` sets are the ones `Get-NetTCPSetting -SettingName
-//! Internet` and `Get-NetOffloadGlobalSetting` report (the Windows backend
-//! reads them there, because `netsh`'s own output is translated).
+//! The Windows backend reads the values from `Get-NetTCPSetting -SettingName
+//! Internet` and `Get-NetOffloadGlobalSetting`, because `netsh`'s own output
+//! is translated; CI showed both agree after each `netsh` change.
+//! VERIFY (NOTES N90): Windows' default for ECN on Windows 10 and 11.
 
 use std::borrow::Cow;
 

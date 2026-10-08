@@ -36,6 +36,11 @@ export const READING: Record<ConnectionReading, { tone: Tone; title: string; tex
     title: "Neither public server answered.",
     text: "This PC may have no internet connection right now, or something on the way blocks these echoes.",
   },
+  router_silent: {
+    tone: "neutral",
+    title: "Your router did not answer any echo, but the public servers did.",
+    text: "Many routers are set not to answer echoes, so that alone is not a problem. The servers' figures are below.",
+  },
   unclear: {
     tone: "neutral",
     title: "Not every target could be checked.",

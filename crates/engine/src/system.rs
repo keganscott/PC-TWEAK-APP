@@ -363,6 +363,9 @@ struct FakeInner {
     effects: Vec<SideEffect>,
     adapters: Vec<NetAdapter>,
     devices: Vec<PciDevice>,
+    /// An NVIDIA card with its driver; without one, its settings are "not
+    /// available", as on the real backend.
+    nvidia: bool,
     fail_listing: bool,
     fail_writes: bool,
     fail_effects: bool,
@@ -411,9 +414,23 @@ impl FakeSystem {
     pub fn set_pci_devices(&self, devices: Vec<PciDevice>) {
         self.inner.lock().unwrap().devices = devices;
     }
+    pub fn set_nvidia(&self, present: bool) {
+        self.inner.lock().unwrap().nvidia = present;
+    }
     /// Make listing devices fail, as when Windows' device query does.
     pub fn fail_listing(&self, fail: bool) {
         self.inner.lock().unwrap().fail_listing = fail;
+    }
+    fn check_nvidia(&self, item: &SysItem) -> Result<()> {
+        if matches!(item, SysItem::NvidiaSetting { .. }) && !self.inner.lock().unwrap().nvidia {
+            return Err(EngineError::Blocked {
+                reason: crate::types::BlockedReason::new(
+                    crate::types::BlockedCode::HardwareUnsupported,
+                    "This PC has no NVIDIA graphics card.",
+                ),
+            });
+        }
+        Ok(())
     }
     pub fn fail_writes(&self, fail: bool) {
         self.inner.lock().unwrap().fail_writes = fail;
@@ -438,9 +455,11 @@ impl SystemBackend for FakeSystem {
         Ok(g.devices.clone())
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
+        self.check_nvidia(item)?;
         Ok(self.get(item))
     }
     fn write(&self, item: &SysItem, state: &SysState) -> Result<()> {
+        self.check_nvidia(item)?;
         let mut g = self.inner.lock().unwrap();
         if g.fail_writes {
             return Err(EngineError::Internal {

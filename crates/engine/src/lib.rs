@@ -21,6 +21,7 @@ pub mod ini;
 pub mod instance;
 pub mod journal;
 pub mod memory;
+pub mod nvapi;
 pub mod offline;
 pub mod play;
 pub mod power;

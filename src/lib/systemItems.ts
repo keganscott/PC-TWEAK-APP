@@ -33,10 +33,12 @@ export function describeItem(item: SysItem): string {
   }
 }
 
-/** `item`, when given, says what a number means: 0 is Windows' automatic
- * interface metric. */
+/** `item`, when given, says what a value means: 0 is Windows' automatic
+ * interface metric, and an NVIDIA setting with no value of its own has the
+ * driver's default. */
 export function describeState(state: SysState, item?: SysItem): string {
   if (item?.kind === "interface_metric" && state.state === "dword" && state.value === 0) return "automatic";
+  if (item?.kind === "nvidia_setting" && state.state === "absent") return "driver default";
   switch (state.state) {
     case "absent":
       return "not present";

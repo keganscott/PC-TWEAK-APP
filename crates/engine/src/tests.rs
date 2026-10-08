@@ -2556,6 +2556,132 @@ mod prefer_cable {
     }
 }
 
+/// CATALOGUE H20 (tweaks/nvidia.rs).
+mod nvidia_tools {
+    use super::*;
+    use crate::error::EngineError;
+    use crate::journal::Record;
+    use crate::system::{SysItem, SysState};
+    use crate::tweaks::nvidia::{self, LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, POWER_MANAGEMENT, PRERENDER_LIMIT};
+    use crate::types::BlockedCode;
+
+    fn setting(id: u32) -> SysItem {
+        SysItem::NvidiaSetting {
+            profile: String::new(),
+            setting: id,
+        }
+    }
+
+    const fn v(value: u32) -> SysState {
+        SysState::Dword { value }
+    }
+
+    fn state(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    fn pc(nvidia: bool) -> Harness {
+        let h = Harness::new(nvidia::all());
+        h.sys.set_nvidia(nvidia);
+        h
+    }
+
+    #[test]
+    fn low_latency_sets_its_three_values_and_undo_returns_them_to_the_driver_default() {
+        let mut h = pc(true);
+        assert_eq!(state(&h, "nvidia.lowlatency"), TweakState::Default);
+        h.engine.apply("nvidia.lowlatency").unwrap();
+        assert_eq!(h.sys.get(&setting(LOW_LATENCY_STATE)), v(2));
+        assert_eq!(h.sys.get(&setting(LOW_LATENCY_ULTRA)), v(1));
+        assert_eq!(h.sys.get(&setting(PRERENDER_LIMIT)), v(1));
+        assert_eq!(state(&h, "nvidia.lowlatency"), TweakState::Applied);
+
+        h.engine.revert("nvidia.lowlatency").unwrap();
+        for id in [LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, PRERENDER_LIMIT] {
+            assert_eq!(h.sys.get(&setting(id)), SysState::Absent, "0x{id:08X}");
+        }
+        assert_eq!(state(&h, "nvidia.lowlatency"), TweakState::Default);
+    }
+
+    #[test]
+    fn a_value_set_in_control_panel_comes_back_on_undo() {
+        let mut h = pc(true);
+        // Optimal power, chosen by the user in Control Panel.
+        h.sys.set(&setting(POWER_MANAGEMENT), v(5));
+        h.engine.apply("nvidia.powermax").unwrap();
+        assert_eq!(h.sys.get(&setting(POWER_MANAGEMENT)), v(1));
+        h.engine.revert_all();
+        assert_eq!(h.sys.get(&setting(POWER_MANAGEMENT)), v(5));
+    }
+
+    #[test]
+    fn already_set_this_way_reads_as_already_optimized() {
+        let h = pc(true);
+        h.sys.set(&setting(POWER_MANAGEMENT), v(1));
+        assert_eq!(state(&h, "nvidia.powermax"), TweakState::Foreign);
+        h.sys.set(&setting(LOW_LATENCY_STATE), v(2));
+        assert_eq!(
+            state(&h, "nvidia.lowlatency"),
+            TweakState::Default,
+            "only part of it is set"
+        );
+    }
+
+    #[test]
+    fn a_pc_without_an_nvidia_card_is_not_offered_any_and_nothing_is_written() {
+        let mut h = pc(false);
+        for t in nvidia::all() {
+            match state(&h, t.id()) {
+                TweakState::Blocked { reason } => {
+                    assert_eq!(reason.code, BlockedCode::HardwareUnsupported);
+                    assert_eq!(reason.message, "This PC has no NVIDIA graphics card.");
+                }
+                other => panic!("{}: {other:?}", t.id()),
+            }
+            assert!(matches!(h.engine.apply(t.id()), Err(EngineError::Blocked { .. })));
+        }
+        assert!(h.engine.applied_tweak_ids().is_empty());
+    }
+
+    #[test]
+    fn undo_after_the_nvidia_driver_is_removed_finishes_and_says_so() {
+        let mut h = pc(true);
+        h.engine.apply("nvidia.powermax").unwrap();
+        h.sys.set_nvidia(false);
+        let results = h.engine.revert_all();
+        assert!(results.iter().all(|r| r.ok), "{results:?}");
+        assert!(h.engine.applied_tweak_ids().is_empty());
+        assert!(h
+            .engine
+            .journal_view()
+            .records
+            .iter()
+            .any(|r| matches!(r, Record::Note(n) if n.text.contains("NVIDIA driver is no longer on this PC"))));
+    }
+
+    #[test]
+    fn each_tool_changes_only_its_own_settings() {
+        for t in nvidia::all() {
+            let targets = t.system_targets();
+            assert!(!targets.is_empty());
+            for target in targets {
+                assert!(
+                    matches!(&target, SysItem::NvidiaSetting { profile, .. } if profile.is_empty()),
+                    "{}: {target:?}",
+                    t.id()
+                );
+            }
+            assert!(t.touches().is_empty(), "{} writes no registry", t.id());
+        }
+    }
+}
+
 /// CATALOGUE H14, H16-H18 (tweaks/services.rs).
 mod service_tools {
     use std::sync::Arc;

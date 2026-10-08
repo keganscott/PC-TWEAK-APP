@@ -298,6 +298,14 @@ impl<'a> Transaction<'a> {
                         ))?;
                         continue;
                     }
+                    if self.nvidia_is_gone(&c.item) {
+                        self.note(format!(
+                            "the NVIDIA driver is no longer on this PC, and its settings went with it, so the {} \
+                             was not put back",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
                     self.change_back(&c.item, &c.previous)?
                 }
             }
@@ -603,6 +611,16 @@ impl<'a> Transaction<'a> {
         };
         let adapters = self.resolver.system().network_adapters().ok()?;
         (!adapters.iter().any(|a| a.guid.eq_ignore_ascii_case(interface))).then(|| interface.clone())
+    }
+
+    /// True for an NVIDIA setting when the PC no longer has an NVIDIA driver:
+    /// the settings lived in it, so there is nothing to put back.
+    fn nvidia_is_gone(&self, item: &SysItem) -> bool {
+        matches!(item, SysItem::NvidiaSetting { .. })
+            && matches!(
+                self.resolver.system().read(item),
+                Err(EngineError::Blocked { reason }) if reason.code == crate::types::BlockedCode::HardwareUnsupported
+            )
     }
 
     /// True when `e` was allowed only through a `*` target and the key the `*`

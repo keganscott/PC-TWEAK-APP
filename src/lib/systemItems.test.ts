@@ -11,6 +11,10 @@ describe("system item wording", () => {
     expect(describeItem({ kind: "interface_metric", interface: "ab", ipv6: true })).toBe("IPv6 interface metric of adapter ab");
     expect(describeState({ state: "dword", value: 0 }, { kind: "interface_metric", interface: "ab", ipv6: false })).toBe("automatic");
     expect(describeState({ state: "dword", value: 0 })).toBe("0");
+    expect(describeState({ state: "absent" }, { kind: "nvidia_setting", profile: "", setting: 0x1057eb71 })).toBe(
+      "driver default",
+    );
+    expect(describeState({ state: "absent" })).toBe("not present");
     expect(describeState({ state: "list", items: [] })).toBe("automatic");
     expect(describeState({ state: "service", start: "delayed_automatic", running: true })).toBe(
       "delayed automatic, running",

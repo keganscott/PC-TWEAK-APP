@@ -9,8 +9,10 @@
 //! script text. Services use the Win32 service API and scheduled tasks the
 //! Task Scheduler COM API directly.
 //!
+//! NVIDIA settings go through NvAPI (`nvapi.rs`), base profile only.
+//!
 //! Not yet built here, and refused with a plain message: `netsh` TCP globals
-//! and NVIDIA profile settings (their catalogue steps add them; NOTES N66).
+//! (its catalogue step adds them; NOTES N66).
 
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -38,6 +40,7 @@ pub struct WinSystem {
     /// Every physical adapter's interface metrics, from one PowerShell run;
     /// dropped on every metric write.
     metrics: std::sync::Mutex<Option<(std::time::Instant, Vec<Metric>)>>,
+    nvapi: crate::nvapi::NvApi,
 }
 
 impl WinSystem {
@@ -46,6 +49,7 @@ impl WinSystem {
             reg: WinRegistry::new(),
             adapters: std::sync::Mutex::new(None),
             metrics: std::sync::Mutex::new(None),
+            nvapi: crate::nvapi::NvApi::new(),
         }
     }
 
@@ -149,6 +153,29 @@ pub(crate) fn parse_adapters(out: &str) -> Vec<NetAdapter> {
             })
         })
         .collect()
+}
+
+/// No NVIDIA card is an answer about this PC ("not available"); anything
+/// else is a failed command.
+fn nvidia(e: crate::nvapi::NvError) -> EngineError {
+    match e {
+        crate::nvapi::NvError::NoNvidia => EngineError::Blocked {
+            reason: crate::types::BlockedReason::new(
+                crate::types::BlockedCode::HardwareUnsupported,
+                "This PC has no NVIDIA graphics card.",
+            ),
+        },
+        crate::nvapi::NvError::Failed(detail) => fail("NVIDIA settings", detail),
+    }
+}
+
+/// Only the base profile (Control Panel's global settings) is changed.
+fn need_base_profile(profile: &str) -> Result<()> {
+    if profile.is_empty() {
+        Ok(())
+    } else {
+        Err(fail("NVIDIA settings", "only the global profile is changed"))
+    }
 }
 
 fn fail(what: &str, detail: impl Into<String>) -> EngineError {
@@ -377,7 +404,14 @@ impl SystemBackend for WinSystem {
                     .find(|m| m.guid == g && m.ipv6 == *ipv6)
                     .map_or(SysState::Absent, |m| SysState::Dword { value: m.value }))
             }
-            SysItem::TcpGlobal { .. } | SysItem::NvidiaSetting { .. } => Err(EngineError::Internal {
+            SysItem::NvidiaSetting { profile, setting } => {
+                need_base_profile(profile)?;
+                Ok(match self.nvapi.get(*setting).map_err(nvidia)? {
+                    Some(value) => SysState::Dword { value },
+                    None => SysState::Absent,
+                })
+            }
+            SysItem::TcpGlobal { .. } => Err(EngineError::Internal {
                 detail: format!("this version cannot change the {} yet", item.describe()),
             }),
             SysItem::File { .. } => Err(EngineError::Internal {
@@ -481,6 +515,14 @@ impl SystemBackend for WinSystem {
                     ],
                 )
                 .map(drop)
+            }
+            (SysItem::NvidiaSetting { profile, setting }, SysState::Dword { value }) => {
+                need_base_profile(profile)?;
+                self.nvapi.set(*setting, Some(*value)).map_err(nvidia)
+            }
+            (SysItem::NvidiaSetting { profile, setting }, SysState::Absent) => {
+                need_base_profile(profile)?;
+                self.nvapi.set(*setting, None).map_err(nvidia)
             }
             (item, state) => Err(wrong_state(item, state)),
         }
@@ -858,6 +900,26 @@ mod tests {
             d[2].name, "",
             "a device without a name is kept; the app names it by its maker"
         );
+    }
+
+    /// Read-only, against this PC: NVIDIA's power management mode in the
+    /// global profile, or "no NVIDIA graphics card" as a block, never a failed
+    /// command (a runner has no NVIDIA card).
+    #[test]
+    fn nvidia_settings_read_or_say_there_is_no_nvidia_card() {
+        let item = SysItem::NvidiaSetting {
+            profile: String::new(),
+            setting: crate::tweaks::nvidia::POWER_MANAGEMENT,
+        };
+        let read = WinSystem::new().read(&item);
+        println!("NVIDIA power management mode: {read:?}");
+        match read {
+            Ok(SysState::Dword { .. } | SysState::Absent) => {}
+            Err(EngineError::Blocked { reason }) => {
+                assert_eq!(reason.code, crate::types::BlockedCode::HardwareUnsupported)
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// Read-only, against this PC: the graphics cards and network adapters

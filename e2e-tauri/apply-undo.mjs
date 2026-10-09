@@ -2,7 +2,7 @@
 // check that the registry and the journal agree afterwards (agent brief,
 // Phase 3 "done when"). Windows CI only.
 //
-// Then Home's "Apply the safe set" and the result card's "Undo these", which
+// Then Home's "Apply all basic changes" and the result card's "Undo these", which
 // must leave nothing in effect.
 //
 // Runs against a `dev-stubs` test build: the restore gate is open (Windows
@@ -133,7 +133,7 @@ try {
       await dismiss.click();
     }
     const button = await driver.wait(
-      until.elementLocated(By.xpath("//button[starts-with(normalize-space(), 'Apply the safe set (')]")),
+      until.elementLocated(By.xpath("//button[starts-with(normalize-space(), 'Apply all basic changes (')]")),
       30_000,
     );
     const label = await button.getText();

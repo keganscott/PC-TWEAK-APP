@@ -79,16 +79,29 @@ describe("App", () => {
     expect(screen.getByText(/of \d+ already optimized on this PC\./)).toBeTruthy();
   });
 
-  it("Home applies the safe set in one click and the result card undoes it", async () => {
+  it("Home lists the basic changes and applies them in one click; the result card undoes it", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });
-    await userEvent.click(await screen.findByRole("button", { name: "Apply the safe set (1)" }));
+    const card = await screen.findByRole("region", { name: "1 basic change to make" });
+    expect(within(card).getByText("Sample setting A")).toBeTruthy();
+    expect(within(card).getByText("Already optimized")).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Apply all basic changes (1)" }));
     expect(await screen.findByText("Applied: Sample setting A")).toBeTruthy();
+    expect(within(card).getByRole("heading", { name: "Every basic change is in place." })).toBeTruthy();
+    expect(within(card).getAllByText("Optimized").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "Undo these" }));
     expect(await screen.findByText("Undid: Sample setting A")).toBeTruthy();
   });
 
-  it("Home offers the safe set whenever the gate is open, also before the restore status is read", async () => {
+  it("Home keeps the basic changes locked until there is a restore point", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const button = await screen.findByRole("button", { name: "Apply all basic changes (1)" });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("Make a restore point first, in the step above.")).toBeTruthy();
+  });
+
+  it("Home offers the basic changes whenever the gate is open, also before the restore status is read", async () => {
     // A dev-stubs build opens the gate without reading System Restore (real
     // app e2e, Windows CI run 37841431870): Home stayed on "Checking this PC".
     const backend = createMockBackend({ gateOpen: true });
@@ -98,7 +111,7 @@ describe("App", () => {
       return { ...a, env: { ...a.env, restore: null } };
     };
     renderApp(backend);
-    expect(await screen.findByRole("button", { name: "Apply the safe set (1)" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Apply all basic changes (1)" })).toBeTruthy();
   });
 
   it("each Tools category has Apply recommended", async () => {

@@ -23,11 +23,11 @@ import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { recommendedIds } from "../../store/store";
+import { basicTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
-import { Button, Callout, cx, ErrorCallout, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 import { TweakCard } from "./ToolsView";
 
 /** The small uppercase label used across the dashboard. */
@@ -61,6 +61,7 @@ export function HomeView() {
           <ChangesCard />
         </div>
       </section>
+      <Recommended />
       <YourPc audit={audit} />
       <div className="grid items-start gap-3.5 lg:grid-cols-[1.65fr_1fr]">
         <div className="flex min-w-0 flex-col gap-4">
@@ -158,11 +159,7 @@ function NextStep() {
   const audit = useStore((s) => s.audit);
   const restoreOp = useStore((s) => s.restoreOp);
   const targetGame = useStore((s) => s.targetGame);
-  const tweaks = useStore((s) => s.tweaks);
-  const applyingMany = useStore((s) => s.applyManyOp.status === "running");
-  const { applyMany } = useActions();
   const navigate = useNavigate();
-  const safeSet = recommendedIds(tweaks);
 
   const auditFailed = useStore((s) => s.auditOp.status === "failed");
   const restore = audit?.env.restore;
@@ -199,7 +196,8 @@ function NextStep() {
           Choose the changes for this PC.
         </h2>
         <p className="mt-2 max-w-md text-sm">
-          Each one is recorded before it is made and can be undone on its own or all together from Backups.
+          Start with the basic changes below, or pick one by one in Tools. Each one is recorded before it is made and
+          can be undone on its own or all together from Backups.
         </p>
         <ol className="mt-4 flex flex-wrap gap-1.5 text-xs font-semibold">
           {STEPS.map((step, i) => (
@@ -217,12 +215,7 @@ function NextStep() {
           ))}
         </ol>
         <div className="mt-auto flex flex-wrap items-center gap-4 pt-5">
-          {safeSet.length > 0 && (
-            <Button variant="go" busy={applyingMany} onClick={() => void applyMany(safeSet)}>
-              Apply the safe set ({safeSet.length})
-            </Button>
-          )}
-          <Button variant={safeSet.length > 0 ? "secondary" : "go"} onClick={() => navigate("tools")}>
+          <Button variant="go" onClick={() => navigate("tools")}>
             Open Tools
           </Button>
           {!targetGame && (
@@ -282,6 +275,109 @@ function NextStep() {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// Recommended: the basic changes in one place, applied in one click
+// (Kegan, 2026-10-09: "the top recommended settings ... the option to apply
+// all of basic ones with one click").
+// ---------------------------------------------------------------------------
+
+/** How many tiles show before "Show all". */
+const TOP = 6;
+
+function Recommended() {
+  const tweaks = useStore((s) => s.tweaks);
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen === true || s.restoreOp.status === "done");
+  const applyingMany = useStore((s) => s.applyManyOp.status === "running");
+  const sample = useStore((s) => s.sample);
+  const { applyMany } = useActions();
+  const navigate = useNavigate();
+  const [all, setAll] = useState(false);
+
+  const basic = basicTweaks(tweaks);
+  if (basic.length === 0) return null;
+  const todo = recommendedIds(tweaks);
+  const done = basic.length - todo.length;
+  const restarts = basic.filter((t) => todo.includes(t.id) && t.requiresReboot).length;
+  const shown = all ? basic : basic.slice(0, TOP);
+
+  return (
+    <section aria-labelledby="recommended-title" className="rounded-2xl border border-line bg-surface-1 p-5 print:hidden">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Eyebrow>Recommended for this PC</Eyebrow>
+            {sample && <SampleBadge />}
+          </div>
+          <h2 id="recommended-title" className="mt-2 text-xl font-extrabold tracking-tight">
+            {todo.length === 0
+              ? "Every basic change is in place."
+              : `${todo.length} basic ${todo.length === 1 ? "change" : "changes"} to make`}
+          </h2>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">
+            Well-supported Windows settings with nothing to weigh up. Each is recorded before it is made and can be
+            undone from Backups.
+          </p>
+        </div>
+        <div className="w-44 shrink-0" role="img" aria-label={`${done} of ${basic.length} in place`}>
+          <p className="text-right text-sm font-bold tabular-nums">
+            {done} of {basic.length} <span className="font-semibold text-ink-muted">in place</span>
+          </p>
+          <div aria-hidden className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-3">
+            <div className="h-full rounded-full bg-lime" style={{ width: `${(done / basic.length) * 100}%` }} />
+          </div>
+        </div>
+      </div>
+      <ul className="mt-4 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+        {shown.map((t) => {
+          const inPlace = !todo.includes(t.id);
+          return (
+            <li
+              key={t.id}
+              className={cx("flex gap-3 rounded-xl border p-3", inPlace ? "border-line bg-surface-2/50" : "border-line bg-surface-2")}
+            >
+              {inPlace ? (
+                <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-lime" strokeWidth={3} />
+              ) : (
+                <CircleDot aria-hidden className="mt-0.5 size-4 shrink-0 text-violet-soft" />
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-bold">{t.name}</p>
+                <p className="mt-0.5 line-clamp-2 text-xs text-ink-muted">{t.summary}</p>
+                {inPlace && (
+                  <div className="mt-1.5">
+                    <StatusBadge tone="ok">{t.state.status === "applied" ? "Optimized" : "Already optimized"}</StatusBadge>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {todo.length > 0 && (
+          <Button variant="go" busy={applyingMany} disabled={!gateOpen} onClick={() => void applyMany(todo)}>
+            Apply all basic changes ({todo.length})
+          </Button>
+        )}
+        {basic.length > TOP && (
+          <Button variant="ghost" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? "Show fewer" : `Show all ${basic.length}`}
+          </Button>
+        )}
+        <LinkButton onClick={() => navigate("tools")}>Choose one by one in Tools</LinkButton>
+      </div>
+      {todo.length > 0 && !gateOpen && (
+        <p className="mt-2 text-xs text-ink-muted">Make a restore point first, in the step above.</p>
+      )}
+      {todo.length > 0 && restarts > 0 && (
+        <p className="mt-2 text-xs text-ink-muted">
+          {restarts === 1 ? "One of them takes" : `${restarts} of them take`} effect after a restart.
+        </p>
+      )}
+    </section>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Restore point and changes in effect

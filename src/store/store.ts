@@ -94,7 +94,7 @@ export interface State {
   refreshError: EngineError | null;
   tweakOps: Readonly<Record<string, Op<"apply" | "revert">>>;
   revertAllOp: Op<RevertResult[]>;
-  /** "Apply the safe set", "Apply recommended" and the result card's Undo. */
+  /** "Apply all basic changes", "Apply recommended" and the result card's Undo. */
   applyManyOp: Op<null>;
   /** "Empty the standby list" (catalogue E6); keeps the last result for its card. */
   standbyOp: Op<StandbyPurge>;
@@ -159,7 +159,7 @@ export function initialState(sample: boolean): State {
 }
 
 /**
- * The changes "Apply the safe set" and "Apply recommended" make: safe-tier,
+ * The changes "Apply all basic changes" (Home) and "Apply recommended" make: safe-tier,
  * not yet in effect, not refused by the engine. A setting the PC already has
  * (foreign) or one changed after we applied it (drifted) is left alone.
  * DECISIONS 15.22: "recommended" stands in for evidence grades A and B until
@@ -178,6 +178,24 @@ export function recommendedIds(tweaks: readonly TweakView[]): string[] {
         t.state.status === "default",
     )
     .map((t) => t.id);
+}
+
+/**
+ * The basic changes Home recommends: what `recommendedIds` would apply, plus
+ * those already in effect (applied here, or set before), so Home can show how many are in place. Not yet made first,
+ * then the larger effect first, then by name.
+ */
+export function basicTweaks(tweaks: readonly TweakView[]): TweakView[] {
+  const offered = new Set(recommendedIds(tweaks));
+  const inPlace = (t: TweakView) => t.state.status === "applied" || t.state.status === "foreign";
+  return tweaks
+    .filter((t) => t.safety === "safe" && t.category !== APPEARANCE && !t.tradeoff && (offered.has(t.id) || inPlace(t)))
+    .sort(
+      (a, b) =>
+        Number(inPlace(a)) - Number(inPlace(b)) ||
+        Number(b.impact === "extreme") - Number(a.impact === "extreme") ||
+        a.name.localeCompare(b.name),
+    );
 }
 
 /** Look-and-feel changes: one click each in Tools, never part of a one-click

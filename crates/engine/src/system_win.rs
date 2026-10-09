@@ -808,23 +808,13 @@ impl SystemBackend for WinSystem {
         }
     }
 
+    /// Through `settings_file`: no link on the way can steer it (NOTES N55).
     fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        match std::fs::read(path) {
-            Ok(b) => Ok(Some(b)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(EngineError::storage(path.to_owned(), e)),
-        }
+        crate::settings_file::read(std::path::Path::new(path))
     }
 
     fn write_file(&self, path: &str, bytes: Option<&[u8]>) -> Result<()> {
-        match bytes {
-            Some(b) => crate::fsutil::write_durable(std::path::Path::new(path), b),
-            None => match std::fs::remove_file(path) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(EngineError::storage(path.to_owned(), e)),
-            },
-        }
+        crate::settings_file::write(std::path::Path::new(path), bytes)
     }
 
     fn run(&self, effect: &SideEffect) -> Result<()> {

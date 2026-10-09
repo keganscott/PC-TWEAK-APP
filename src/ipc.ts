@@ -64,6 +64,7 @@ function describe(e: EngineError): string {
     case "win32":
     case "storage":
     case "insecure_storage":
+    case "settings_file":
     case "context_violation":
     case "command":
     case "wmi":

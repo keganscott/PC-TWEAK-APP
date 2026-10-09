@@ -58,6 +58,12 @@ export function explain(error: EngineError): ErrorText {
         hint: "An administrator should delete the folder named below; PeakTweaks recreates it safely.",
         detail: `${error.path}: ${error.detail}`,
       };
+    case "settings_file":
+      return {
+        title: "PeakTweaks could not change a game's settings file.",
+        hint: "Close the game, then try again.",
+        detail: `${error.path}: ${error.detail}`,
+      };
     case "no_journal_entry":
       return { title: "There is nothing to undo for this change.", hint: null, detail: error.tweakId };
     case "unknown_tweak":

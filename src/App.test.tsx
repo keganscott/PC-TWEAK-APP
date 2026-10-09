@@ -769,6 +769,7 @@ describe("review regressions", () => {
     expect(within(await card("Fortnite")).queryByRole("button", { name: /^Play/ })).toBeNull();
     const cs2 = await card("Counter-Strike 2");
     expect(within(cs2).getByText(/without PeakTweaks' administrator rights/)).toBeTruthy();
+    expect(within(cs2).getByText(/^Gaming Mode is (on|off)/)).toBeTruthy();
     await userEvent.click(within(cs2).getByRole("button", { name: "Play Counter-Strike 2" }));
     expect(await within(cs2).findByText("Steam was asked to start it.")).toBeTruthy();
     expect(launch).toHaveBeenCalledWith("cs2");

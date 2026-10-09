@@ -30,6 +30,7 @@ export function GamesView() {
   const technical = useTechnical();
   const sample = useStore((s) => s.sample);
   const launchOps = useStore((s) => s.launchOps);
+  const gamingMode = useStore((s) => s.settings?.gamingMode ?? null);
   const { selectTargetGame, launchGame } = useActions();
   const readiness = audit?.antiCheat ?? null;
   const installs = audit?.env.gameInstalls ?? null;
@@ -174,6 +175,7 @@ export function GamesView() {
                     }
                     choice={choices.find((c) => c.gameId === g.gameId)}
                     launchOp={launchOps[g.gameId]}
+                    gamingMode={gamingMode}
                     onLaunch={() => void launchGame(g.gameId)}
                     technical={technical}
                   />
@@ -215,6 +217,7 @@ function GameCard({
   install,
   choice,
   launchOp,
+  gamingMode,
   onLaunch,
   technical,
 }: {
@@ -223,6 +226,8 @@ function GameCard({
   install: GameInstall | null | undefined;
   choice: GameGpuChoice | undefined;
   launchOp: Op | undefined;
+  /** The Gaming Mode setting, or null before the settings are read. */
+  gamingMode: boolean | null;
   onLaunch: () => void;
   technical: boolean;
 }) {
@@ -285,6 +290,13 @@ function GameCard({
                 : "Starts through Steam, as you, without PeakTweaks' administrator rights."}
           </p>
         </div>
+      )}
+      {install?.steamApp != null && gamingMode !== null && (
+        <p className="mt-1 text-xs text-ink-faint">
+          {gamingMode
+            ? "Gaming Mode is on, so its changes start when the game does."
+            : "Gaming Mode is off. Turn it on in Tools to pause notifications and Windows Search indexing while the game runs."}
+        </p>
       )}
       {launchOp?.status === "failed" && (
         <div className="mt-2">

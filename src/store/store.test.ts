@@ -87,6 +87,35 @@ describe("changes", () => {
     expect(s.lastChange).toMatchObject({ kind: "apply", tweakIds: ["fixture.default"], failed: [] });
   });
 
+  it("a card keeps its spinner until the new list shows the change, so a second click cannot undo it", async () => {
+    // Kegan's "two clicks" (2026-10-09): the engine answered the apply, the
+    // spinner stopped, and the card showed its old state with Apply live
+    // until a slow list came back.
+    const slowList = { listTweaks: 0 };
+    const { store, backend } = await booted({
+      gateOpen: true,
+      latencyFor: (command) => (command === "listTweaks" ? slowList.listTweaks : undefined),
+    });
+    slowList.listTweaks = 40;
+    let applies = 0;
+    const applyTweak = backend.applyTweak;
+    backend.applyTweak = (id) => ((applies += 1), applyTweak(id));
+
+    const first = store.actions.applyTweak("fixture.default");
+    await new Promise((r) => setTimeout(r, 20));
+    // The engine has answered; the list has not.
+    expect(store.getState().tweaks.find((t) => t.id === "fixture.default")?.state.status).toBe("default");
+    expect(store.getState().tweakOps["fixture.default"]?.status).toBe("running");
+    await store.actions.applyTweak("fixture.default"); // the impatient second click
+    await first;
+
+    expect(applies).toBe(1);
+    const s = store.getState();
+    expect(s.tweakOps["fixture.default"]?.status).toBe("done");
+    expect(s.tweaks.find((t) => t.id === "fixture.default")?.state.status).toBe("applied");
+    expect(s.lastChange).toMatchObject({ kind: "apply", tweakIds: ["fixture.default"] });
+  });
+
   it("a blocked tweak stays blocked, with the engine's reason", async () => {
     const { store } = await booted({ gateOpen: true });
     await store.actions.applyTweak("fixture.blocked");

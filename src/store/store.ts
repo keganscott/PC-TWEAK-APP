@@ -364,10 +364,17 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
   }
 
   /** After anything that changed the PC: re-read what the engine now reports.
-   * The startup and device lists only once something has shown them. */
-  async function refreshAfterChange() {
+   * The startup and device lists only once something has shown them.
+   *
+   * The tool list comes first, on its own: it is what the user is looking at,
+   * and the engine answers one request at a time, so a list queued behind the
+   * audit (seconds of probing) left a card showing its old state with its
+   * button live, and a second click applied or undid again (Kegan's
+   * "two clicks", 2026-10-09). `listed` runs once the new list is in. */
+  async function refreshAfterChange(listed?: () => void) {
+    await refreshTweaks();
+    listed?.();
     await Promise.allSettled([
-      refreshTweaks(),
       refreshAudit(),
       refreshJournal(),
       ...(state.startupOp.status === "idle" ? [] : [refreshStartup()]),
@@ -679,38 +686,49 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     set((s) => ({ ...s, applyManyOp: RUNNING }));
     const done: string[] = [];
     const failures: RevertResult[] = [];
+    // Each card keeps its spinner until the new list shows how it ended.
+    const ended: Record<string, Op<"apply" | "revert">> = {};
     for (const id of ids) {
       set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: RUNNING } }));
       try {
         await (kind === "apply" ? backend.applyTweak(id) : backend.revertTweak(id));
         done.push(id);
-        set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: { status: "done", value: kind } } }));
+        ended[id] = { status: "done", value: kind };
       } catch (e) {
         const op = failed(e);
         failures.push({ tweakId: id, ok: false, error: explain(op.error).title });
-        set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: op } }));
+        ended[id] = op;
       }
     }
-    set((s) => ({
-      ...s,
-      applyManyOp: { status: "done", value: null },
-      lastChange: { kind, at: now(), tweakIds: done, failed: failures },
-    }));
-    await refreshAfterChange();
+    await refreshAfterChange(() =>
+      set((s) => ({
+        ...s,
+        tweakOps: { ...s.tweakOps, ...ended },
+        applyManyOp: { status: "done", value: null },
+        lastChange: { kind, at: now(), tweakIds: done, failed: failures },
+      })),
+    );
   }
 
   async function change(id: string, kind: "apply" | "revert") {
     if (state.tweakOps[id]?.status === "running") return;
     const setOp = (op: Op<"apply" | "revert">) => set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: op } }));
     setOp(RUNNING);
+    let ended: Op<"apply" | "revert">;
     try {
       await (kind === "apply" ? backend.applyTweak(id) : backend.revertTweak(id));
-      setOp({ status: "done", value: kind });
-      set((s) => ({ ...s, lastChange: { kind, at: now(), tweakIds: [id], failed: [] } }));
+      ended = { status: "done", value: kind };
     } catch (e) {
-      setOp(failed(e));
+      ended = failed(e);
     }
-    await refreshAfterChange();
+    // The spinner stays until the card can show the result (refreshAfterChange).
+    await refreshAfterChange(() =>
+      set((s) => ({
+        ...s,
+        tweakOps: { ...s.tweakOps, [id]: ended },
+        ...(ended.status === "done" ? { lastChange: { kind, at: now(), tweakIds: [id], failed: [] } } : {}),
+      })),
+    );
   }
 
   return {

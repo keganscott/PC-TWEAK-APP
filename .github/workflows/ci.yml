@@ -20,7 +20,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  # The real gate: the app only ever runs on Windows.
+  # The real gate: the app only ever runs on Windows. scripts/check-windows.ps1
+  # runs the same core checks on a Windows PC without using Actions minutes.
   windows:
     runs-on: windows-latest
     timeout-minutes: 60

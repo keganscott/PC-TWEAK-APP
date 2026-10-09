@@ -71,6 +71,8 @@ pub enum SysItem {
     /// `New-NetQosPolicy` adds to, by name. State: `QosPolicy`, or `Absent`.
     QosPolicy { name: String },
     /// A whole file. State: `File` (a copy kept with the backups) or `Absent`.
+    /// A tweak may declare one under the signed-in user's profile folder as
+    /// `<profile>\...` (`PROFILE_PREFIX`); the transaction makes it concrete.
     File { path: String },
 }
 
@@ -92,6 +94,10 @@ fn fields_match<T: Serialize>(concrete: &T, pattern: &T) -> bool {
             (_, None) => false,
         })
 }
+
+/// Starts a declared file path under the signed-in user's profile folder,
+/// which differs per PC and per account (`ContextResolver::profile_path`).
+pub const PROFILE_PREFIX: &str = "<profile>\\";
 
 impl SysItem {
     /// Does this concrete item fall under the declared `pattern`? See

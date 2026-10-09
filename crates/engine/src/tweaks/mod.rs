@@ -7,6 +7,7 @@ pub mod amd;
 pub mod cable;
 pub mod dns;
 pub mod fullscreen;
+pub mod game_ini;
 pub mod ifeo_priority;
 pub mod mouse_accel;
 pub mod msi;

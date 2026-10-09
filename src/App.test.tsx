@@ -93,6 +93,19 @@ describe("App", () => {
     expect(await screen.findByText("Undid: Sample setting A")).toBeTruthy();
   });
 
+  it("Home lists changes set back outside PeakTweaks and applies them again in one click", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const apply = vi.spyOn(backend, "applyTweak");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const notice = await screen.findByRole("region", { name: "Changes set back" });
+    expect(within(notice).getByText("1 change was set back outside PeakTweaks.")).toBeTruthy();
+    expect(within(notice).getByText("Sample setting F")).toBeTruthy();
+    await userEvent.click(within(notice).getByRole("button", { name: "Apply again" }));
+    expect(apply).toHaveBeenCalledWith("fixture.drifted");
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Changes set back" })).toBeNull());
+  });
+
   it("Home keeps the basic changes locked until there is a restore point", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

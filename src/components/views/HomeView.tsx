@@ -23,7 +23,7 @@ import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { basicTweaks, recommendedIds } from "../../store/store";
+import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
@@ -54,6 +54,7 @@ export function HomeView() {
       />
       {auditOp.status === "failed" && <ErrorCallout text={explain(auditOp.error)} technical={technical} />}
       <LastChange />
+      <DriftCheck />
       <section aria-label="Safety and next step" className="grid gap-3.5 lg:grid-cols-[1.5fr_1fr] print:hidden">
         <NextStep />
         <div className="flex flex-col gap-3.5">
@@ -714,6 +715,62 @@ function LastChange() {
         </ul>
       )}
     </Callout>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Drift check: changes Windows set back after PeakTweaks made them
+// ---------------------------------------------------------------------------
+
+function DriftCheck() {
+  const tweaks = useStore((s) => s.tweaks);
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen === true || s.restoreOp.status === "done");
+  const applyingMany = useStore((s) => s.applyManyOp.status === "running");
+  const { applyMany } = useActions();
+  const navigate = useNavigate();
+  const { all, again } = driftedTweaks(tweaks);
+  if (all.length === 0) return null;
+
+  const one = all.length === 1;
+  return (
+    <section aria-label="Changes set back" className="print:hidden">
+      <Callout
+        tone="warn"
+        title={
+          one
+            ? "1 change was set back outside PeakTweaks."
+            : `${all.length} changes were set back outside PeakTweaks.`
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            {again.length > 0 && (
+              <Button busy={applyingMany} disabled={!gateOpen} onClick={() => void applyMany(again)}>
+                {again.length === all.length ? "Apply again" : `Apply ${again.length} again`}
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => navigate("tools")}>
+              Review in Tools
+            </Button>
+          </div>
+        }
+      >
+        <p>
+          A Windows update or another program changed {one ? "it" : "them"} after PeakTweaks applied{" "}
+          {one ? "it" : "them"}. Undo in Backups still puts back what was there before.
+        </p>
+        <ul className="mt-1.5 list-disc pl-5">
+          {all.map((t) => (
+            <li key={t.id}>
+              {t.name}
+              {!again.includes(t.id) && <span className="text-ink-muted"> (apply it again in Tools)</span>}
+            </li>
+          ))}
+        </ul>
+        {again.length > 0 && !gateOpen && (
+          <p className="mt-1.5 text-ink-muted">Make a restore point first, in the step below.</p>
+        )}
+      </Callout>
+    </section>
   );
 }
 

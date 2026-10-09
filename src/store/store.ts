@@ -198,6 +198,19 @@ export function basicTweaks(tweaks: readonly TweakView[]): TweakView[] {
     );
 }
 
+/**
+ * The drift check: changes PeakTweaks made that Windows no longer has (a
+ * Windows update or another program set them back). `again` are the ones
+ * applied again in one click: those that ask for no confirmation in Tools
+ * (DECISIONS 15.22) and that the engine does not refuse. The rest are
+ * listed and re-applied one at a time in Tools.
+ */
+export function driftedTweaks(tweaks: readonly TweakView[]): { all: TweakView[]; again: string[] } {
+  const all = tweaks.filter((t) => t.state.status === "drifted");
+  const again = all.filter((t) => !t.blocked && !(t.tradeoff && t.safety !== "safe")).map((t) => t.id);
+  return { all, again };
+}
+
 /** Look-and-feel changes: one click each in Tools, never part of a one-click
  * set, so the safe set never changes how someone's desktop looks. */
 export const APPEARANCE = "appearance";

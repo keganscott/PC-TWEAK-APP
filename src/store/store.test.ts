@@ -4,7 +4,7 @@ import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { StartupList } from "../generated/StartupList";
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
-import { BUS_LIMIT, createAppStore, otherLongWork, recommendedIds, type State } from "./store";
+import { basicTweaks, BUS_LIMIT, createAppStore, driftedTweaks, otherLongWork, recommendedIds, type State } from "./store";
 
 async function booted(options: MockOptions = {}) {
   const backend = createMockBackend(options);
@@ -284,6 +284,25 @@ describe("recommended changes", () => {
       .getState()
       .tweaks.map((t) => (t.id === "fixture.default" ? { ...t, tradeoff: "Uses more power." } : t));
     expect(recommendedIds(tweaks)).toEqual([]);
+  });
+});
+
+describe("basic changes and the drift check", () => {
+  it("list the basic changes not yet made first, then those in place", async () => {
+    const { store } = await booted({ gateOpen: true });
+    expect(basicTweaks(store.getState().tweaks).map((t) => t.id)).toEqual([
+      "fixture.default",
+      "fixture.applied",
+      "fixture.foreign",
+    ]);
+  });
+
+  it("apply again in one click only what Tools would apply without a confirmation", async () => {
+    const { store } = await booted({ gateOpen: true });
+    const drifted = store.getState().tweaks.find((t) => t.id === "fixture.drifted")!;
+    expect(driftedTweaks([drifted])).toEqual({ all: [drifted], again: ["fixture.drifted"] });
+    const advanced = { ...drifted, safety: "moderate" as const, tradeoff: "Uses more power." };
+    expect(driftedTweaks([advanced])).toEqual({ all: [advanced], again: [] });
   });
 });
 

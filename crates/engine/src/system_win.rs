@@ -481,6 +481,10 @@ impl SystemBackend for WinSystem {
         }
     }
 
+    fn displays(&self) -> Result<Vec<crate::system::Display>> {
+        crate::display_win::displays()
+    }
+
     fn pci_devices(&self) -> Result<Vec<PciDevice>> {
         let out = powershell(
             "devices",
@@ -609,6 +613,9 @@ impl SystemBackend for WinSystem {
             }
             SysItem::TcpGlobal { name } => Ok(SysState::Text {
                 text: self.tcp_global(name)?,
+            }),
+            SysItem::RefreshRate { display } => Ok(SysState::Dword {
+                value: crate::display_win::rate(display)?,
             }),
             SysItem::QosPolicy { name } => {
                 need_name(name, "QoS policy")?;
@@ -770,6 +777,9 @@ impl SystemBackend for WinSystem {
                         format!("netsh set {name} to {value}, but Windows reports {now}"),
                     ))
                 }
+            }
+            (SysItem::RefreshRate { display }, SysState::Dword { value }) => {
+                crate::display_win::set_rate(display, *value)
             }
             (SysItem::QosPolicy { name }, SysState::QosPolicy { program, dscp }) => {
                 need_name(name, "QoS policy")?;

@@ -516,7 +516,8 @@ describe("Starter scan (plan 6.4)", () => {
           fixTweakId: null,
           fixBy: "hardware" as const,
         };
-        return { ...a, scan: { findings: [hdd, ...a.scan.findings.filter((f) => f.id !== hdd.id)] } };
+        // Only the hard drive here; the SAMPLE scan's own one-click fixes are left out.
+        return { ...a, scan: { findings: [hdd, ...a.scan.findings.filter((f) => f.id !== hdd.id && f.fixBy !== "us")] } };
       },
     });
     const you = await screen.findByRole("heading", { name: /^You can fix \(\d+\)$/ });
@@ -542,7 +543,7 @@ describe("Starter scan (plan 6.4)", () => {
           fixTweakId: "fixture.default",
           fixBy: "us" as const,
         };
-        return { ...a, scan: { findings: [plan, ...a.scan.findings.filter((f) => f.id !== plan.id)] } };
+        return { ...a, scan: { findings: [plan, ...a.scan.findings.filter((f) => f.id !== plan.id && f.fixBy !== "us")] } };
       },
     });
     const us = await screen.findByRole("heading", { name: "PeakTweaks can fix (1)" });
@@ -570,7 +571,7 @@ describe("Starter scan (plan 6.4)", () => {
           fixTweakId: "no.such.tool",
           fixBy: "us" as const,
         };
-        return { ...a, scan: { findings: [plan, ...a.scan.findings.filter((f) => f.id !== plan.id)] } };
+        return { ...a, scan: { findings: [plan, ...a.scan.findings.filter((f) => f.id !== plan.id && f.fixBy !== "us")] } };
       },
     });
     const group = (await screen.findByRole("heading", { name: "PeakTweaks can fix (1)" })).closest("section")!;

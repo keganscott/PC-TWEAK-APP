@@ -51,6 +51,8 @@ pub mod types;
 pub mod wmi;
 
 #[cfg(windows)]
+pub mod display_win;
+#[cfg(windows)]
 pub mod identity;
 #[cfg(windows)]
 pub mod osfacts;

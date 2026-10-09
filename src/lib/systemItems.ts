@@ -32,6 +32,8 @@ export function describeItem(item: SysItem): string {
       return `AMD ${AMD_LABELS[item.setting] ?? item.setting} of graphics card ${item.gpu}`;
     case "qos_policy":
       return `QoS policy ${item.name}`;
+    case "refresh_rate":
+      return `refresh rate of display ${item.display}`;
     case "file":
       return `file ${item.path}`;
   }

@@ -625,9 +625,9 @@ export const systemAudit = {
         "title": "The display is set below its highest refresh rate",
         "reading": "Running at 60 Hz; this display offers 144 Hz at 1920x1080.",
         "remedy": "Windows Settings > System > Display > Advanced display lets you choose the refresh rate.",
-        "guidedOnly": true,
-        "fixTweakId": null,
-        "fixBy": "you"
+        "guidedOnly": false,
+        "fixTweakId": "display.refresh_max",
+        "fixBy": "us"
       },
       {
         "id": "background.load",

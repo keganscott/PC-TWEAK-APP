@@ -97,6 +97,11 @@ impl ContextResolver {
         self.system.pci_devices()
     }
 
+    /// Displays connected to the desktop now (safe for tweaks).
+    pub fn displays(&self) -> Result<Vec<super::system::Display>> {
+        self.system.displays()
+    }
+
     /// AMD graphics cards, empty without one (safe for tweaks).
     pub fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
         self.system.amd_gpus()

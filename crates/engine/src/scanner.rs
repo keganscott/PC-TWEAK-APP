@@ -5,9 +5,10 @@
 //! changes nothing, so it runs unelevated and its results are reproducible from
 //! a saved `SystemEnv`. A finding names the tool that fixes it in one click
 //! (`fix_tweak_id`) only when that tool is in the catalogue: so far the power
-//! plan (the PeakTweaks power plan, CATALOGUE H7). The other one-click fixes
-//! the plan lists (refresh rate, per-app GPU choice) are not built, so those
-//! findings are guided only (NOTES.md N41, N42).
+//! plan (the PeakTweaks power plan, CATALOGUE H7) and the refresh rate
+//! (`tweaks::refresh`, NOTES N95). The other one-click fixes the plan lists
+//! (per-app GPU choice) are not built, so those findings are guided only
+//! (NOTES.md N41, N42).
 //!
 //! Rules this file keeps, and `tests` below enforces:
 //! - A probe that could not tell produces a `Status::Unknown` finding that says
@@ -307,17 +308,21 @@ fn refresh_rate(hw: &HardwareReport) -> Option<Finding> {
             unknown(ID, TITLE, "Windows did not report a refresh rate")
         }
         // 1 Hz of slack: 59.94 Hz shows up as 59 or 60 depending on the driver.
-        Probe::Yes { value } if value.current_hz + 1 < value.max_hz_at_current_resolution => finding(
-            ID,
-            Status::Attention,
-            "The display is set below its highest refresh rate",
-            format!(
-                "Running at {} Hz; this display offers {} Hz at {}x{}.",
-                value.current_hz, value.max_hz_at_current_resolution, value.width, value.height
-            ),
-            Some("Windows Settings > System > Display > Advanced display lets you choose the refresh rate."),
-            true,
-        ),
+        Probe::Yes { value } if value.current_hz + 1 < value.max_hz_at_current_resolution => {
+            let mut f = finding(
+                ID,
+                Status::Attention,
+                "The display is set below its highest refresh rate",
+                format!(
+                    "Running at {} Hz; this display offers {} Hz at {}x{}.",
+                    value.current_hz, value.max_hz_at_current_resolution, value.width, value.height
+                ),
+                Some("Windows Settings > System > Display > Advanced display lets you choose the refresh rate."),
+                false,
+            );
+            f.fix_tweak_id = Some(crate::tweaks::refresh::ID.to_owned());
+            f
+        }
         Probe::Yes { value } => finding(
             ID,
             Status::Fine,
@@ -892,13 +897,11 @@ mod tests {
             is_server: false,
         });
         let r = scan(&env_with(hw));
-        for id in [
-            "memory.channels",
-            "memory.speed",
-            "display.refresh_rate",
-            "storage.boot_disk",
-            "os.support",
-        ] {
+        let f = get(&r, "display.refresh_rate");
+        assert_eq!(f.status, Status::Attention);
+        assert_eq!(f.fix_tweak_id.as_deref(), Some(crate::tweaks::refresh::ID));
+        assert!(!f.guided_only && f.remedy.is_some());
+        for id in ["memory.channels", "memory.speed", "storage.boot_disk", "os.support"] {
             let f = get(&r, id);
             assert_eq!(f.status, Status::Attention, "{id}");
             assert!(f.guided_only, "{id}: no one-click fix exists yet");
@@ -1188,10 +1191,15 @@ mod tests {
         );
         assert_eq!(get(&r, "storage.boot_disk").fix_by, Some(FixBy::Hardware));
         assert_eq!(get(&r, "memory.speed").fix_by, Some(FixBy::You));
-        assert_eq!(get(&r, "display.refresh_rate").fix_by, Some(FixBy::You));
+        assert_eq!(get(&r, "display.refresh_rate").fix_by, Some(FixBy::Us));
         for f in &r.findings {
             assert_eq!(f.fix_by.is_some(), f.status == Status::Attention, "{}", f.id);
-            assert_ne!(f.fix_by, Some(FixBy::Us), "{}: nothing has a one-click fix yet", f.id);
+            assert_eq!(
+                f.fix_by == Some(FixBy::Us),
+                f.fix_tweak_id.is_some(),
+                "{}: ours to fix exactly when it names our tool",
+                f.id
+            );
         }
 
         hw.memory = Probe::yes(MemoryInfo {

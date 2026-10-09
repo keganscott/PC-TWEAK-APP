@@ -70,6 +70,9 @@ pub enum SysItem {
     /// A Windows QoS policy in this computer's own policy store, the one
     /// `New-NetQosPolicy` adds to, by name. State: `QosPolicy`, or `Absent`.
     QosPolicy { name: String },
+    /// The refresh rate of one display, by its Windows device name
+    /// (`\\.\DISPLAY1`), at the resolution it has now. State: `Dword(hz)`.
+    RefreshRate { display: String },
     /// A whole file. State: `File` (a copy kept with the backups) or `Absent`.
     /// A tweak may declare one under the signed-in user's profile folder as
     /// `<profile>\...` (`PROFILE_PREFIX`); the transaction makes it concrete.
@@ -155,7 +158,10 @@ impl SysItem {
                 .into_iter()
                 .map(|v| (format!(r"SOFTWARE\Policies\Microsoft\Windows\QoS\{name}"), v))
                 .collect(),
-            Self::PowerScheme { .. }
+            // Windows keeps display modes in the graphics driver's own
+            // configuration store, not in plain values one could put back.
+            Self::RefreshRate { .. }
+            | Self::PowerScheme { .. }
             | Self::ScheduledTask { .. }
             | Self::TcpGlobal { .. }
             | Self::NvidiaSetting { .. }
@@ -196,6 +202,7 @@ impl SysItem {
                 format!("AMD {label} of graphics card {gpu}")
             }
             Self::QosPolicy { name } => format!("QoS policy {name}"),
+            Self::RefreshRate { display } => format!("refresh rate of display {display}"),
             Self::File { path } => format!("file {path}"),
         }
     }
@@ -330,6 +337,22 @@ pub struct PciDevice {
     pub class: DeviceClass,
 }
 
+/// A display connected to the desktop, as Windows lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Display {
+    /// Windows' device name, `\\.\DISPLAY1`: the name refresh rates are set by.
+    pub device: String,
+    /// The monitor's name as Windows shows it; may be generic.
+    pub name: String,
+    pub primary: bool,
+    pub width: u32,
+    pub height: u32,
+    pub current_hz: u32,
+    /// The highest rate Windows offers at the current resolution and colour
+    /// depth: the same list Settings > Display > Advanced display offers.
+    pub max_hz: u32,
+}
+
 /// The operations on Windows for non-registry changes, and no more.
 pub trait SystemBackend: Send + Sync {
     /// Physical network adapters (no virtual switches or VPNs).
@@ -338,6 +361,8 @@ pub trait SystemBackend: Send + Sync {
     fn pci_devices(&self) -> Result<Vec<PciDevice>>;
     /// AMD graphics cards as AMD's driver lists them; empty without one.
     fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>>;
+    /// Displays connected to the desktop now.
+    fn displays(&self) -> Result<Vec<Display>>;
     /// The current state of `item`. File items are read with `read_file`.
     fn read(&self, item: &SysItem) -> Result<SysState>;
     /// Make `item` be `state`. File items are written with `write_file`.
@@ -372,6 +397,9 @@ impl SystemBackend for Unavailable {
     }
     fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
         Err(Self::refuse("AMD graphics settings".into()))
+    }
+    fn displays(&self) -> Result<Vec<Display>> {
+        Err(Self::refuse("displays".into()))
     }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         Err(Self::refuse(item.describe()))
@@ -409,6 +437,7 @@ struct FakeInner {
     /// available", as on the real backend.
     nvidia: bool,
     amd_gpus: Vec<crate::adlx::AmdGpu>,
+    displays: Vec<Display>,
     fail_listing: bool,
     fail_writes: bool,
     fail_effects: bool,
@@ -462,6 +491,13 @@ impl FakeSystem {
     }
     pub fn set_amd_gpus(&self, gpus: Vec<crate::adlx::AmdGpu>) {
         self.inner.lock().unwrap().amd_gpus = gpus;
+    }
+    /// Displays connected now; their refresh rates are read and set here.
+    pub fn set_displays(&self, displays: Vec<Display>) {
+        self.inner.lock().unwrap().displays = displays;
+    }
+    pub fn displays_now(&self) -> Vec<Display> {
+        self.inner.lock().unwrap().displays.clone()
     }
     /// Make listing devices fail, as when Windows' device query does.
     pub fn fail_listing(&self, fail: bool) {
@@ -525,8 +561,22 @@ impl SystemBackend for FakeSystem {
         }
         Ok(g.devices.clone())
     }
+    fn displays(&self) -> Result<Vec<Display>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: Windows did not list the displays".into(),
+            });
+        }
+        Ok(g.displays.clone())
+    }
     fn read(&self, item: &SysItem) -> Result<SysState> {
         self.check_graphics(item)?;
+        if let SysItem::RefreshRate { display } = item {
+            let g = self.inner.lock().unwrap();
+            let d = g.displays.iter().find(|d| d.device.eq_ignore_ascii_case(display));
+            return Ok(d.map_or(SysState::Absent, |d| SysState::Dword { value: d.current_hz }));
+        }
         Ok(self.get(item))
     }
     fn write(&self, item: &SysItem, state: &SysState) -> Result<()> {
@@ -536,6 +586,19 @@ impl SystemBackend for FakeSystem {
             return Err(EngineError::Internal {
                 detail: format!("test: cannot change the {}", item.describe()),
             });
+        }
+        if let (SysItem::RefreshRate { display }, SysState::Dword { value }) = (item, state) {
+            let d = g.displays.iter_mut().find(|d| d.device.eq_ignore_ascii_case(display));
+            let d = d.ok_or_else(|| EngineError::Internal {
+                detail: format!("test: no display {display}"),
+            })?;
+            if *value > d.max_hz {
+                return Err(EngineError::Internal {
+                    detail: format!("test: {display} does not offer {value} Hz"),
+                });
+            }
+            d.current_hz = *value;
+            return Ok(());
         }
         match state {
             SysState::Absent => g.states.remove(&fake_key(item)),

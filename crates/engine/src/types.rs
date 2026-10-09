@@ -247,6 +247,9 @@ pub enum BlockedCode {
     /// Security software or an anti-cheat, which PeakTweaks never turns off
     /// (a startup entry for Windows Security, say). `message` names it.
     ProtectedProgram,
+    /// An administrator or a policy on this PC set this, so only they can
+    /// change it (a Store app's startup task set by policy, say).
+    SetByPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

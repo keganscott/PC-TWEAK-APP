@@ -3,4 +3,4 @@
 /**
  * Where a startup entry comes from.
  */
-export type StartupSource = "user_run" | "machine_run" | "machine_run32" | "user_folder" | "machine_folder";
+export type StartupSource = "user_run" | "machine_run" | "machine_run32" | "user_folder" | "machine_folder" | "store_app";

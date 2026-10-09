@@ -129,6 +129,9 @@ pub trait RegistryBackend: Send + Sync {
     /// empty when the key is absent.
     fn value_names(&self, hive: Hive, path: &str) -> Result<Vec<String>>;
 
+    /// The names of the key's direct subkeys; empty when the key is absent.
+    fn subkey_names(&self, hive: Hive, path: &str) -> Result<Vec<String>>;
+
     /// Write a value, creating the key (and missing parents) if needed.
     fn write_value(&self, hive: Hive, path: &str, name: &str, value: &RawValue) -> Result<()>;
 

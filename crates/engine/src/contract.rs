@@ -590,6 +590,20 @@ fn startup_list() -> StartupList {
     );
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Sample notes.lnk"), b"").unwrap();
+    // A Store app with a startup task, installed in a folder of its own.
+    let package = dir.path().join("package");
+    std::fs::create_dir(&package).unwrap();
+    std::fs::write(
+        package.join("AppxManifest.xml"),
+        r#"<Package><uap5:StartupTask TaskId="SampleStartup" Enabled="true" DisplayName="Sample Store app"/></Package>"#,
+    )
+    .unwrap();
+    h.fake.set_external(
+        Hive::CurrentUser,
+        &format!(r"{}\Sample.StoreApp_1.0.0.0_x64__sample", crate::startup::PACKAGES),
+        "PackageRootFolder",
+        RawValue::sz(&package.to_string_lossy()),
+    );
     let folders = StartupFolders {
         user: Some(dir.path().to_path_buf()),
         machine: Some(dir.path().join("none")),

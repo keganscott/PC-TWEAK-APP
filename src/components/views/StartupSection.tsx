@@ -14,6 +14,7 @@ const WHERE: Record<StartupSource, string> = {
   machine_run32: "Set up for everyone on this PC",
   user_folder: "In your Startup folder",
   machine_folder: "In the Startup folder for everyone",
+  store_app: "A Microsoft Store app",
 };
 
 /** Does it start at sign-in? Only a switch that is off says no. */
@@ -164,7 +165,13 @@ function StartupRow({ app, gateOpen }: { app: StartupApp; gateOpen: boolean | nu
                 {blocked.message} <span className="text-ink-muted">{blockedHint(blocked)}</span>
               </p>
             )}
-            {status === "foreign" && <p className="mt-1">Turned off outside PeakTweaks, for example in Task Manager.</p>}
+            {status === "foreign" && (
+              <p className="mt-1">
+                {app.source === "store_app"
+                  ? "Off until it is turned on, here or in Windows Settings."
+                  : "Turned off outside PeakTweaks, for example in Task Manager."}
+              </p>
+            )}
             {app.turnOn.state.status === "applied" && <p className="mt-1">Turned back on by PeakTweaks.</p>}
             {status === "unknown" && <p className="mt-1">PeakTweaks could not read its switch, so it leaves it alone.</p>}
           </div>

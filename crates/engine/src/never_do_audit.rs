@@ -173,9 +173,30 @@ fn changes_for_listed_things_target_no_security_feature() {
     use crate::tweaks::{msi::MsiMode, startup::StartupSource, startup::StartupToggle};
     let mut listed: Vec<Box<dyn Tweak>> = crate::tweaks::startup::SOURCES
         .iter()
+        .filter(|&&s| s != StartupSource::StoreApp)
         .map(|&s| Box::new(StartupToggle::new(s, r"..\..\Control\CI")) as Box<dyn Tweak>)
         .collect();
     listed.push(Box::new(StartupToggle::new(StartupSource::MachineRun, "SecureBoot")));
+    // A Store app's name is two key names under its own key; no other name
+    // makes a change at all, whoever asks for it.
+    for name in [
+        r"..\..\Control\CI",
+        r"family\..",
+        r"a\b\c",
+        r"family",
+        r"family\task/x",
+        r"family\",
+    ] {
+        for id in [
+            format!("startup.store_app:{name}"),
+            format!("startup.store_app.on:{name}"),
+        ] {
+            assert!(StartupToggle::from_id(&id).is_none(), "{id}");
+        }
+    }
+    listed.push(Box::new(
+        StartupToggle::from_id(r"startup.store_app:Microsoft.GamingApp_8wekyb3d8bbwe\GamingAppStartup").unwrap(),
+    ));
     listed.push(Box::new(
         MsiMode::new(r"PCI\VEN_8086&DEV_A0F0&SUBSYS_00748086&REV_20\3&11583659&0&A3", "").unwrap(),
     ));
@@ -187,6 +208,9 @@ fn changes_for_listed_things_target_no_security_feature() {
                 target
                     .key
                     .starts_with(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\")
+                    || target
+                        .key
+                        .starts_with(&format!(r"{}\", crate::tweaks::startup::STORE_TASKS))
                     || target.key.starts_with(r"SYSTEM\CurrentControlSet\Enum\PCI\"),
                 "{}: {}",
                 t.id(),

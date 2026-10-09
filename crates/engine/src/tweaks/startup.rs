@@ -20,6 +20,16 @@
 //!
 //! VERIFY: the `StartupApproved` key names, which key each source's switch
 //! is in, and the byte layout are Task Manager's as recalled (NOTES N82).
+//!
+//! Store apps (packaged apps that declare a `StartupTask` in their manifest)
+//! keep their switch elsewhere: a DWORD `State` under the user's
+//! `AppModel\SystemAppData\<package family>\<task id>`, holding one of
+//! Windows' `StartupTaskState` values (0 Disabled, 1 DisabledByUser,
+//! 2 Enabled, 3 DisabledByPolicy, 4 EnabledByPolicy; checked 2026-10-09
+//! against Microsoft's Windows.ApplicationModel.StartupTaskState reference).
+//! Turning one off writes 1, the user's own "off"; turning one on writes 2.
+//! One set by policy is left alone. VERIFY: the key's place, and that Windows
+//! honours a value written there (NOTES N100).
 
 use std::borrow::Cow;
 
@@ -40,6 +50,16 @@ const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_32: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
 const TURN_ON: &str = ".on";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
+/// Each Store app's startup task switches, under the user's classes
+/// (`<package family>\<task id>`, value `State`).
+pub const STORE_TASKS: &str =
+    r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
+const STORE_STATE: &str = "State";
+/// `StartupTaskState` values.
+const TASK_DISABLED_BY_USER: u32 = 1;
+const TASK_ENABLED: u32 = 2;
+const TASK_DISABLED_BY_POLICY: u32 = 3;
+const TASK_ENABLED_BY_POLICY: u32 = 4;
 
 /// Where a startup entry comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -56,6 +76,8 @@ pub enum StartupSource {
     UserFolder,
     /// The Startup folder for everyone.
     MachineFolder,
+    /// A Store app's own startup task, for the signed-in user.
+    StoreApp,
 }
 
 pub const SOURCES: &[StartupSource] = &[
@@ -64,6 +86,7 @@ pub const SOURCES: &[StartupSource] = &[
     StartupSource::MachineRun32,
     StartupSource::UserFolder,
     StartupSource::MachineFolder,
+    StartupSource::StoreApp,
 ];
 
 impl StartupSource {
@@ -74,6 +97,7 @@ impl StartupSource {
             StartupSource::MachineRun32 => "machine_run32",
             StartupSource::UserFolder => "user_folder",
             StartupSource::MachineFolder => "machine_folder",
+            StartupSource::StoreApp => "store_app",
         }
     }
 
@@ -87,20 +111,27 @@ impl StartupSource {
             StartupSource::UserRun => Some((RegRoot::InteractiveUser, RUN)),
             StartupSource::MachineRun => Some((RegRoot::LocalMachine, RUN)),
             StartupSource::MachineRun32 => Some((RegRoot::LocalMachine, RUN_32)),
-            StartupSource::UserFolder | StartupSource::MachineFolder => None,
+            StartupSource::UserFolder | StartupSource::MachineFolder | StartupSource::StoreApp => None,
         }
     }
 
-    /// The key holding each entry's on/off switch.
-    pub fn approved_key(self) -> (RegRoot, String) {
+    /// Where an entry's on/off switch is: root, key and value name.
+    pub fn switch(self, name: &str) -> (RegRoot, String, String) {
         let (root, leaf) = match self {
             StartupSource::UserRun => (RegRoot::InteractiveUser, "Run"),
             StartupSource::MachineRun => (RegRoot::LocalMachine, "Run"),
             StartupSource::MachineRun32 => (RegRoot::LocalMachine, "Run32"),
             StartupSource::UserFolder => (RegRoot::InteractiveUser, "StartupFolder"),
             StartupSource::MachineFolder => (RegRoot::LocalMachine, "StartupFolder"),
+            StartupSource::StoreApp => {
+                return (
+                    RegRoot::InteractiveUser,
+                    format!(r"{STORE_TASKS}\{name}"),
+                    STORE_STATE.to_owned(),
+                )
+            }
         };
-        (root, format!(r"{APPROVED}\{leaf}"))
+        (root, format!(r"{APPROVED}\{leaf}"), name.to_owned())
     }
 }
 
@@ -154,6 +185,7 @@ const PROTECTED: &[(&str, &str)] = &[
     ("battleye", "BattlEye, an anti-cheat"),
     ("faceit", "FACEIT, an anti-cheat"),
     ("esea", "ESEA, an anti-cheat"),
+    ("sechealthui", "Windows Security"),
 ];
 
 /// Why this entry is never turned off, if it is one of `PROTECTED`.
@@ -165,9 +197,11 @@ pub fn protected(name: &str, command: Option<&str>) -> Option<BlockedReason> {
         .map(|(_, what)| BlockedReason::new(BlockedCode::ProtectedProgram, format!("This starts {what}.")))
 }
 
-/// The name shown for an entry: a shortcut without its `.lnk`.
+/// The name shown for an entry: a shortcut without its `.lnk`; for a Store
+/// app, its task id when no better name is known.
 pub fn display_name(source: StartupSource, name: &str) -> String {
     match source {
+        StartupSource::StoreApp => name.rsplit('\\').next().unwrap_or(name).to_owned(),
         StartupSource::UserFolder | StartupSource::MachineFolder => name
             .strip_suffix(".lnk")
             .or_else(|| name.strip_suffix(".LNK"))
@@ -175,6 +209,20 @@ pub fn display_name(source: StartupSource, name: &str) -> String {
             .to_owned(),
         _ => name.to_owned(),
     }
+}
+
+/// `<package family>\<task id>`, each made of letters, digits, `.`, `_` and
+/// `-` and not only dots: two key names under `STORE_TASKS`, never a way out
+/// of it.
+pub fn is_store_task_name(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('\\').collect();
+    parts.len() == 2
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && !p.chars().all(|c| c == '.')
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        })
 }
 
 /// One startup entry's on/off switch.
@@ -187,6 +235,11 @@ pub struct StartupToggle {
     pub name: String,
     /// Turns the entry on, rather than off.
     pub turn_on: bool,
+    /// Store apps: the name Windows shows for the task, when known.
+    pub label: Option<String>,
+    /// Store apps: whether the task starts when no switch has been saved
+    /// (its manifest's `Enabled`).
+    pub on_by_default: bool,
 }
 
 impl StartupToggle {
@@ -197,6 +250,8 @@ impl StartupToggle {
             source,
             name: name.to_owned(),
             turn_on: false,
+            label: None,
+            on_by_default: false,
         }
     }
 
@@ -207,7 +262,40 @@ impl StartupToggle {
             source,
             name: name.to_owned(),
             turn_on: true,
+            label: None,
+            on_by_default: false,
         }
+    }
+
+    /// The same switch, with what the startup list knows about a Store app.
+    pub fn with_store_facts(mut self, label: Option<String>, on_by_default: bool) -> Self {
+        self.label = label;
+        self.on_by_default = on_by_default;
+        self
+    }
+
+    /// The facts `with_store_facts` takes, as one string kept with the id
+    /// between listing and applying (`Engine::relist`).
+    pub fn store_facts(&self) -> String {
+        format!(
+            "{}{}",
+            u8::from(self.on_by_default),
+            self.label.as_deref().unwrap_or_default()
+        )
+    }
+
+    /// `store_facts` read back.
+    pub fn with_saved_facts(self, facts: &str) -> Self {
+        let on = facts.starts_with('1');
+        let label = facts.get(1..).filter(|l| !l.is_empty()).map(str::to_owned);
+        self.with_store_facts(label, on)
+    }
+
+    /// The name shown.
+    pub fn shown(&self) -> String {
+        self.label
+            .clone()
+            .unwrap_or_else(|| display_name(self.source, &self.name))
     }
 
     /// The toggle an id names, if it names one.
@@ -216,10 +304,20 @@ impl StartupToggle {
         if name.is_empty() {
             return None;
         }
-        match tag.strip_suffix(TURN_ON) {
-            Some(tag) => Some(Self::turning_on(StartupSource::from_tag(tag)?, name)),
-            None => Some(Self::new(StartupSource::from_tag(tag)?, name)),
+        let (source, turn_on) = match tag.strip_suffix(TURN_ON) {
+            Some(tag) => (StartupSource::from_tag(tag)?, true),
+            None => (StartupSource::from_tag(tag)?, false),
+        };
+        // A Store app's name is part of a key path, so only one shaped as
+        // Windows names them: `<package family>\<task id>`.
+        if source == StartupSource::StoreApp && !is_store_task_name(name) {
+            return None;
         }
+        Some(if turn_on {
+            Self::turning_on(source, name)
+        } else {
+            Self::new(source, name)
+        })
     }
 
     /// The command a `Run` entry starts, if it has one.
@@ -231,10 +329,65 @@ impl StartupToggle {
     }
 
     fn blocked(&self, res: &ContextResolver) -> Result<Option<BlockedReason>> {
+        if self.source == StartupSource::StoreApp {
+            if let Some(TASK_DISABLED_BY_POLICY | TASK_ENABLED_BY_POLICY) = self.task_state(res)? {
+                return Ok(Some(BlockedReason::new(
+                    BlockedCode::SetByPolicy,
+                    "An administrator or a policy on this PC decides whether this starts.",
+                )));
+            }
+        }
         if self.turn_on {
             return Ok(None);
         }
-        Ok(protected(&self.name, self.command(res)?.as_deref()))
+        let name = format!("{} {}", self.name, self.label.as_deref().unwrap_or_default());
+        Ok(protected(&name, self.command(res)?.as_deref()))
+    }
+
+    /// A Store app task's saved `State`, if it has one. Not a DWORD: an error,
+    /// so the switch reads as unknown and nothing is written over it.
+    fn task_state(&self, res: &ContextResolver) -> Result<Option<u32>> {
+        let (root, key, value) = self.source.switch(&self.name);
+        match res.read_raw(root, &key, &value)? {
+            None => Ok(None),
+            Some(raw) if raw.vtype == 4 && raw.bytes.len() == 4 => {
+                Ok(Some(u32::from_le_bytes(raw.bytes[..4].try_into().unwrap())))
+            }
+            Some(raw) => Err(EngineError::registry_msg(
+                res.display_path(root, &key),
+                Some(&value),
+                format!(
+                    "its startup switch has data of type {} PeakTweaks does not know",
+                    raw.vtype
+                ),
+            )),
+        }
+    }
+
+    /// Is the entry turned off now? `Err(detail)` when its switch holds
+    /// something PeakTweaks does not know.
+    fn is_off(&self, res: &ContextResolver) -> Result<std::result::Result<bool, String>> {
+        if self.source == StartupSource::StoreApp {
+            return Ok(match self.task_state(res)? {
+                None => Ok(!self.on_by_default),
+                Some(TASK_ENABLED | TASK_ENABLED_BY_POLICY) => Ok(false),
+                Some(0 | TASK_DISABLED_BY_USER | TASK_DISABLED_BY_POLICY) => Ok(true),
+                Some(other) => Err(format!(
+                    "its startup task state is {other}, which PeakTweaks does not know"
+                )),
+            });
+        }
+        let (root, key, value) = self.source.switch(&self.name);
+        // No switch value: it starts.
+        Ok(match res.read_raw(root, &key, &value)? {
+            None => Ok(false),
+            Some(raw) => switched_off(&raw).ok_or_else(|| {
+                format!(
+                    "its startup switch has data of type {} PeakTweaks does not know",
+                    raw.vtype
+                )
+            }),
+        })
     }
 }
 
@@ -244,8 +397,8 @@ impl Tweak for StartupToggle {
     }
 
     fn metadata(&self) -> TweakMetadata {
-        let shown = display_name(self.source, &self.name);
-        let (root, key) = self.source.approved_key();
+        let shown = self.shown();
+        let (root, key, value) = self.source.switch(&self.name);
         let root = match root {
             RegRoot::InteractiveUser => r"HKEY_USERS\<sid>",
             _ => "HKLM",
@@ -267,7 +420,7 @@ impl Tweak for StartupToggle {
             id: Cow::Owned(self.id.clone()),
             name: Cow::Owned(name),
             summary: Cow::Owned(summary),
-            target: Cow::Owned(format!(r"{root}\{key}\{}", self.name)),
+            target: Cow::Owned(format!(r"{root}\{key}\{value}")),
             category: Cow::Borrowed("startup"),
             tier: Tier::Pro,
             safety: SafetyTier::Safe,
@@ -278,12 +431,12 @@ impl Tweak for StartupToggle {
     }
 
     fn execution_context(&self) -> ExecutionContext {
-        self.source.approved_key().0.required_context()
+        self.source.switch(&self.name).0.required_context()
     }
 
     fn touches(&self) -> Vec<RegTarget> {
-        let (root, key) = self.source.approved_key();
-        vec![RegTarget::new(root, &key, &[self.name.as_str()])]
+        let (root, key, value) = self.source.switch(&self.name);
+        vec![RegTarget::new(root, &key, &[value.as_str()])]
     }
 
     fn read_state(&self, res: &ContextResolver, has_journal_entry: bool) -> Result<TweakState> {
@@ -293,20 +446,12 @@ impl Tweak for StartupToggle {
                 return Ok(TweakState::Blocked { reason });
             }
         }
-        let (root, key) = self.source.approved_key();
-        // No switch value: it starts.
-        let off = match res.read_raw(root, &key, &self.name)? {
-            None => Ok(false),
-            Some(raw) => switched_off(&raw).ok_or(raw.vtype),
-        };
         // Done means off for the turning-off switch, on for the other.
-        Ok(match off.map(|off| off != self.turn_on) {
+        Ok(match self.is_off(res)?.map(|off| off != self.turn_on) {
             Ok(false) => TweakState::Default,
             Ok(true) if has_journal_entry => TweakState::Applied,
             Ok(true) => TweakState::Foreign,
-            Err(vtype) => TweakState::Unknown {
-                detail: format!("its startup switch has data of type {vtype} PeakTweaks does not know"),
-            },
+            Err(detail) => TweakState::Unknown { detail },
         })
     }
 
@@ -322,12 +467,13 @@ impl Tweak for StartupToggle {
                 });
             }
         }
-        let (root, key) = self.source.approved_key();
-        let value = if self.turn_on {
-            on_value()
-        } else {
-            off_value(filetime_now())
+        let (root, key, name) = self.source.switch(&self.name);
+        let value = match (self.source, self.turn_on) {
+            (StartupSource::StoreApp, true) => RawValue::dword(TASK_ENABLED),
+            (StartupSource::StoreApp, false) => RawValue::dword(TASK_DISABLED_BY_USER),
+            (_, true) => on_value(),
+            (_, false) => off_value(filetime_now()),
         };
-        tx.set_raw(root, &key, &self.name, value)
+        tx.set_raw(root, &key, &name, value)
     }
 }

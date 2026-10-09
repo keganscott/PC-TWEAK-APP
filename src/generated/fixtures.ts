@@ -1565,6 +1565,45 @@ export const startupList = {
     },
     {
       "tweak": {
+        "id": "startup.store_app:sample.storeapp_sample\\SampleStartup",
+        "name": "Sample Store app at sign-in",
+        "summary": "Stops Sample Store app from starting when you sign in. It stays installed and starts when you open it.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\SystemAppData\\sample.storeapp_sample\\SampleStartup\\State",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "default"
+        },
+        "blocked": null
+      },
+      "turnOn": {
+        "id": "startup.store_app.on:sample.storeapp_sample\\SampleStartup",
+        "name": "Sample Store app at sign-in, turned back on",
+        "summary": "Starts Sample Store app when you sign in again. It was turned off outside PeakTweaks.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\SystemAppData\\sample.storeapp_sample\\SampleStartup\\State",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "foreign"
+        },
+        "blocked": null
+      },
+      "name": "Sample Store app",
+      "source": "store_app",
+      "command": null
+    },
+    {
+      "tweak": {
         "id": "startup.user_run:Sample updater",
         "name": "Sample updater at sign-in",
         "summary": "Stops Sample updater from starting when you sign in. It stays installed and starts when you open it.",

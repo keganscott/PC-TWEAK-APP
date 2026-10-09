@@ -333,6 +333,11 @@ impl Engine {
             return Ok(Slot::Internal(i));
         }
         if let Some(t) = crate::tweaks::startup::StartupToggle::from_id(id) {
+            // A Store app's name and default, as last listed.
+            let t = match self.listed.get(id) {
+                Some(facts) => t.with_saved_facts(facts),
+                None => t,
+            };
             return Ok(Slot::Listed(Box::new(t)));
         }
         if let Some(instance) = id.strip_prefix(crate::tweaks::msi::ID_PREFIX) {
@@ -414,14 +419,17 @@ impl Engine {
         let (toggles, problems) = crate::startup::entries(&self.resolver, folders);
         let turn_on: Vec<_> = toggles
             .iter()
-            .map(|t| crate::tweaks::startup::StartupToggle::turning_on(t.source, &t.name))
+            .map(|t| {
+                crate::tweaks::startup::StartupToggle::turning_on(t.source, &t.name)
+                    .with_store_facts(t.label.clone(), t.on_by_default)
+            })
             .collect();
         self.relist(
             crate::tweaks::startup::ID_PREFIX,
             toggles
                 .iter()
                 .chain(&turn_on)
-                .map(|t| (t.id().to_owned(), String::new())),
+                .map(|t| (t.id().to_owned(), t.store_facts())),
         );
         let mut apps: Vec<crate::startup::StartupApp> = toggles
             .into_iter()
@@ -429,7 +437,7 @@ impl Engine {
             .map(|(t, on)| crate::startup::StartupApp {
                 tweak: self.view_of(&t),
                 turn_on: self.view_of(&on),
-                name: crate::tweaks::startup::display_name(t.source, &t.name),
+                name: t.shown(),
                 source: t.source,
                 command: t.command(&self.resolver).ok().flatten(),
             })

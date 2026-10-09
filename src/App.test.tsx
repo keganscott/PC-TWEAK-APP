@@ -277,18 +277,24 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
     const section = await screen.findByRole("region", { name: /Startup apps/ });
-    expect(await within(section).findByText("3 of 5 start when you sign in.")).toBeTruthy();
+    expect(await within(section).findByText("4 of 6 start when you sign in.")).toBeTruthy();
 
     const chat = within(section).getByRole("switch", { name: "Sample chat app" }) as HTMLInputElement;
     expect(chat.checked).toBe(true);
     await userEvent.click(chat);
     expect(apply).toHaveBeenLastCalledWith("startup.user_run:Sample chat app");
     await waitFor(() => expect(chat.checked).toBe(false));
-    expect(within(section).getByText("2 of 5 start when you sign in.")).toBeTruthy();
+    expect(within(section).getByText("3 of 6 start when you sign in.")).toBeTruthy();
 
     await userEvent.click(chat);
     expect(revert).toHaveBeenLastCalledWith("startup.user_run:Sample chat app");
     await waitFor(() => expect(chat.checked).toBe(true));
+
+    // A Store app's own startup task is listed with the rest.
+    const store = within(section).getByRole("switch", { name: "Sample Store app" }) as HTMLInputElement;
+    expect(store.checked).toBe(true);
+    expect(store.disabled).toBe(false);
+    expect(within(section).getAllByText(/A Microsoft Store app\./).length).toBe(1);
 
     const security = within(section).getByRole("switch", { name: "SecurityHealth" }) as HTMLInputElement;
     expect(security.checked).toBe(true);

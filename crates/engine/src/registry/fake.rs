@@ -150,6 +150,22 @@ impl RegistryBackend for FakeRegistry {
             .unwrap_or_default())
     }
 
+    fn subkey_names(&self, hive: Hive, path: &str) -> Result<Vec<String>> {
+        // Keys are kept in lower case, so names come back in lower case.
+        let (_, parent) = key_id(hive, path);
+        let g = self.inner.lock().unwrap();
+        Ok(g.keys
+            .keys()
+            .filter(|(h, _)| *h == hive)
+            .filter_map(|(_, k)| match parent.as_str() {
+                "" => Some(k.as_str()),
+                p => k.strip_prefix(p)?.strip_prefix('\\'),
+            })
+            .filter(|rest| !rest.is_empty() && !rest.contains('\\'))
+            .map(str::to_owned)
+            .collect())
+    }
+
     fn write_value(&self, hive: Hive, path: &str, name: &str, value: &RawValue) -> Result<()> {
         // Same refusal as WinRegistry, before anything changes (contract_tests).
         if !value.is_supported_type() {

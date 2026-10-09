@@ -4291,9 +4291,9 @@ mod startup_apps {
 
     use crate::error::EngineError;
     use crate::registry::Hive;
-    use crate::startup::{StartupFolders, StartupList};
+    use crate::startup::{StartupFolders, StartupList, PACKAGES};
     use crate::testutil::Harness;
-    use crate::tweaks::startup::{switched_off, StartupSource, StartupToggle};
+    use crate::tweaks::startup::{switched_off, StartupSource, StartupToggle, STORE_TASKS};
     use crate::types::{BlockedCode, RawValue, Tweak, TweakState};
 
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -4339,6 +4339,54 @@ mod startup_apps {
             RawValue::sz(r"C:\Launcher\launcher.exe"),
         );
         let dir = tempfile::tempdir().unwrap();
+        // Store apps: Slack starts by default, Xbox does not until turned on,
+        // a work app is set by policy, and a package without a manifest.
+        let package = |full: &str, display: &str, task: Option<&str>| {
+            let key = format!(r"{PACKAGES}\{full}");
+            let root = dir.path().join(full);
+            if let Some(task) = task {
+                fs::create_dir_all(&root).unwrap();
+                fs::write(
+                    root.join("AppxManifest.xml"),
+                    format!(r#"<Package><Extensions><uap5:Extension Category="windows.startupTask">{task}</uap5:Extension></Extensions></Package>"#),
+                )
+                .unwrap();
+            }
+            h.fake.set_external(
+                Hive::CurrentUser,
+                &key,
+                "PackageRootFolder",
+                RawValue::sz(&root.to_string_lossy()),
+            );
+            h.fake
+                .set_external(Hive::CurrentUser, &key, "DisplayName", RawValue::sz(display));
+        };
+        package(
+            "91750D7E.Slack_4.41.105.0_x64__8she8kybcnzg4",
+            "Slack",
+            Some(r#"<uap5:StartupTask TaskId="SlackStartup" Enabled="true" DisplayName="Slack"/>"#),
+        );
+        package(
+            "Microsoft.GamingApp_2410.1001.20.0_x64__8wekyb3d8bbwe",
+            "Xbox",
+            Some(r#"<uap5:StartupTask TaskId="GamingAppStartup" Enabled="false" DisplayName="ms-resource:Name"/>"#),
+        );
+        package(
+            "Corp.Tool_1.0.0.0_x64__corp",
+            "Corp Tool",
+            Some(r#"<uap5:StartupTask TaskId="CorpTask" Enabled="true"/>"#),
+        );
+        h.fake.set_external(
+            Hive::CurrentUser,
+            &format!(r"{STORE_TASKS}\Corp.Tool_corp\CorpTask"),
+            "State",
+            RawValue::dword(3),
+        );
+        package(
+            "Microsoft.VCLibs.140.00_14.0.33519.0_x64__8wekyb3d8bbwe",
+            "VC Libs",
+            None,
+        );
         let user = dir.path().join("user");
         fs::create_dir_all(&user).unwrap();
         fs::write(user.join("OneNote.lnk"), b"").unwrap();
@@ -4363,7 +4411,19 @@ mod startup_apps {
         let list = h.engine.startup_apps(&folders);
         assert!(list.problems.is_empty(), "{:?}", list.problems);
         let names: Vec<&str> = list.apps.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(names, ["Discord", "Launcher32", "OneNote", "SecurityHealth", "Steam"]);
+        assert_eq!(
+            names,
+            [
+                "Corp Tool",
+                "Discord",
+                "Launcher32",
+                "OneNote",
+                "SecurityHealth",
+                "Slack",
+                "Steam",
+                "Xbox"
+            ]
+        );
 
         let discord = app(&list, "Discord");
         assert_eq!(discord.tweak.state, TweakState::Default);
@@ -4384,6 +4444,135 @@ mod startup_apps {
             TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::ProtectedProgram),
             other => panic!("Windows Security offered: {other:?}"),
         }
+    }
+
+    const SLACK_TASK: &str = r"91750d7e.slack_8she8kybcnzg4\SlackStartup";
+    const XBOX_TASK: &str = r"microsoft.gamingapp_8wekyb3d8bbwe\GamingAppStartup";
+
+    fn task_state(h: &Harness, task: &str) -> Option<RawValue> {
+        h.fake
+            .read_value_for_test(Hive::CurrentUser, &format!(r"{STORE_TASKS}\{task}"), "State")
+    }
+
+    #[test]
+    fn store_apps_are_listed_from_their_manifests() {
+        let (mut h, _dir, folders) = pc();
+        let list = h.engine.startup_apps(&folders);
+        let slack = app(&list, "Slack");
+        assert_eq!(slack.source, StartupSource::StoreApp);
+        assert_eq!(slack.tweak.metadata.id, format!("startup.store_app:{SLACK_TASK}"));
+        assert_eq!(
+            slack.tweak.state,
+            TweakState::Default,
+            "enabled in its manifest, so it starts"
+        );
+        assert_eq!(slack.command, None);
+        // Its task's name is a resource only Windows can read here, so the
+        // package's name is shown.
+        let xbox = app(&list, "Xbox");
+        assert_eq!(xbox.tweak.state, TweakState::Foreign, "not enabled until turned on");
+        assert_eq!(xbox.turn_on.state, TweakState::Default, "offered");
+        let corp = app(&list, "Corp Tool");
+        for view in [&corp.tweak, &corp.turn_on] {
+            match &view.state {
+                TweakState::Blocked { reason } => assert_eq!(reason.code, BlockedCode::SetByPolicy),
+                other => panic!("a task set by policy offered: {other:?}"),
+            }
+        }
+        assert!(list.apps.iter().all(|a| a.name != "VC Libs"), "no startup task");
+    }
+
+    #[test]
+    fn a_store_app_is_turned_off_the_users_way_and_undo_puts_it_back() {
+        let (mut h, _dir, folders) = pc();
+        let id = app(&h.engine.startup_apps(&folders), "Slack")
+            .tweak
+            .metadata
+            .id
+            .to_string();
+        let before = h.fake.snapshot();
+        h.engine.apply(&id).unwrap();
+        assert_eq!(task_state(&h, SLACK_TASK), Some(RawValue::dword(1)), "DisabledByUser");
+        let slack = app(&h.engine.startup_apps(&folders), "Slack").clone();
+        assert_eq!(slack.tweak.state, TweakState::Applied);
+        assert!(h
+            .engine
+            .journal_view()
+            .applied
+            .iter()
+            .any(|c| c.tweak_id == id && c.name == "Slack at sign-in"));
+        h.engine.revert(&id).unwrap();
+        assert_eq!(h.fake.snapshot(), before, "everything as it was");
+
+        // A state Windows already had is put back as it was.
+        h.fake.set_external(
+            Hive::CurrentUser,
+            &format!(r"{STORE_TASKS}\{SLACK_TASK}"),
+            "State",
+            RawValue::dword(2),
+        );
+        h.engine.startup_apps(&folders);
+        h.engine.apply(&id).unwrap();
+        h.engine.revert(&id).unwrap();
+        assert_eq!(task_state(&h, SLACK_TASK), Some(RawValue::dword(2)));
+    }
+
+    #[test]
+    fn a_store_app_can_be_turned_on_and_undone_after_a_restart() {
+        let (mut h, _dir, folders) = pc();
+        let id = app(&h.engine.startup_apps(&folders), "Xbox")
+            .turn_on
+            .metadata
+            .id
+            .to_string();
+        h.engine.apply(&id).unwrap();
+        assert_eq!(task_state(&h, XBOX_TASK), Some(RawValue::dword(2)), "Enabled");
+        assert_eq!(
+            app(&h.engine.startup_apps(&folders), "Xbox").tweak.state,
+            TweakState::Default,
+            "it starts now"
+        );
+        h.restart(Vec::new());
+        let results = h.engine.revert_all();
+        assert!(results.iter().any(|r| r.tweak_id == id && r.ok), "{results:?}");
+        assert_eq!(task_state(&h, XBOX_TASK), None);
+    }
+
+    #[test]
+    fn a_store_app_set_by_policy_or_with_a_strange_state_is_left_alone() {
+        let (mut h, _dir, folders) = pc();
+        let list = h.engine.startup_apps(&folders);
+        let corp = app(&list, "Corp Tool").clone();
+        let before = h.fake.snapshot();
+        for id in [&corp.tweak.metadata.id, &corp.turn_on.metadata.id] {
+            match h.engine.apply(id) {
+                Err(EngineError::Blocked { reason }) => assert_eq!(reason.code, BlockedCode::SetByPolicy),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(h.fake.snapshot(), before);
+
+        h.fake.set_external(
+            Hive::CurrentUser,
+            &format!(r"{STORE_TASKS}\{SLACK_TASK}"),
+            "State",
+            RawValue::dword(9),
+        );
+        let slack = app(&h.engine.startup_apps(&folders), "Slack").clone();
+        assert!(
+            matches!(slack.tweak.state, TweakState::Unknown { .. }),
+            "{:?}",
+            slack.tweak.state
+        );
+    }
+
+    #[test]
+    fn store_apps_that_cannot_be_found_are_said_not_skipped() {
+        let (mut h, _dir, folders) = pc();
+        h.fake.remove_key_external(Hive::CurrentUser, PACKAGES);
+        let list = h.engine.startup_apps(&folders);
+        assert_eq!(list.problems.len(), 1, "{:?}", list.problems);
+        assert!(list.problems[0].contains("Store apps"), "{:?}", list.problems);
     }
 
     #[test]

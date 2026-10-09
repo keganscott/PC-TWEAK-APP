@@ -501,6 +501,7 @@ describe("startup apps (catalogue H12)", () => {
       "Sample chat app",
       "Sample game launcher",
       "Sample notes",
+      "Sample Store app",
       "Sample updater",
       "SecurityHealth",
     ]);

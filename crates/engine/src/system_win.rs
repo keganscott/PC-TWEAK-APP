@@ -2375,7 +2375,29 @@ mod tests {
             );
         }
         println!("problems: {:?}", list.problems);
-        assert!(list.problems.is_empty(), "{:?}", list.problems);
+        // Store apps (NOTES N100): what Windows lists where the engine looks
+        // for the user's packages. A runner's account may have no packages
+        // at all; that is printed, not failed, as it is not this PC's user.
+        let packages = reg.subkey_names(Hive::CurrentUser, crate::startup::PACKAGES).unwrap();
+        println!("Store packages listed for this account: {}", packages.len());
+        for full in packages.iter().take(5) {
+            let root = reg
+                .read_value(
+                    Hive::CurrentUser,
+                    &format!(r"{}\{full}", crate::startup::PACKAGES),
+                    "PackageRootFolder",
+                )
+                .unwrap();
+            println!("  {full}: PackageRootFolder {:?}", root.and_then(|r| r.as_sz()));
+        }
+        let store = list.apps.iter().filter(|a| a.source == StartupSource::StoreApp).count();
+        println!("Store app startup tasks listed: {store}");
+        let others: Vec<_> = list
+            .problems
+            .iter()
+            .filter(|p| !(packages.is_empty() && p.contains("Store apps")))
+            .collect();
+        assert!(others.is_empty(), "{others:?}");
         let id = StartupToggle::new(StartupSource::UserRun, NAME).id().to_owned();
         let ours = list
             .apps

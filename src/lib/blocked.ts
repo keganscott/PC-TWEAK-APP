@@ -22,6 +22,7 @@ export const BLOCKED_HINT = {
   needed_by_installed_app: "An app on this PC relies on this, so PeakTweaks leaves it as it is.",
   game_not_installed: "PeakTweaks did not find this game on this PC. If it is installed, Check again on Home finds it.",
   protected_program: "PeakTweaks never turns off security software or a game's anti-cheat.",
+  set_by_policy: "An administrator or a policy on this PC set this, so only they can change it.",
 } as const satisfies Record<BlockedCode, string>;
 
 export function blockedHint(reason: BlockedReason): string {

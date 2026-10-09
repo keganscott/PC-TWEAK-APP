@@ -49,6 +49,7 @@ pub mod timeutil;
 pub mod transaction;
 pub mod tweaks;
 pub mod types;
+pub mod window_place;
 pub mod wmi;
 
 #[cfg(windows)]

@@ -4,6 +4,7 @@
 mod command_audit;
 mod commands;
 mod play;
+mod window_place;
 
 use peaktweaks_engine::env::License;
 use peaktweaks_engine::tweaks;
@@ -93,10 +94,20 @@ fn main() {
             if let Some(engine) = handle.shared() {
                 play::start(app.handle().clone(), engine, status.clone());
             }
+            // Placed where it was last closed, then shown. Without an engine
+            // nothing is remembered, but the window still shows its reason.
+            let store = handle
+                .shared()
+                .and_then(|e| e.lock().ok().map(|e| e.window_store()))
+                .unwrap_or_default();
+            if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
+                tauri::Manager::manage(app, window_place::restore(&window, store));
+            }
             tauri::Manager::manage(app, handle);
             tauri::Manager::manage(app, status);
             Ok(())
         })
+        .on_window_event(window_place::on_event)
         .invoke_handler(tauri::generate_handler![
             commands::engine_context,
             commands::list_tweaks,

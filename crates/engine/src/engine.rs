@@ -139,6 +139,7 @@ pub struct Engine {
     proof: Option<std::sync::Arc<crate::proof::service::ProofService>>,
     settings: crate::settings::Settings,
     settings_store: crate::settings::SettingsStore,
+    window_store: crate::window_place::WindowPlaceStore,
     offline_error: Option<String>,
     /// The ids the last `startup_apps` and `msi_devices` listed, with the
     /// name each was shown with. Only those can be applied, so an id the UI
@@ -177,6 +178,7 @@ impl Engine {
             proof: None,
             settings: crate::settings::Settings::default(),
             settings_store: crate::settings::SettingsStore::in_memory(),
+            window_store: crate::window_place::WindowPlaceStore::in_memory(),
             offline_error: None,
             listed: std::collections::HashMap::new(),
             _instance: None,
@@ -194,7 +196,14 @@ impl Engine {
     pub fn with_settings_in(mut self, dir: &super::secure_dir::TrustedDir) -> Self {
         self.settings_store = crate::settings::SettingsStore::in_dir(dir);
         self.settings = self.settings_store.load();
+        self.window_store = crate::window_place::WindowPlaceStore::in_dir(dir);
         self
+    }
+
+    /// Where the window's last place is kept, for the window to use without
+    /// waiting on the engine.
+    pub fn window_store(&self) -> crate::window_place::WindowPlaceStore {
+        self.window_store.clone()
     }
 
     pub fn settings(&self) -> crate::settings::Settings {

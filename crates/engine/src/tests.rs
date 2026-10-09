@@ -4605,3 +4605,46 @@ mod startup_apps {
         );
     }
 }
+
+/// Kegan's PC had a keyboard buffer of 18 events: the buffer tool keeps a
+/// size already smaller than its 50 and sets only the other one, and with
+/// both already small it reads as Already optimized.
+#[test]
+fn the_input_buffer_tool_never_raises_a_smaller_size() {
+    const KBD: &str = r"SYSTEM\CurrentControlSet\Services\kbdclass\Parameters";
+    const MOU: &str = r"SYSTEM\CurrentControlSet\Services\mouclass\Parameters";
+    let id = "input.queuesize";
+    let tweak = || -> Vec<Box<dyn Tweak>> { vec![Box::new(crate::tweaks::registry_values::INPUT_QUEUE)] };
+
+    let fake = Arc::new(FakeRegistry::new());
+    fake.set_external(Hive::LocalMachine, KBD, "KeyboardDataQueueSize", dword(18));
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(&fake, dir.path(), tweak(), true, Tier::Ultimate);
+    assert!(matches!(engine.list().unwrap()[0].state, TweakState::Default));
+    engine.apply(id).unwrap();
+    assert_eq!(
+        fake.read_value_for_test(Hive::LocalMachine, KBD, "KeyboardDataQueueSize"),
+        Some(dword(18))
+    );
+    assert_eq!(
+        fake.read_value_for_test(Hive::LocalMachine, MOU, "MouseDataQueueSize"),
+        Some(dword(50))
+    );
+    assert!(matches!(engine.list().unwrap()[0].state, TweakState::Applied));
+    engine.revert(id).unwrap();
+    assert_eq!(
+        fake.read_value_for_test(Hive::LocalMachine, KBD, "KeyboardDataQueueSize"),
+        Some(dword(18))
+    );
+    assert_eq!(
+        fake.read_value_for_test(Hive::LocalMachine, MOU, "MouseDataQueueSize"),
+        None
+    );
+
+    let fake = Arc::new(FakeRegistry::new());
+    fake.set_external(Hive::LocalMachine, KBD, "KeyboardDataQueueSize", dword(18));
+    fake.set_external(Hive::LocalMachine, MOU, "MouseDataQueueSize", dword(20));
+    let dir = tempfile::tempdir().unwrap();
+    let engine = build_engine(&fake, dir.path(), tweak(), true, Tier::Ultimate);
+    assert!(matches!(engine.list().unwrap()[0].state, TweakState::Foreign));
+}

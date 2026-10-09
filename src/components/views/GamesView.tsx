@@ -7,6 +7,7 @@ import type { SecurityFeature } from "../../generated/SecurityFeature";
 import { explain } from "../../lib/errors";
 import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import type { Op } from "../../store/store";
 import { Callout, Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
 const FEATURE: Record<SecurityFeature, string> = {
@@ -28,7 +29,8 @@ export function GamesView() {
   const audit = useStore((s) => s.audit);
   const technical = useTechnical();
   const sample = useStore((s) => s.sample);
-  const { selectTargetGame } = useActions();
+  const launchOps = useStore((s) => s.launchOps);
+  const { selectTargetGame, launchGame } = useActions();
   const readiness = audit?.antiCheat ?? null;
   const installs = audit?.env.gameInstalls ?? null;
   // The graphics chip matters only where the scanner looked at it: laptops
@@ -171,6 +173,9 @@ export function GamesView() {
                         : undefined
                     }
                     choice={choices.find((c) => c.gameId === g.gameId)}
+                    launchOp={launchOps[g.gameId]}
+                    onLaunch={() => void launchGame(g.gameId)}
+                    technical={technical}
                   />
                 </li>
               ))}
@@ -209,11 +214,17 @@ function GameCard({
   name,
   install,
   choice,
+  launchOp,
+  onLaunch,
+  technical,
 }: {
   readiness: GameReadiness;
   name: string;
   install: GameInstall | null | undefined;
   choice: GameGpuChoice | undefined;
+  launchOp: Op | undefined;
+  onLaunch: () => void;
+  technical: boolean;
 }) {
   const guidance = GAME_GUIDANCE[readiness.gameId];
   const s = readiness.status;
@@ -255,6 +266,30 @@ function GameCard({
         <p className="mt-3 text-sm wrap-anywhere">
           {install ? installText(install) : "Not found in the places PeakTweaks looks."}
         </p>
+      )}
+      {install?.steamApp != null && (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onLaunch}
+            disabled={launchOp?.status === "running"}
+            className="rounded-lg bg-violet px-4 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            Play {name}
+          </button>
+          <p className="text-xs text-ink-faint" role="status">
+            {launchOp?.status === "running"
+              ? "Asking Steam to start it…"
+              : launchOp?.status === "done"
+                ? "Steam was asked to start it."
+                : "Starts through Steam, as you, without PeakTweaks' administrator rights."}
+          </p>
+        </div>
+      )}
+      {launchOp?.status === "failed" && (
+        <div className="mt-2">
+          <ErrorCallout text={explain(launchOp.error)} technical={technical} />
+        </div>
       )}
       {choice && (
         <p className="mt-1 text-sm text-ink-muted">

@@ -135,6 +135,7 @@ fn main() {
             commands::optimize_drive,
             commands::list_startup_apps,
             commands::list_msi_devices,
+            commands::launch_game,
             commands::check_connection,
         ])
         .run(tauri::generate_context!())

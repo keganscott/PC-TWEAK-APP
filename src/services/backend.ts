@@ -60,6 +60,8 @@ export interface Backend {
   liveReadings(): Promise<LiveReadings>;
   /** Connection check (catalogue E4): round trips, jitter and lost echoes. Changes nothing. */
   checkConnection(): Promise<NetworkCheck>;
+  /** Ask Steam to start a game found in a Steam library, without PeakTweaks' administrator rights. */
+  launchGame(gameId: string): Promise<null>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

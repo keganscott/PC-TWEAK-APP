@@ -46,7 +46,8 @@
             "allow-list-startup-apps",
             "allow-list-msi-devices",
             "allow-live-readings",
-            "allow-check-connection"
+            "allow-check-connection",
+            "allow-launch-game"
           ]
         }
       ]

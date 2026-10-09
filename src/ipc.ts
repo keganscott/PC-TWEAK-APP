@@ -121,6 +121,8 @@ export const engine = {
   liveReadings: () => call<LiveReadings>("live_readings"),
   /** Echoes to the router and two public DNS servers (catalogue E4). Sends only echo requests; changes nothing. */
   checkConnection: () => call<NetworkCheck>("check_connection"),
+  /** Ask Steam to start a game found in a Steam library. The engine builds the link and opens it as the signed-in user, without PeakTweaks' administrator rights. */
+  launchGame: (gameId: string) => call<null>("launch_game", { gameId }),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

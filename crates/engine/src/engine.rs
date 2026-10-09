@@ -325,6 +325,18 @@ impl Engine {
         Ok(())
     }
 
+    /// Steam's link that starts `game_id`, for a game the last scan found in a
+    /// Steam library (`launch.rs`). Built from the engine's own findings; the
+    /// caller opens it un-elevated with `launch::open_unelevated`.
+    pub fn launch_link(&self, game_id: &str) -> Result<String> {
+        if !KNOWN_GAMES.iter().any(|g| g.id == game_id) {
+            return Err(EngineError::UnknownGame {
+                game_id: game_id.into(),
+            });
+        }
+        crate::launch::link_for(self.env.game_installs.as_deref(), game_id)
+    }
+
     pub fn env(&self) -> &SystemEnv {
         &self.env
     }

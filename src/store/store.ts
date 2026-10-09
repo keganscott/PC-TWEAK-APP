@@ -107,6 +107,8 @@ export interface State {
   driveOp: Op<DriveOptimization>;
   /** "Check the connection" (catalogue E4); keeps the last check for its card. */
   netcheckOp: Op<NetworkCheck>;
+  /** "Play" on a game found in a Steam library, per game id. */
+  launchOps: Readonly<Record<string, Op>>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   /** The game watcher (catalogue step 5); null until it first answers. */
@@ -151,6 +153,7 @@ export function initialState(sample: boolean): State {
     cleanupOp: IDLE,
     driveOp: IDLE,
     netcheckOp: IDLE,
+    launchOps: {},
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     play: null,
@@ -528,6 +531,20 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
         set((s) => ({ ...s, netcheckOp: { status: "done", value: result } }));
       } catch (e) {
         set((s) => ({ ...s, netcheckOp: failed(e) }));
+      }
+    },
+
+    /** Ask Steam to start a game found in a Steam library. Changes nothing
+     * and leaves no line in the change record. */
+    async launchGame(gameId: string) {
+      if (state.launchOps[gameId]?.status === "running") return;
+      const put = (op: Op) => set((s) => ({ ...s, launchOps: { ...s.launchOps, [gameId]: op } }));
+      put(RUNNING);
+      try {
+        await backend.launchGame(gameId);
+        put({ status: "done", value: null });
+      } catch (e) {
+        put(failed(e));
       }
     },
 

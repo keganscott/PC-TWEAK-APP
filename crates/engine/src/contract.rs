@@ -365,17 +365,36 @@ fn audit() -> SystemAudit {
         .with_game_folders(std::path::PathBuf::from("no-such-program-data"), None)
         .probe(true);
     // A game on a hard drive, so the sample shows that finding.
-    env.game_installs = Some(vec![crate::game_installs::GameInstall {
-        game_id: "fortnite".into(),
-        name: "Fortnite".into(),
-        path: r"D:\Epic Games\Fortnite".into(),
-        drive: "D:".into(),
-        disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
-            media: crate::hardware::DiskMedia::Hdd,
-            name: "Example HDD".into(),
-        }),
-        exe: Some(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe".into()),
-    }]);
+    env.game_installs = Some(vec![
+        crate::game_installs::GameInstall {
+            game_id: "fortnite".into(),
+            name: "Fortnite".into(),
+            path: r"D:\Epic Games\Fortnite".into(),
+            drive: "D:".into(),
+            disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
+                media: crate::hardware::DiskMedia::Hdd,
+                name: "Example HDD".into(),
+            }),
+            exe: Some(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe".into()),
+            steam_app: None,
+        },
+        // And one found in a Steam library, so the sample shows its Play button.
+        crate::game_installs::GameInstall {
+            game_id: "cs2".into(),
+            name: "Counter-Strike 2".into(),
+            path: r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive".into(),
+            drive: "C:".into(),
+            disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
+                media: crate::hardware::DiskMedia::Ssd,
+                name: "Example SSD".into(),
+            }),
+            exe: Some(
+                r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
+                    .into(),
+            ),
+            steam_app: Some(730),
+        },
+    ]);
     env.gpu_choices = Some(vec![crate::gpu_choice::GameGpuChoice {
         game_id: "fortnite".into(),
         name: "Fortnite".into(),

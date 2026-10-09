@@ -539,7 +539,23 @@ export const systemAudit = {
             "name": "Example HDD"
           }
         },
-        "exe": "D:\\Epic Games\\Fortnite\\FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe"
+        "exe": "D:\\Epic Games\\Fortnite\\FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe",
+        "steamApp": null
+      },
+      {
+        "gameId": "cs2",
+        "name": "Counter-Strike 2",
+        "path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive",
+        "drive": "C:",
+        "disk": {
+          "state": "yes",
+          "value": {
+            "media": "ssd",
+            "name": "Example SSD"
+          }
+        },
+        "exe": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe",
+        "steamApp": 730
       }
     ],
     "gpuChoices": [

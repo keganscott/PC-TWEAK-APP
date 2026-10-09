@@ -18,6 +18,7 @@ use peaktweaks_engine::drive_optimize::{self, DriveOptimization};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
 use peaktweaks_engine::journal::{now_ms, ActionDone, JournalEntry, OneTimeAction};
+use peaktweaks_engine::launch;
 use peaktweaks_engine::memory::{self, StandbyPurge};
 use peaktweaks_engine::netcheck::{self, NetworkCheck};
 use peaktweaks_engine::play::PlayStatus;
@@ -562,6 +563,20 @@ pub async fn list_startup_apps(engine: State<'_, EngineHandle>) -> Result<Startu
 #[tauri::command]
 pub async fn list_msi_devices(engine: State<'_, EngineHandle>) -> Result<MsiDeviceList> {
     blocking(&engine, |e| Ok(e.msi_devices())).await
+}
+
+/// Ask Steam to start a game the last scan found in a Steam library (new
+/// ideas #4). The engine builds Steam's link from its own findings; it is
+/// opened through the Windows desktop as the signed-in user, so the game never
+/// gets PeakTweaks' administrator rights (`launch.rs`). Changes nothing.
+#[tauri::command]
+pub async fn launch_game(engine: State<'_, EngineHandle>, game_id: String) -> Result<()> {
+    let link = blocking(&engine, move |e| e.launch_link(&game_id)).await?;
+    tauri::async_runtime::spawn_blocking(move || launch::open_unelevated(&link))
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("launch worker failed: {e}"),
+        })?
 }
 
 /// Delete the junk files in the chosen areas. Cannot be undone; the screen

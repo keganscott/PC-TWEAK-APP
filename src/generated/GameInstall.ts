@@ -16,4 +16,9 @@ drive: string, disk: Probe<BootDisk>,
  * it (`program_file`). Minecraft's is not looked for: it runs inside a
  * Java program the launcher picks.
  */
-exe: string | null, };
+exe: string | null, 
+/**
+ * The Steam app id it was found under, when it was found in a Steam
+ * library, so Steam can be asked to start it (`launch.rs`).
+ */
+steamApp: number | null, };

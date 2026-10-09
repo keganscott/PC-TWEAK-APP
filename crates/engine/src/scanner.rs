@@ -1289,6 +1289,7 @@ mod tests {
             drive: drive.into(),
             disk,
             exe: None,
+            steam_app: None,
         }
     }
 

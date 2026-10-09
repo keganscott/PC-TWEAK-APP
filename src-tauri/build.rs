@@ -29,6 +29,7 @@ const COMMANDS: &[&str] = &[
     "list_msi_devices",
     "live_readings",
     "check_connection",
+    "launch_game",
 ];
 
 fn main() {

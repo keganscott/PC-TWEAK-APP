@@ -136,6 +136,7 @@ mod tests {
                 media: DiskMedia::Ssd,
                 name: "disk".into(),
             }),
+            steam_app: None,
         }
     }
 

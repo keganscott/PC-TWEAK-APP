@@ -49,6 +49,7 @@ fn install(game_id: &str, exe: Option<&str>) -> GameInstall {
         drive: "D:".into(),
         disk: Probe::unknown("not looked up in tests"),
         exe: exe.map(str::to_owned),
+        steam_app: None,
     }
 }
 
@@ -784,4 +785,23 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
     println!(
         "per-game tools on this PC: 4 applied, backup imported with reg.exe, 4 undone; keys there before: {keys_before:?}"
     );
+}
+
+#[test]
+fn play_links_come_from_the_engine_s_own_scan_and_only_for_steam_installs() {
+    let steam = GameInstall {
+        steam_app: Some(730),
+        ..install("cs2", None)
+    };
+    let mut r = rig(Vec::new(), Some(vec![steam, install("fortnite", None)]));
+    assert_eq!(r.engine.launch_link("cs2").unwrap(), "steam://rungameid/730");
+    assert!(r.engine.launch_link("fortnite").is_err(), "not found through Steam");
+    assert!(matches!(
+        r.engine.launch_link("steam://rungameid/1"),
+        Err(EngineError::UnknownGame { .. })
+    ));
+    // A game that is no longer found loses its link at the next scan.
+    *r.installs.lock().unwrap() = Some(Vec::new());
+    r.engine.rescan_fresh();
+    assert!(r.engine.launch_link("cs2").is_err());
 }

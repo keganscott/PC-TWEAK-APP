@@ -128,6 +128,12 @@ function commandText(what: string, detail: string): Omit<ErrorText, "detail"> {
           : null,
     };
   }
+  if (what === "Steam") {
+    return {
+      title: "PeakTweaks could not ask Steam to start the game.",
+      hint: "Start it from Steam instead. PeakTweaks only starts games through Steam, never with its own administrator rights.",
+    };
+  }
   if (what === "PowerShell") return { title: "A Windows tool did not finish.", hint: timedOut ? busy : null };
   return { title: `${what} did not finish.`, hint: timedOut ? busy : null };
 }

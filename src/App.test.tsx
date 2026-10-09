@@ -726,8 +726,8 @@ describe("review regressions", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Games");
     const buttons = screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent);
-    // The sample PC has Fortnite installed, and the picker says so.
-    expect(buttons).toEqual(["Fortnite on this PC", "Valorant", "Counter-Strike 2", "Apex Legends", "Call of Duty"]);
+    // The sample PC has Fortnite and Counter-Strike 2 installed, and the picker says so.
+    expect(buttons).toEqual(["Fortnite on this PC", "Valorant", "Counter-Strike 2 on this PC", "Apex Legends", "Call of Duty"]);
     expect(screen.getByRole("radio", { name: "Fortnite on this PC" })).toBeTruthy();
     const list = screen.getByLabelText("Or another game") as HTMLSelectElement;
     // A placeholder, then 25 games in name order, none of them a button.
@@ -755,6 +755,38 @@ describe("review regressions", () => {
     await userEvent.click(screen.getByRole("button", { name: "No main game" }));
     await waitFor(() => expect(list.value).toBe(""));
     expect(screen.queryByRole("button", { name: "No main game" })).toBeNull();
+  });
+
+  it("a game found in a Steam library has a Play button that asks Steam to start it", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const launch = vi.spyOn(backend, "launchGame");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const card = async (name: string) =>
+      (await screen.findAllByRole("heading", { level: 3 })).find((h) => h.textContent === name)!.closest("li") as HTMLElement;
+    // Fortnite is found, but not through Steam: no Play button.
+    expect(within(await card("Fortnite")).queryByRole("button", { name: /^Play/ })).toBeNull();
+    const cs2 = await card("Counter-Strike 2");
+    expect(within(cs2).getByText(/without PeakTweaks' administrator rights/)).toBeTruthy();
+    await userEvent.click(within(cs2).getByRole("button", { name: "Play Counter-Strike 2" }));
+    expect(await within(cs2).findByText("Steam was asked to start it.")).toBeTruthy();
+    expect(launch).toHaveBeenCalledWith("cs2");
+  });
+
+  it("a Play button that Steam could not be reached for says so", async () => {
+    renderApp(
+      createMockBackend({
+        gateOpen: true,
+        failures: { launchGame: { kind: "command", what: "Steam", exitCode: null, detail: "could not find the Windows desktop: SAMPLE" } },
+      }),
+    );
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const heading = (await screen.findAllByRole("heading", { level: 3 })).find((h) => h.textContent === "Counter-Strike 2")!;
+    const cs2 = heading.closest("li") as HTMLElement;
+    await userEvent.click(within(cs2).getByRole("button", { name: "Play Counter-Strike 2" }));
+    expect(await within(cs2).findByText("PeakTweaks could not ask Steam to start the game.")).toBeTruthy();
   });
 
   it("the proof guide walks before runs, one change, then after runs", async () => {

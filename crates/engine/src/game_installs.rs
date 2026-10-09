@@ -53,6 +53,9 @@ pub struct GameInstall {
     /// it (`program_file`). Minecraft's is not looked for: it runs inside a
     /// Java program the launcher picks.
     pub exe: Option<String>,
+    /// The Steam app id it was found under, when it was found in a Steam
+    /// library, so Steam can be asked to start it (`launch.rs`).
+    pub steam_app: Option<u32>,
 }
 
 /// The drive letter a Windows path is on, `"D:"`, if it starts with one.
@@ -149,38 +152,40 @@ fn probe_all_game_installs(
     launchers: &Launchers,
     disk: &dyn Fn(&str) -> Probe<BootDisk>,
 ) -> Vec<GameInstall> {
-    let mut found: Vec<(&str, &str, PathBuf)> = Vec::new();
+    let mut found: Vec<(&str, &str, PathBuf, Option<u32>)> = Vec::new();
     let manifests = program_data.join(r"Epic\EpicGamesLauncher\Data\Manifests");
     if let Some(loc) = fortnite_from_epic(&manifests) {
-        found.push(("fortnite", "Fortnite", PathBuf::from(loc)));
+        found.push(("fortnite", "Fortnite", PathBuf::from(loc), None));
     }
     if let Some(profile) = profile {
         let roblox = profile.join(r"AppData\Local\Roblox\Versions");
         if roblox.is_dir() {
-            found.push(("roblox", "Roblox", roblox));
+            found.push(("roblox", "Roblox", roblox, None));
         }
         let minecraft = profile.join(r"AppData\Roaming\.minecraft");
         if minecraft.is_dir() {
-            found.push(("minecraft", "Minecraft (Java Edition)", minecraft));
+            found.push(("minecraft", "Minecraft (Java Edition)", minecraft, None));
         }
     }
     if let Some(loc) = valorant_from_riot(program_data) {
-        found.push(("valorant", "Valorant", PathBuf::from(loc)));
+        found.push(("valorant", "Valorant", PathBuf::from(loc), None));
     }
     let libraries = launchers.steam.as_deref().map(steam_libraries).unwrap_or_default();
     for &(id, apps) in STEAM_GAMES {
-        let on_steam = apps.iter().find_map(|&app| steam_app(&libraries, app));
+        let on_steam = apps
+            .iter()
+            .find_map(|&app| Some((steam_app(&libraries, app)?, Some(app))));
         let loc = on_steam.or_else(|| {
             let ea = launchers.apex_ea.as_deref().filter(|_| id == "apex")?;
-            ea.is_dir().then(|| windows_path(&ea.to_string_lossy()))
+            ea.is_dir().then(|| (windows_path(&ea.to_string_lossy()), None))
         });
-        if let Some(loc) = loc {
-            found.push((id, crate::env::game_name(id), PathBuf::from(loc)));
+        if let Some((loc, app)) = loc {
+            found.push((id, crate::env::game_name(id), PathBuf::from(loc), app));
         }
     }
     found
         .into_iter()
-        .map(|(id, name, path)| {
+        .map(|(id, name, path, steam_app)| {
             let path = path.to_string_lossy().into_owned();
             let drive = drive_of(&path);
             GameInstall {
@@ -193,6 +198,7 @@ fn probe_all_game_installs(
                 },
                 drive: drive.unwrap_or_default(),
                 path,
+                steam_app,
             }
         })
         .collect()
@@ -662,6 +668,12 @@ mod tests {
             ]
         );
         assert!(found[1].path.ends_with("Grand Theft Auto V"), "{}", found[1].path);
+        let apps: Vec<Option<u32>> = found.iter().map(|g| g.steam_app).collect();
+        assert_eq!(
+            apps,
+            [Some(570), Some(271_590), Some(2_767_030)],
+            "the id each was found under"
+        );
     }
 
     #[test]

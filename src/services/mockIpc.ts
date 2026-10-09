@@ -402,6 +402,21 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         emit("netcheck", "Checking the connection");
         return { ...clone(fx.networkCheck), unixMs: Date.now() };
       }),
+    launchGame: (gameId) =>
+      reply("launchGame", [gameId], () => {
+        if (!fx.games.some((g) => g.id === gameId)) throw new EngineFault({ kind: "unknown_game", gameId });
+        const install = audit().env.gameInstalls?.find((i) => i.gameId === gameId);
+        if (install?.steamApp == null) {
+          throw new EngineFault({
+            kind: "command",
+            what: "Steam",
+            exitCode: null,
+            detail: install ? `${install.name} was not found in a Steam library` : `${gameId} was not found on this PC`,
+          });
+        }
+        // SAMPLE: nothing is started.
+        return null;
+      }),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {
         emit("drive", "Optimizing the Windows drive");

@@ -76,8 +76,13 @@ export function AppShell({
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar busOpen={busOpen} onToggleBus={toggleBus} />
           <main className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto px-9 pt-2 pb-10 print:overflow-visible print:p-0">
-            <RefreshBanner />
-            {children}
+            {/* Centred, and wide enough to use a maximised window on a large
+                screen; each view widens at 2xl rather than staying a narrow
+                column with black beside it. */}
+            <div className="mx-auto w-full max-w-[1600px]">
+              <RefreshBanner />
+              {children}
+            </div>
           </main>
           <ExecutionBus open={busOpen} />
         </div>

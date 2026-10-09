@@ -46,7 +46,7 @@ export function BackupsView() {
           </Button>
         }
       />
-      <div className="flex max-w-4xl flex-col gap-5">
+      <div className="flex max-w-4xl flex-col gap-5 2xl:max-w-6xl">
         {revertAllOp.status === "failed" && <ErrorCallout text={explain(revertAllOp.error)} technical={technical} />}
         {revertAllOp.status === "done" && revertAllOp.value.some((r) => !r.ok) && (
           <Callout tone="warn" title="Some changes could not be undone.">

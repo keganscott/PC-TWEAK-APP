@@ -42,7 +42,7 @@ export function GamesView() {
         title="Games"
         description="Pick the game you play most. PeakTweaks then holds back any change that game's anti-cheat would not accept."
       />
-      <div className="flex max-w-4xl flex-col gap-5">
+      <div className="flex max-w-4xl flex-col gap-5 2xl:max-w-6xl">
         <Card>
           <fieldset>
             <legend className="mb-3 font-bold">Main game</legend>

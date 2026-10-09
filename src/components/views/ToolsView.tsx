@@ -77,7 +77,7 @@ export function ToolsView() {
           </label>
         }
       />
-      <div className="flex max-w-4xl flex-col gap-6">
+      <div className="flex max-w-4xl flex-col gap-6 2xl:max-w-none">
         {gateOpen === false && (
           <Callout
             tone="warn"
@@ -103,7 +103,7 @@ export function ToolsView() {
               </h2>
               <ApplyRecommended ids={recommendedIds(list)} gateOpen={gateOpen} />
             </div>
-            <ul className="flex flex-col gap-3">
+            <ul className="grid items-start gap-3 2xl:grid-cols-2">
               {list
                 .filter((t) => !notForThisPc(t))
                 .map((t) => (
@@ -163,7 +163,7 @@ function DevicesSection({ gateOpen }: { gateOpen: boolean | null }) {
         <p className="text-sm text-ink-muted">No graphics card or network adapter here can take this change.</p>
       )}
       {list && list.devices.length > 0 && (
-        <ul className="flex flex-col gap-3">
+        <ul className="grid items-start gap-3 2xl:grid-cols-2">
           {list.devices.map((d) => (
             <li key={d.tweak.id}>
               <TweakCard tweak={d.tweak} gateOpen={gateOpen} />
@@ -212,7 +212,7 @@ function OneTimeActions() {
         </h2>
         <p className="mt-1 text-sm text-ink-muted">These change no setting, so there is nothing to undo.</p>
       </div>
-      <ul className="flex flex-col gap-3">
+      <ul className="grid items-start gap-3 2xl:grid-cols-2">
         <li>
           <StandbyCard />
         </li>
@@ -359,7 +359,7 @@ function CleanupCard() {
 
       <fieldset className="mt-3" disabled={running}>
         <legend className="sr-only">What to clear</legend>
-        <ul className="flex flex-col gap-3">
+        <ul className="grid items-start gap-3 2xl:grid-cols-2">
           {AREAS.map(({ area, name, note }) => {
             const size = sizes?.find((s) => s.area === area);
             return (

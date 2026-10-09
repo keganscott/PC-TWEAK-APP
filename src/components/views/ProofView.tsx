@@ -49,7 +49,7 @@ export function ProofView() {
           <ErrorCallout text={explain(loadError)} technical={technical} />
         </div>
       )}
-      <div className="grid max-w-6xl gap-5 lg:grid-cols-[18rem_1fr]">
+      <div className="grid max-w-6xl gap-5 lg:grid-cols-[18rem_1fr] 2xl:max-w-none">
         <SessionList sessions={sessions} selected={selected} onSelect={(id) => (setSelected(id), setCreating(false))} />
         <div>
           {creating ? (

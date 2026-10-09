@@ -304,6 +304,15 @@ fn nvidia(e: crate::nvapi::NvError) -> EngineError {
                 "This PC has no NVIDIA graphics card.",
             ),
         },
+        // A driver without the setting is an answer about this PC too: the
+        // tool is not offered, rather than failing on Apply (NOTES N86).
+        crate::nvapi::NvError::UnknownSetting(id) => EngineError::Blocked {
+            reason: crate::types::BlockedReason::new(
+                crate::types::BlockedCode::HardwareUnsupported,
+                "The NVIDIA driver on this PC does not have this setting.",
+            )
+            .with_trigger(format!("0x{id:08X}")),
+        },
         crate::nvapi::NvError::Failed(detail) => fail("NVIDIA settings", detail),
     }
 }
@@ -1197,6 +1206,22 @@ mod tests {
             Ok(SysState::Dword { .. } | SysState::Absent) => {}
             Err(EngineError::Blocked { reason }) => {
                 assert_eq!(reason.code, crate::types::BlockedCode::HardwareUnsupported)
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A driver without a setting (Kegan's PC, NvAPI code -160 on the Low
+    /// Latency Mode values) blocks the tool with a plain reason instead of
+    /// failing the Apply.
+    #[test]
+    fn a_setting_the_nvidia_driver_lacks_is_not_available_not_a_failure() {
+        match nvidia(crate::nvapi::NvError::UnknownSetting(
+            crate::tweaks::nvidia::LOW_LATENCY_STATE,
+        )) {
+            EngineError::Blocked { reason } => {
+                assert_eq!(reason.code, crate::types::BlockedCode::HardwareUnsupported);
+                assert_eq!(reason.trigger.as_deref(), Some("0x0005F543"));
             }
             other => panic!("{other:?}"),
         }

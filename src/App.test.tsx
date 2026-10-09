@@ -848,6 +848,34 @@ describe("review regressions", () => {
     expect(screen.getByRole("button", { name: "Undo all" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("Copy summary puts a labelled list of this PC and its changes on the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      renderApp(createMockBackend({ gateOpen: true }));
+      await screen.findByRole("heading", { name: "Home", level: 1 });
+      await goTo("Backups");
+      await userEvent.click(screen.getByRole("button", { name: "Copy summary" }));
+      expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+      const text = String(writeText.mock.calls[0]?.[0]);
+      expect(text.split("\n")[0]).toBe("SAMPLE DATA: made up for testing, not a real PC");
+      expect(text).toMatch(/^Processor: .+, \d+ cores/m);
+      expect(text).toMatch(/^Changes in place \(\d+\)$/m);
+    } finally {
+      Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    }
+  });
+
+  it("Copy summary shows the text to select by hand when the clipboard refuses", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    await userEvent.click(screen.getByRole("button", { name: "Copy summary" }));
+    const box = await screen.findByRole("textbox", { name: "Summary of this PC and its changes" });
+    expect((box as HTMLTextAreaElement).value).toContain("PeakTweaks summary, ");
+  });
+
   it("Backups says where the undo files are for a PC that will not start", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

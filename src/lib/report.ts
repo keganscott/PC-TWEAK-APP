@@ -1,0 +1,40 @@
+// A plain-text summary of this PC and what PeakTweaks changed, for the user
+// to paste into a message when asking for help. It is only ever put on the
+// clipboard by the user's click; nothing is sent anywhere. No account names,
+// SIDs, paths or serial numbers go in it.
+
+import type { AppliedChange } from "../generated/AppliedChange";
+import type { HardwareReport } from "../generated/HardwareReport";
+import type { Probe } from "../generated/Probe";
+import type { TweakView } from "../generated/TweakView";
+import { formatGiB } from "./format";
+
+export function summaryText(
+  hardware: HardwareReport | null,
+  applied: readonly AppliedChange[],
+  tweaks: readonly TweakView[],
+  at: Date,
+  sample = false,
+): string {
+  const read = <T>(p: Probe<T> | undefined, show: (v: T) => string) =>
+    !p ? "not read yet" : p.state === "yes" ? show(p.value) : "not read";
+  const drifted = tweaks.filter((t) => t.state.status === "drifted");
+  const list = (names: string[]) => (names.length ? names.map((n) => `- ${n}`) : ["- none"]);
+  return [
+    ...(sample ? ["SAMPLE DATA: made up for testing, not a real PC"] : []),
+    `PeakTweaks summary, ${at.toISOString().slice(0, 10)}`,
+    "",
+    "This PC",
+    `Windows: ${read(hardware?.os, (os) => `${os.caption} (build ${os.build})`)}`,
+    `Processor: ${read(hardware?.cpu, (c) => `${c.name.trim()}, ${c.cores} cores, ${c.logicalProcessors} threads`)}`,
+    `Graphics: ${read(hardware?.gpus, (gs) => (gs.length ? gs.map((g) => `${g.name} (${formatGiB(g.dedicatedVramBytes)})`).join("; ") : "none found"))}`,
+    `Memory: ${read(hardware?.memory, (m) => formatGiB(m.installedBytes))}`,
+    `Display: ${read(hardware?.display, (d) => `${d.width} x ${d.height} at ${d.currentHz} Hz`)}`,
+    "",
+    `Changes in place (${applied.length})`,
+    ...list(applied.map((c) => c.name)),
+    ...(drifted.length
+      ? ["", `Set back since PeakTweaks changed them (${drifted.length})`, ...list(drifted.map((t) => t.name))]
+      : []),
+  ].join("\n");
+}

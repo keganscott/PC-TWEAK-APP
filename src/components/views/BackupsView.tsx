@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Undo2 } from "lucide-react";
+import { Check, ClipboardCopy, Undo2 } from "lucide-react";
 
 import type { ActionDone } from "../../generated/ActionDone";
 import type { AppliedChange } from "../../generated/AppliedChange";
@@ -8,6 +8,7 @@ import type { OneTimeAction } from "../../generated/OneTimeAction";
 import type { Record as JournalRecord } from "../../generated/Record";
 import { explain } from "../../lib/errors";
 import { formatBytes, formatDateTime, formatDuration } from "../../lib/format";
+import { summaryText } from "../../lib/report";
 import { describeEffect, describeItem, describeState } from "../../lib/systemItems";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge } from "../ui/primitives";
@@ -21,6 +22,10 @@ export function BackupsView() {
   const technical = useTechnical();
   const { revertAll } = useActions();
   const [confirming, setConfirming] = useState(false);
+  const hardware = useStore((s) => s.audit?.env.hardware ?? null);
+  // "copied", or the text itself when the clipboard refused it, so it can
+  // still be selected by hand.
+  const [copy, setCopy] = useState<{ copied: true } | { copied: false; text: string } | null>(null);
 
   // From the journal, not the tweak list: every change with an apply still on
   // record, including PeakTweaks' own and any this version no longer ships.
@@ -29,24 +34,54 @@ export function BackupsView() {
   const name = (id: string) =>
     tweaks.find((t) => t.id === id)?.name ?? applied.find((c) => c.tweakId === id)?.name ?? id;
 
+  const copySummary = async () => {
+    const text = summaryText(hardware, applied, tweaks, new Date(), sample);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopy({ copied: true });
+    } catch {
+      setCopy({ copied: false, text });
+    }
+  };
+
   return (
     <>
       <PageHeader
         title="Backups"
         description="Everything PeakTweaks changed, the restore points it made, and the way back."
         actions={
-          <Button
-            variant="danger"
-            icon={<Undo2 aria-hidden className="size-4" />}
-            disabled={applied.length === 0}
-            busy={revertAllOp.status === "running"}
-            onClick={() => setConfirming(true)}
-          >
-            Undo all
-          </Button>
+          <>
+            <Button
+              icon={copy?.copied ? <Check aria-hidden className="size-4" /> : <ClipboardCopy aria-hidden className="size-4" />}
+              title="A plain-text list of this PC and the changes in place, to paste into a message. Nothing is sent anywhere."
+              onClick={() => void copySummary()}
+            >
+              {copy?.copied ? "Copied" : "Copy summary"}
+            </Button>
+            <Button
+              variant="danger"
+              icon={<Undo2 aria-hidden className="size-4" />}
+              disabled={applied.length === 0}
+              busy={revertAllOp.status === "running"}
+              onClick={() => setConfirming(true)}
+            >
+              Undo all
+            </Button>
+          </>
         }
       />
       <div className="flex max-w-4xl flex-col gap-5 2xl:max-w-6xl">
+        {copy && !copy.copied && (
+          <Callout tone="warn" title="Windows did not allow copying. Select the text below and copy it yourself.">
+            <textarea
+              readOnly
+              aria-label="Summary of this PC and its changes"
+              className="mt-2 h-48 w-full rounded-lg border border-line bg-transparent p-2 font-mono text-xs"
+              value={copy.text}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </Callout>
+        )}
         {revertAllOp.status === "failed" && <ErrorCallout text={explain(revertAllOp.error)} technical={technical} />}
         {revertAllOp.status === "done" && revertAllOp.value.some((r) => !r.ok) && (
           <Callout tone="warn" title="Some changes could not be undone.">

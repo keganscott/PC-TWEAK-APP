@@ -236,6 +236,27 @@ try {
   });
   await show("Backups");
 
+  await step("Copy summary describes this machine", async () => {
+    // WebView2 may or may not grant the clipboard write; either outcome is a
+    // pass, and which one is printed. Reading the clipboard back would raise
+    // a permission prompt, so the text is checked only when it is shown.
+    await driver.findElement(By.xpath("//button[normalize-space()='Copy summary']")).click();
+    await driver.wait(
+      until.elementLocated(
+        By.xpath("//button[normalize-space()='Copied'] | //textarea[@aria-label='Summary of this PC and its changes']"),
+      ),
+      10_000,
+    );
+    const boxes = await driver.findElements(By.css("textarea[aria-label='Summary of this PC and its changes']"));
+    if (boxes.length) {
+      const summary = await boxes[0].getAttribute("value");
+      console.log(`\n===== Copy summary (clipboard refused, shown to copy by hand) =====\n${summary}\n`);
+      assert.ok(summary.startsWith("PeakTweaks summary, "), "a real PC's summary has no SAMPLE line");
+    } else {
+      console.log("\n===== Copy summary: copied to the clipboard =====\n");
+    }
+  });
+
   // N10: the permission boundary, probed from inside the page the way injected
   // script would. This build's capability is the shipped one minus
   // allow-revert-all (tauri.e2e.conf.json; command_audit.rs keeps them in sync).

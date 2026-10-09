@@ -45,6 +45,7 @@
             "allow-optimize-drive",
             "allow-list-startup-apps",
             "allow-list-msi-devices",
+            "allow-live-readings",
             "allow-check-connection"
           ]
         }

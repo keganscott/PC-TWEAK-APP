@@ -22,6 +22,7 @@ import type { Probe } from "../../generated/Probe";
 import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
+import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
@@ -55,6 +56,7 @@ export function HomeView() {
       {auditOp.status === "failed" && <ErrorCallout text={explain(auditOp.error)} technical={technical} />}
       <LastChange />
       <DriftCheck />
+      <Reminders />
       <section aria-label="Safety and next step" className="grid gap-3.5 lg:grid-cols-[1.5fr_1fr] print:hidden">
         <NextStep />
         <div className="flex flex-col gap-3.5">
@@ -919,6 +921,65 @@ function DriftCheck() {
           <p className="mt-1.5 text-ink-muted">Make a restore point first, in the step below.</p>
         )}
       </Callout>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gentle reminders
+// ---------------------------------------------------------------------------
+
+function Reminders() {
+  const settings = useStore((s) => s.settings);
+  const audit = useStore((s) => s.audit);
+  const journal = useStore((s) => s.journal);
+  const saving = useStore((s) => s.settingsOp.status === "running");
+  const { saveSettings } = useActions();
+  const navigate = useNavigate();
+  const now = Date.now();
+  const due = dueReminders(settings, audit, journal, now);
+  if (!settings || due.length === 0) return null;
+
+  const later = (kind: Reminder["kind"]) => void saveSettings(snooze(settings, kind, Date.now()));
+  const notNow = (kind: Reminder["kind"]) => (
+    <Button variant="ghost" busy={saving} onClick={() => later(kind)}>
+      Not now
+    </Button>
+  );
+  return (
+    <section aria-label="Reminders" className="flex flex-col gap-3 print:hidden">
+      {due.map((r) =>
+        r.kind === "cleanup" ? (
+          <Callout
+            key="cleanup"
+            tone="info"
+            title={
+              r.lastUnixMs === null
+                ? "Junk files have not been cleared with PeakTweaks yet."
+                : `Junk files were last cleared ${Math.floor((now - r.lastUnixMs) / DAY_MS)} days ago.`
+            }
+            action={
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => navigate("tools")}>Open Tools</Button>
+                {notNow("cleanup")}
+              </div>
+            }
+          >
+            <p>
+              Clear out junk files is in Tools, under One-time actions. It shows how much each area holds before it deletes
+              anything.
+            </p>
+          </Callout>
+        ) : (
+          <Callout key={`driver-${r.card}`} tone="info" title={`The ${r.card} driver is dated ${r.date}.`} action={notNow("driver")}>
+            <p>
+              That is more than six months ago. {r.maker}'s own app or website shows whether a newer driver is out.
+              PeakTweaks does not install drivers.
+            </p>
+          </Callout>
+        ),
+      )}
+      <p className="text-xs text-ink-faint">Not now puts a reminder off for a month. Settings can turn them off.</p>
     </section>
   );
 }

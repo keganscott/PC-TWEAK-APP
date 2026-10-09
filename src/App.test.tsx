@@ -877,6 +877,29 @@ describe("review regressions", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("Home gently reminds about junk files and an old driver, and Not now or Settings put them away", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    // The sample change record cleared junk files in 2023; the sample driver is dated 2025-08-20.
+    const reminders = await screen.findByRole("region", { name: "Reminders" });
+    expect(within(reminders).getByText(/^Junk files were last cleared \d+ days ago\.$/)).toBeTruthy();
+    expect(within(reminders).getByText("The Example GPU driver is dated 2025-08-20.")).toBeTruthy();
+    expect(within(reminders).getByText(/PeakTweaks does not install drivers/)).toBeTruthy();
+
+    await userEvent.click(within(reminders).getAllByRole("button", { name: "Not now" })[0]!);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ cleanupReminderSnoozedUntil: expect.any(Number) })));
+    await waitFor(() => expect(screen.queryByText(/^Junk files were last cleared/)).toBeNull());
+    expect(screen.getByText("The Example GPU driver is dated 2025-08-20.")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: /Gentle reminders on Home/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Reminders" })).toBeNull());
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ remindersOff: true }));
+  });
+
   it("Backups lists the change PeakTweaks makes for a restore point, and Undo all covers it", async () => {
     renderApp(createMockBackend({ gateOpen: false }));
     await userEvent.click(await screen.findByRole("button", { name: "Make a restore point" }));

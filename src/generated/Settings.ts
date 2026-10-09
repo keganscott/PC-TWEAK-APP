@@ -21,4 +21,19 @@ gamingMode: boolean,
  * Ask Windows for its finest timer while a known game runs (`play.rs`).
  * Off unless the user turns it on.
  */
-gameTimer: boolean, };
+gameTimer: boolean, 
+/**
+ * The gentle reminders on Home (junk cleanup due, an old graphics
+ * driver) are turned off. On unless the user turns them off.
+ */
+remindersOff: boolean, 
+/**
+ * "Not now" on the junk cleanup reminder: not shown again before this
+ * time (Unix ms).
+ */
+cleanupReminderSnoozedUntil: number | null, 
+/**
+ * "Not now" on the graphics driver reminder: not shown again before
+ * this time (Unix ms).
+ */
+driverReminderSnoozedUntil: number | null, };

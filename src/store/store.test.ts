@@ -142,7 +142,7 @@ describe("changes", () => {
   it("a failed settings save reports false and keeps the stored settings", async () => {
     const { store } = await booted({ failures: { setSettings: { kind: "storage", path: "p", detail: "d" } } });
     const before = store.getState().settings;
-    expect(await store.actions.saveSettings({ language: "technical", rigClassOverride: "high", welcomeSeen: true, gamingMode: false, gameTimer: false })).toBe(false);
+    expect(await store.actions.saveSettings({ language: "technical", rigClassOverride: "high", welcomeSeen: true, gamingMode: false, gameTimer: false, remindersOff: false, cleanupReminderSnoozedUntil: null, driverReminderSnoozedUntil: null })).toBe(false);
     expect(store.getState().settings).toBe(before);
     expect(store.getState().settingsOp.status).toBe("failed");
   });

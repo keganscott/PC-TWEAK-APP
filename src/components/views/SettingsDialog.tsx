@@ -23,6 +23,7 @@ export function SettingsDialog({
   const { saveSettings } = useActions();
   const [language, setLanguage] = useState<Language>("plain");
   const [rig, setRig] = useState<RigClass | "">("");
+  const [reminders, setReminders] = useState(true);
   const rigId = useId();
 
   // Start from what is stored each time the dialog opens.
@@ -30,13 +31,14 @@ export function SettingsDialog({
     if (open && settings) {
       setLanguage(settings.language);
       setRig(settings.rigClassOverride ?? "");
+      setReminders(!settings.remindersOff);
     }
   }, [open, settings]);
 
   const save = async () => {
     // Stay open on failure so the error is seen next to what was chosen.
     // Only what this dialog edits changes; anything else stored is kept.
-    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null }))) onClose();
+    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null, remindersOff: !reminders }))) onClose();
   };
 
   return (
@@ -100,6 +102,20 @@ export function SettingsDialog({
             Changes defaults and wording only. It never turns off a safety check.
           </p>
         </div>
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={reminders}
+            onChange={(e) => setReminders(e.target.checked)}
+            className="mt-1 accent-accent"
+          />
+          <span>
+            <span className="font-medium">Gentle reminders on Home</span>
+            <span className="block text-xs text-ink-faint">
+              When junk files were last cleared a month ago or more, and when a graphics driver is more than six months old.
+            </span>
+          </span>
+        </label>
         <div>
           <Button variant="ghost" onClick={onShowWelcome}>
             Show the welcome again

@@ -1009,7 +1009,10 @@ export const systemAudit = {
     "language": "plain",
     "welcomeSeen": false,
     "gamingMode": false,
-    "gameTimer": false
+    "gameTimer": false,
+    "remindersOff": false,
+    "cleanupReminderSnoozedUntil": null,
+    "driverReminderSnoozedUntil": null
   },
   "effectiveRigClass": "mid"
 } satisfies SystemAudit;

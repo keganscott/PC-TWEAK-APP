@@ -34,6 +34,10 @@ use crate::types::{
 #[derive(Debug, Clone, Copy)]
 pub enum Data {
     Dword(u32),
+    /// A `REG_DWORD` of at most `max`: a smaller number already there (from 1
+    /// up) counts as set and is left alone, so Apply never raises a value
+    /// the user lowered further themselves; anything else is set to `max`.
+    DwordAtMost(u32),
     /// Written as `REG_SZ`.
     Str(&'static str),
     /// A `REG_SZ` holding a decimal number, of which only the `clear` bits are
@@ -107,6 +111,15 @@ pub(crate) const fn dword(key: &'static str, value: &'static str, data: u32) -> 
     }
 }
 
+const fn dword_at_most(key: &'static str, value: &'static str, max: u32) -> Setting {
+    Setting {
+        key,
+        value,
+        data: Data::DwordAtMost(max),
+        absent_matches: false,
+    }
+}
+
 const fn string(key: &'static str, value: &'static str, data: &'static str) -> Setting {
     Setting {
         key,
@@ -157,6 +170,7 @@ impl ValueTweak {
         for s in self.settings {
             let shown = match s.data {
                 Data::Dword(n) => format!(r"{root}\{}\{} = {n}", s.key, s.value),
+                Data::DwordAtMost(n) => format!(r"{root}\{}\{} <= {n}", s.key, s.value),
                 Data::Str(v) => format!(r#"{root}\{}\{} = "{v}""#, s.key, s.value),
                 Data::StrClearBits { clear, .. } => format!(r"{root}\{}\{} &= ~{clear}", s.key, s.value),
                 Data::ListEntry { name, value } => format!(r"{root}\{}\{}: {name}={value};", s.key, s.value),
@@ -179,6 +193,7 @@ impl ValueTweak {
             None => s.absent_matches,
             Some(raw) => match s.data {
                 Data::Dword(n) => raw.as_dword() == Some(n),
+                Data::DwordAtMost(max) => raw.as_dword().is_some_and(|v| (1..=max).contains(&v)),
                 Data::Str(v) => raw.as_sz().as_deref() == Some(v),
                 Data::StrClearBits { .. } | Data::ListEntry { .. } => unreachable!("handled above"),
             },
@@ -238,6 +253,11 @@ impl Tweak for ValueTweak {
         for s in self.settings {
             match s.data {
                 Data::Dword(n) => tx.set_dword(self.root, s.key, s.value, n)?,
+                Data::DwordAtMost(max) => {
+                    if !self.matches(tx.resolver(), s)? {
+                        tx.set_dword(self.root, s.key, s.value, max)?
+                    }
+                }
                 Data::Str(v) => tx.set_string(self.root, s.key, s.value, v)?,
                 Data::StrClearBits { clear, default } => {
                     let current = Data::flags(tx.resolver().read_string(self.root, s.key, s.value)?, default);
@@ -620,20 +640,21 @@ pub const ANIMATIONS: ValueTweak = ValueTweak {
 
 /// The mouse and keyboard class drivers' input buffers. Windows' default is
 /// 100 events each. VERIFY: 50 is our choice (Hone does not publish its
-/// value); smaller buffers can drop input on very high polling rates.
+/// value); smaller buffers can drop input on very high polling rates. A size
+/// the user already set lower (Kegan's PC had 18) is left as it is.
 pub const INPUT_QUEUE: ValueTweak = ValueTweak {
     id: "input.queuesize",
     name: "Mouse and keyboard buffer size",
     summary: "Lowers the number of mouse and keyboard events Windows' input drivers hold in their buffers from 100 \
-              to 50.",
+              to 50. A smaller size already set on this PC is kept.",
     category: "input",
     root: RegRoot::LocalMachine,
     safety: SafetyTier::Moderate,
     tradeoff: Some("Needs a restart."),
     requires_reboot: true,
     settings: &[
-        dword(MOUSE_CLASS, "MouseDataQueueSize", 50),
-        dword(KEYBOARD_CLASS, "KeyboardDataQueueSize", 50),
+        dword_at_most(MOUSE_CLASS, "MouseDataQueueSize", 50),
+        dword_at_most(KEYBOARD_CLASS, "KeyboardDataQueueSize", 50),
     ],
 };
 

@@ -14,11 +14,18 @@
 //! - Valorant: the Riot Client's settings for it,
 //!   `%ProgramData%\Riot Games\Metadata\valorant.live\valorant.live.product_settings.yaml`
 //!   (`product_install_full_path: "C:/Riot Games/VALORANT/live"`).
-//! - Counter-Strike 2 and Apex Legends on Steam: each library in Steam's
+//! - Games on Steam (Counter-Strike 2, Apex Legends and the games in Games'
+//!   list that are sold there, `STEAM_GAMES`): each library in Steam's
 //!   `steamapps\libraryfolders.vdf` (`"path"`), then
 //!   `steamapps\appmanifest_<app id>.acf` (`"installdir"`) under
-//!   `steamapps\common`. App ids 730 and 1172470.
+//!   `steamapps\common`. The app ids were checked 2026-10-09 against Steam's
+//!   own store API (`store.steampowered.com/api/appdetails`, which names the
+//!   game for each id); the file layout is still VERIFY.
 //! - Apex Legends from the EA app: the folder in the registry (`Launchers`).
+//!
+//! The games in the list that are not on Steam (League of Legends, World of
+//! Warcraft, Genshin Impact, Escape from Tarkov, EA Sports FC as listed) and
+//! Steam games installed through another launcher are not looked for.
 //!
 //! Valorant, CS2 and Apex are looked for but reported only once they are
 //! offered (`env::OFFER_VALORANT_CS2_APEX`, NOTES N75).
@@ -88,9 +95,36 @@ pub struct Launchers {
     pub apex_ea: Option<PathBuf>,
 }
 
-/// Steam app ids (VERIFY).
+/// Steam app ids, each checked against Steam's store API (2026-10-09).
 const CS2_APP: u32 = 730;
 const APEX_APP: u32 = 1_172_470;
+
+/// The games looked for in Steam's libraries: `KNOWN_GAMES` id and Steam
+/// app ids, first found wins. Apex Legends is also looked for in the EA app.
+pub const STEAM_GAMES: &[(&str, &[u32])] = &[
+    ("cs2", &[CS2_APP]),
+    ("apex", &[APEX_APP]),
+    ("cod", &[1_938_090]),
+    ("dota2", &[570]),
+    ("pubg", &[578_080]),
+    ("overwatch", &[2_357_570]),
+    ("r6siege", &[359_550]),
+    ("rocketleague", &[252_950]),
+    // Grand Theft Auto V Enhanced, then Legacy.
+    ("gta5", &[3_240_220, 271_590]),
+    ("marvelrivals", &[2_767_030]),
+    ("destiny2", &[1_085_660]),
+    ("rust", &[252_490]),
+    ("thefinals", &[2_073_850]),
+    ("tf2", &[440]),
+    ("dbd", &[381_210]),
+    ("warframe", &[230_410]),
+    ("helldivers2", &[553_850]),
+    ("poe2", &[2_694_490]),
+    ("deltaforce", &[2_507_950]),
+    ("battlefield6", &[2_807_960]),
+    ("naraka", &[1_203_220]),
+];
 
 /// Every offered game found, each with the kind of drive it is on.
 /// `program_data` is `%ProgramData%`; `profile` the interactive user's profile
@@ -134,15 +168,15 @@ fn probe_all_game_installs(
         found.push(("valorant", "Valorant", PathBuf::from(loc)));
     }
     let libraries = launchers.steam.as_deref().map(steam_libraries).unwrap_or_default();
-    if let Some(loc) = steam_app(&libraries, CS2_APP) {
-        found.push(("cs2", "Counter-Strike 2", PathBuf::from(loc)));
-    }
-    let apex = steam_app(&libraries, APEX_APP).or_else(|| {
-        let ea = launchers.apex_ea.as_deref()?;
-        ea.is_dir().then(|| windows_path(&ea.to_string_lossy()))
-    });
-    if let Some(loc) = apex {
-        found.push(("apex", "Apex Legends", PathBuf::from(loc)));
+    for &(id, apps) in STEAM_GAMES {
+        let on_steam = apps.iter().find_map(|&app| steam_app(&libraries, app));
+        let loc = on_steam.or_else(|| {
+            let ea = launchers.apex_ea.as_deref().filter(|_| id == "apex")?;
+            ea.is_dir().then(|| windows_path(&ea.to_string_lossy()))
+        });
+        if let Some(loc) = loc {
+            found.push((id, crate::env::game_name(id), PathBuf::from(loc)));
+        }
     }
     found
         .into_iter()
@@ -538,6 +572,11 @@ mod tests {
             .map(|g| g.game_id)
             .collect();
         assert_eq!(all, ["valorant", "cs2", "apex"]);
+        let names: Vec<String> = probe_all_game_installs(&program_data, None, &launchers, &lookup)
+            .into_iter()
+            .map(|g| g.name)
+            .collect();
+        assert_eq!(names, ["Valorant", "Counter-Strike 2", "Apex Legends"]);
         let reported: Vec<String> = probe_game_installs(&program_data, None, &launchers, &lookup)
             .into_iter()
             .map(|g| g.game_id)
@@ -577,5 +616,62 @@ mod tests {
         for g in ["valorant", "cs2", "apex"] {
             assert!(program_file_is_looked_for(g), "{g}");
         }
+    }
+
+    #[test]
+    fn games_from_the_list_are_found_in_any_steam_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let steam = dir.path().join("Steam");
+        let other = dir.path().join("Library2");
+        write(
+            &steam.join("steamapps").join("libraryfolders.vdf"),
+            &format!(
+                r#""libraryfolders" {{ "1" {{ "path" "{}" }} }}"#,
+                other.to_string_lossy().replace('\\', "\\\\")
+            ),
+        );
+        let game = |library: &Path, app: u32, dir: &str| {
+            let apps = library.join("steamapps");
+            write(
+                &apps.join(format!("appmanifest_{app}.acf")),
+                &format!(r#""AppState" {{ "installdir" "{dir}" }}"#),
+            );
+            std::fs::create_dir_all(apps.join("common").join(dir)).unwrap();
+        };
+        game(&steam, 570, "dota 2 beta");
+        // GTA V Legacy only: found by its second id.
+        game(&other, 271_590, "Grand Theft Auto V");
+        game(&other, 2_767_030, "MarvelRivals");
+        let launchers = Launchers {
+            steam: Some(steam),
+            apex_ea: None,
+        };
+        let found = probe_all_game_installs(&dir.path().join("pd"), None, &launchers, &|_: &str| {
+            Probe::unknown("temp path")
+        });
+        let got: Vec<(&str, &str, bool)> = found
+            .iter()
+            .map(|g| (g.game_id.as_str(), g.name.as_str(), g.exe.is_none()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("dota2", "Dota 2", true),
+                ("gta5", "Grand Theft Auto V", true),
+                ("marvelrivals", "Marvel Rivals", true),
+            ]
+        );
+        assert!(found[1].path.ends_with("Grand Theft Auto V"), "{}", found[1].path);
+    }
+
+    #[test]
+    fn every_steam_game_is_a_known_game_listed_once() {
+        let mut ids: Vec<&str> = STEAM_GAMES.iter().map(|(id, _)| *id).collect();
+        for id in &ids {
+            assert!(crate::env::ALL_GAMES.iter().any(|g| g.id == *id), "{id}");
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), STEAM_GAMES.len());
     }
 }

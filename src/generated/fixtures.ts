@@ -1302,7 +1302,7 @@ export const games = [
     "id": "cod",
     "name": "Call of Duty",
     "featured": true,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "league",
@@ -1314,55 +1314,55 @@ export const games = [
     "id": "dota2",
     "name": "Dota 2",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "pubg",
     "name": "PUBG: Battlegrounds",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "overwatch",
     "name": "Overwatch 2",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "r6siege",
     "name": "Rainbow Six Siege",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "rocketleague",
     "name": "Rocket League",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "gta5",
     "name": "Grand Theft Auto V",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "marvelrivals",
     "name": "Marvel Rivals",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "destiny2",
     "name": "Destiny 2",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "rust",
     "name": "Rust",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "tarkov",
@@ -1374,25 +1374,25 @@ export const games = [
     "id": "thefinals",
     "name": "The Finals",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "tf2",
     "name": "Team Fortress 2",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "dbd",
     "name": "Dead by Daylight",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "warframe",
     "name": "Warframe",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "wow",
@@ -1416,31 +1416,31 @@ export const games = [
     "id": "helldivers2",
     "name": "Helldivers 2",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "poe2",
     "name": "Path of Exile 2",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "deltaforce",
     "name": "Delta Force",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "battlefield6",
     "name": "Battlefield 6",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   },
   {
     "id": "naraka",
     "name": "Naraka: Bladepoint",
     "featured": false,
-    "lookedFor": false
+    "lookedFor": true
   }
 ] satisfies GameInfo[];
 

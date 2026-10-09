@@ -726,13 +726,15 @@ describe("review regressions", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Games");
     const buttons = screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent);
-    expect(buttons).toEqual(["Fortnite", "Valorant", "Counter-Strike 2", "Apex Legends", "Call of Duty"]);
+    // The sample PC has Fortnite installed, and the picker says so.
+    expect(buttons).toEqual(["Fortnite on this PC", "Valorant", "Counter-Strike 2", "Apex Legends", "Call of Duty"]);
+    expect(screen.getByRole("radio", { name: "Fortnite on this PC" })).toBeTruthy();
     const list = screen.getByLabelText("Or another game") as HTMLSelectElement;
     // A placeholder, then 25 games in name order, none of them a button.
     const names = Array.from(list.options).slice(1).map((o) => o.text);
     expect(names).toHaveLength(25);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
-    expect(names.filter((n) => buttons.includes(n))).toEqual([]);
+    expect(names.filter((n) => fx.games.some((g) => g.featured && g.name === n))).toEqual([]);
 
     await userEvent.click(screen.getByRole("radio", { name: "Apex Legends" }));
     await waitFor(() => expect((screen.getByRole("radio", { name: "Apex Legends" }) as HTMLInputElement).checked).toBe(true));
@@ -741,9 +743,14 @@ describe("review regressions", () => {
     await userEvent.selectOptions(list, "rust");
     await waitFor(() => expect(list.value).toBe("rust"));
     expect(screen.getAllByRole("radio").every((r) => !(r as HTMLInputElement).checked)).toBe(true);
-    // Not looked for, so the card does not claim it is missing.
-    const rust = screen.getAllByRole("heading", { level: 3 }).find((h) => h.textContent === "Rust")!.closest("li") as HTMLElement;
-    expect(within(rust).queryByText("Not found in the places PeakTweaks looks.")).toBeNull();
+    // Looked for in Steam's libraries and not there.
+    const card = (name: string) =>
+      screen.getAllByRole("heading", { level: 3 }).find((h) => h.textContent === name)!.closest("li") as HTMLElement;
+    expect(within(card("Rust")).getByText("Not found in the places PeakTweaks looks.")).toBeTruthy();
+    // Not on Steam and not looked for, so the card does not claim it is missing.
+    await userEvent.selectOptions(list, "league");
+    await waitFor(() => expect(list.value).toBe("league"));
+    expect(within(card("League of Legends")).queryByText("Not found in the places PeakTweaks looks.")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "No main game" }));
     await waitFor(() => expect(list.value).toBe(""));

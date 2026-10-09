@@ -143,9 +143,10 @@ const ROBLOX: GameInfo = game("roblox", "Roblox", false, true);
 /// Every game PeakTweaks can recognise, offered or not (`games.rs` has their
 /// anti-cheat and program files). The five featured shooters, then the
 /// most-played games on PC (Kegan asked for about 25; the list is mine, from
-/// public player-count charts as I recall them, NOTES N99). Only the first
-/// six have install detection and program files; the others can be picked as
-/// the main game but have no per-game tools.
+/// public player-count charts as I recall them, NOTES N99). The first six
+/// have program files; the rest can be picked as the main game but have no
+/// per-game tools. Those sold on Steam are looked for in its libraries
+/// (`game_installs::STEAM_GAMES`).
 pub const ALL_GAMES: &[GameInfo] = &[
     FORTNITE,
     MINECRAFT,
@@ -153,30 +154,30 @@ pub const ALL_GAMES: &[GameInfo] = &[
     game("valorant", "Valorant", true, true),
     game("cs2", "Counter-Strike 2", true, true),
     game("apex", "Apex Legends", true, true),
-    game("cod", "Call of Duty", true, false),
+    game("cod", "Call of Duty", true, true),
     game("league", "League of Legends", false, false),
-    game("dota2", "Dota 2", false, false),
-    game("pubg", "PUBG: Battlegrounds", false, false),
-    game("overwatch", "Overwatch 2", false, false),
-    game("r6siege", "Rainbow Six Siege", false, false),
-    game("rocketleague", "Rocket League", false, false),
-    game("gta5", "Grand Theft Auto V", false, false),
-    game("marvelrivals", "Marvel Rivals", false, false),
-    game("destiny2", "Destiny 2", false, false),
-    game("rust", "Rust", false, false),
+    game("dota2", "Dota 2", false, true),
+    game("pubg", "PUBG: Battlegrounds", false, true),
+    game("overwatch", "Overwatch 2", false, true),
+    game("r6siege", "Rainbow Six Siege", false, true),
+    game("rocketleague", "Rocket League", false, true),
+    game("gta5", "Grand Theft Auto V", false, true),
+    game("marvelrivals", "Marvel Rivals", false, true),
+    game("destiny2", "Destiny 2", false, true),
+    game("rust", "Rust", false, true),
     game("tarkov", "Escape from Tarkov", false, false),
-    game("thefinals", "The Finals", false, false),
-    game("tf2", "Team Fortress 2", false, false),
-    game("dbd", "Dead by Daylight", false, false),
-    game("warframe", "Warframe", false, false),
+    game("thefinals", "The Finals", false, true),
+    game("tf2", "Team Fortress 2", false, true),
+    game("dbd", "Dead by Daylight", false, true),
+    game("warframe", "Warframe", false, true),
     game("wow", "World of Warcraft", false, false),
     game("genshin", "Genshin Impact", false, false),
     game("eafc", "EA Sports FC", false, false),
-    game("helldivers2", "Helldivers 2", false, false),
-    game("poe2", "Path of Exile 2", false, false),
-    game("deltaforce", "Delta Force", false, false),
-    game("battlefield6", "Battlefield 6", false, false),
-    game("naraka", "Naraka: Bladepoint", false, false),
+    game("helldivers2", "Helldivers 2", false, true),
+    game("poe2", "Path of Exile 2", false, true),
+    game("deltaforce", "Delta Force", false, true),
+    game("battlefield6", "Battlefield 6", false, true),
+    game("naraka", "Naraka: Bladepoint", false, true),
 ];
 
 /// The games offered. Ids are validated against this list.
@@ -185,6 +186,11 @@ pub const KNOWN_GAMES: &[GameInfo] = if OFFER_VALORANT_CS2_APEX {
 } else {
     &[FORTNITE, MINECRAFT, ROBLOX]
 };
+
+/// A known game's name; its id when it is not one.
+pub fn game_name(id: &str) -> &str {
+    ALL_GAMES.iter().find(|g| g.id == id).map_or(id, |g| g.name)
+}
 
 /// True for a game in `KNOWN_GAMES`.
 pub fn is_offered(game_id: &str) -> bool {

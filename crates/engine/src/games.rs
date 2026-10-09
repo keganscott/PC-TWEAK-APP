@@ -322,12 +322,13 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), ALL_GAMES.len(), "an id is listed twice");
-        // Install detection exists exactly for the games with program files
-        // or a known data folder (`game_installs.rs`).
+        // Install detection exists exactly for the games with a known data
+        // folder or launcher entry and those on Steam (`game_installs.rs`).
         for g in ALL_GAMES {
+            let on_steam = crate::game_installs::STEAM_GAMES.iter().any(|(id, _)| *id == g.id);
             assert_eq!(
                 g.looked_for,
-                matches!(g.id, "fortnite" | "minecraft" | "roblox" | "valorant" | "cs2" | "apex"),
+                on_steam || matches!(g.id, "fortnite" | "minecraft" | "roblox" | "valorant"),
                 "{}",
                 g.id
             );

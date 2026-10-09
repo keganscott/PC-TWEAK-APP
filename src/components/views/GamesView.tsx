@@ -35,6 +35,8 @@ export function GamesView() {
   // with more than one chip.
   const twoChips = audit?.scan.findings.some((f) => f.id === "gpu.choice") ?? false;
   const choices = twoChips ? (audit?.env.gpuChoices ?? []) : [];
+  // Games found on this PC are marked in the picker.
+  const found = new Set((installs ?? []).map((i) => i.gameId));
   const featured = games.filter((g) => g.featured);
   const others = games.filter((g) => !g.featured).sort((a, b) => a.name.localeCompare(b.name));
   // A card for each featured game, and for the main game when it is from the list.
@@ -70,6 +72,12 @@ export function GamesView() {
                       onChange={() => void selectTargetGame(g.id)}
                     />
                     {g.name}
+                    {found.has(g.id) && (
+                      <>
+                        {" "}
+                        <span className="ml-0.5 text-xs font-normal opacity-80">on this PC</span>
+                      </>
+                    )}
                   </label>
                 );
               })}
@@ -91,7 +99,7 @@ export function GamesView() {
                 <option value="">More games</option>
                 {others.map((g) => (
                   <option key={g.id} value={g.id}>
-                    {g.name}
+                    {found.has(g.id) ? `${g.name} (on this PC)` : g.name}
                   </option>
                 ))}
               </select>

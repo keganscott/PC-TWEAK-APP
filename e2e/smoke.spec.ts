@@ -45,6 +45,26 @@ test("every screen loads and passes an accessibility scan", async ({ page }) => 
   await expectNoSeriousA11yIssues(page);
 });
 
+test("only the content area scrolls, never the whole window", async ({ page }) => {
+  // The page itself scrolling hides the top bar and leaves black space
+  // under the app (seen in a maximised window on Tools).
+  const pageScrolls = () =>
+    page.evaluate(() => {
+      const root = document.scrollingElement!;
+      return root.scrollHeight > root.clientHeight || root.scrollWidth > root.clientWidth;
+    });
+  await open(page);
+  expect(await pageScrolls()).toBe(false);
+  for (const name of ["Games", "Tools", "Proof", "Backups"]) {
+    await nav(page, name);
+    expect(await pageScrolls(), name).toBe(false);
+  }
+  await nav(page, "Tools");
+  await page.getByRole("switch", { name: /Advanced/ }).check();
+  await expect(page.getByText("MSI mode: Sample graphics card")).toBeVisible();
+  expect(await pageScrolls(), "Tools with Advanced on").toBe(false);
+});
+
 test("changes stay locked until a restore point exists, then apply and undo", async ({ page }) => {
   await open(page);
   await nav(page, "Tools");

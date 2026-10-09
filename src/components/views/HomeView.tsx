@@ -42,7 +42,7 @@ export function HomeView() {
   const { rescan } = useActions();
 
   return (
-    <div className="flex max-w-[1240px] flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <Greeting
         audit={audit}
         failed={!audit && auditOp.status === "failed"}

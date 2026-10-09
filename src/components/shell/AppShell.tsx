@@ -75,7 +75,12 @@ export function AppShell({
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar busOpen={busOpen} onToggleBus={toggleBus} />
-          <main className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto px-9 pt-2 pb-10 print:overflow-visible print:p-0">
+          {/* `relative` makes this the box hidden (`sr-only`) labels are
+              placed in. Without it they are placed against the page, so a
+              label far down a long view made the whole page taller than the
+              window and the page itself scrolled, cutting off the top bar
+              and leaving black space at the bottom of a maximised window. */}
+          <main className="scrollbar-quiet relative min-h-0 flex-1 overflow-y-auto px-9 pt-2 pb-10 print:overflow-visible print:p-0">
             {/* Centred, and wide enough to use a maximised window on a large
                 screen; each view widens at 2xl rather than staying a narrow
                 column with black beside it. */}

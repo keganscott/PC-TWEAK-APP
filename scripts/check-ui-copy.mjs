@@ -58,6 +58,16 @@ export function findClaim(text, words) {
   return null;
 }
 
+/**
+ * UTF-8 text that was decoded as Windows-1252 and saved again ("â€œ" for a
+ * curly quote, "Ã©" for é). It reaches users as garbage, so any is an error.
+ * @returns {number[]} 1-based line numbers
+ */
+export function findMojibake(source) {
+  const bad = /\u00e2\u20ac|\u00c2[\u00a0-\u00bf]|\u00c3[\u0080-\u00bf]/;
+  return source.split(/\r?\n/).flatMap((line, i) => (bad.test(line) ? [i + 1] : []));
+}
+
 const ALLOW = /copy-lint-allow:\s*\S/;
 
 function isNotCopy(node) {
@@ -132,7 +142,11 @@ function main(argv) {
   for (const dir of dirs) {
     for (const file of sourceFiles(resolve(dir))) {
       files += 1;
-      for (const hit of lintSource(file, readFileSync(file, "utf8"), words)) {
+      const source = readFileSync(file, "utf8");
+      for (const line of findMojibake(source)) {
+        problems.push(`${relative(root, file)}:${line}: garbled characters (UTF-8 read as Windows-1252); retype them`);
+      }
+      for (const hit of lintSource(file, source, words)) {
         problems.push(`${relative(root, file)}:${hit.line}: "${hit.word}" in ${JSON.stringify(hit.text)}`);
       }
     }

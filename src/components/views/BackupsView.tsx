@@ -107,7 +107,7 @@ export function BackupsView() {
             </ul>
           )}
           <p className="mt-3 text-xs text-ink-faint">
-            To roll the whole PC back, open Windows' System Restore (search for â€œCreate a restore pointâ€, then System
+            To roll the whole PC back, open Windows' System Restore (search for “Create a restore point”, then System
             Restore) and pick one of these.
           </p>
         </Card>

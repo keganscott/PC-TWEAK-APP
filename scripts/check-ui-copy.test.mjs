@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { findClaim, lintSource, loadClaimWords } from "./check-ui-copy.mjs";
+import { findClaim, findMojibake, lintSource, loadClaimWords } from "./check-ui-copy.mjs";
 
 const words = loadClaimWords();
 const lint = (src, file = "x.tsx") => lintSource(file, src, words).map((h) => h.word);
@@ -69,4 +69,9 @@ test("an allow comment needs a reason and covers its own or the next line", () =
 test("hits report the line of the offending text", () => {
   const hits = lintSource("x.ts", `const a = 1;\nconst b = "boost";`, words);
   assert.equal(hits[0].line, 2);
+});
+
+test("garbled UTF-8 is found, real punctuation and accents are not", () => {
+  assert.deepEqual(findMojibake("ok\nsearch for \u00e2\u20ac\u0153Create\u00e2\u20ac\u009d\ncaf\u00c3\u00a9"), [2, 3]);
+  assert.deepEqual(findMojibake("search for \u201cCreate\u201d, caf\u00e9, 5\u00b0C \u2014 \u00c2"), []);
 });

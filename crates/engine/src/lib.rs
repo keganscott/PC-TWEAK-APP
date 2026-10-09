@@ -22,6 +22,7 @@ pub mod held;
 pub mod ini;
 pub mod instance;
 pub mod journal;
+pub mod live;
 pub mod memory;
 pub mod netcheck;
 pub mod nvapi;

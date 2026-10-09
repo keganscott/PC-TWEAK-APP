@@ -19,6 +19,7 @@ import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
 import type { JournalEntry } from "./generated/JournalEntry";
 import type { JournalView } from "./generated/JournalView";
+import type { LiveReadings } from "./generated/LiveReadings";
 import type { MsiDeviceList } from "./generated/MsiDeviceList";
 import type { NetworkCheck } from "./generated/NetworkCheck";
 import type { PlayStatus } from "./generated/PlayStatus";
@@ -116,6 +117,8 @@ export const engine = {
   listStartupApps: () => call<StartupList>("list_startup_apps"),
   /** MSI mode for each graphics card and network adapter (catalogue H6). Reads only; apply with applyTweak(its id). */
   listMsiDevices: () => call<MsiDeviceList>("list_msi_devices"),
+  /** Processor, memory and NVIDIA GPU readings right now. Reads only; takes about half a second. */
+  liveReadings: () => call<LiveReadings>("live_readings"),
   /** Echoes to the router and two public DNS servers (catalogue E4). Sends only echo requests; changes nothing. */
   checkConnection: () => call<NetworkCheck>("check_connection"),
 };

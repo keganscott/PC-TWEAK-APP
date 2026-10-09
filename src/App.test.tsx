@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import * as fx from "./generated/fixtures";
+import type { LiveReadings } from "./generated/LiveReadings";
 import { App } from "./App";
 import type { Backend } from "./services/backend";
 import { createMockBackend, type MockOptions } from "./services/mockIpc";
@@ -104,6 +105,29 @@ describe("App", () => {
     await userEvent.click(within(notice).getByRole("button", { name: "Apply again" }));
     expect(apply).toHaveBeenCalledWith("fixture.drifted");
     await waitFor(() => expect(screen.queryByRole("region", { name: "Changes set back" })).toBeNull());
+  });
+
+  it("Home shows live readings, and says plainly when the graphics card is not read", async () => {
+    const base = createMockBackend();
+    let gpus: LiveReadings["gpus"] | null = null;
+    renderApp({
+      ...base,
+      liveReadings: async () => {
+        const r = await base.liveReadings();
+        return gpus ? { ...r, gpus } : r;
+      },
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const section = (await screen.findByRole("heading", { name: "Right now" })).closest("section") as HTMLElement;
+    expect(await within(section).findByRole("meter", { name: /^Processor: \d+ percent busy$/ })).toBeTruthy();
+    expect(within(section).getByRole("meter", { name: "Memory: 57 percent in use" })).toBeTruthy();
+    expect(within(section).getByText("Sample graphics card")).toBeTruthy();
+    expect(within(section).getByText("SAMPLE")).toBeTruthy();
+    cleanup();
+
+    gpus = { state: "unknown", reason: "nvml.dll was not found" };
+    renderApp({ ...base, liveReadings: async () => ({ ...(await base.liveReadings()), gpus: gpus! }) });
+    expect(await screen.findByText("Not read: nvml.dll was not found. AMD and Intel cards are not read yet.")).toBeTruthy();
   });
 
   it("Home keeps the basic changes locked until there is a restore point", async () => {

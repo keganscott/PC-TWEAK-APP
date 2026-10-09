@@ -150,6 +150,17 @@ pub async fn set_settings(engine: State<'_, EngineHandle>, settings: Settings) -
     blocking(&engine, move |e| e.set_settings(settings)).await
 }
 
+/// Live readings for Home: processor, memory and NVIDIA GPUs (`live.rs`).
+/// Reads only and takes no engine lock, so it never waits behind a change.
+#[tauri::command]
+pub async fn live_readings() -> Result<peaktweaks_engine::live::LiveReadings> {
+    tauri::async_runtime::spawn_blocking(peaktweaks_engine::live::read)
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("the live readings stopped: {e}"),
+        })
+}
+
 #[tauri::command]
 pub async fn list_games() -> Result<Vec<GameInfo>> {
     Ok(KNOWN_GAMES.to_vec())

@@ -167,6 +167,25 @@ impl ThrottleTally {
     }
 }
 
+/// One NVIDIA GPU right now, for Home's live readings (`live.rs`). Each
+/// reading is its own probe: a driver that lacks one still gives the others.
+/// Layouts and names from NVIDIA's `nvml.h` (`nvmlUtilization_t`,
+/// `nvmlMemory_t`, `NVML_TEMPERATURE_GPU` = 0, a 96-byte name buffer), as
+/// shipped in NVIDIA/go-nvml `gen/nvml/nvml.h`, checked 2026-10-09.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuLive {
+    pub name: Probe<String>,
+    /// Share of the last sample period with work running on the GPU, 0-100.
+    pub busy_percent: Probe<u32>,
+    /// The GPU die's temperature in degrees Celsius.
+    pub temperature_c: Probe<u32>,
+    /// Graphics memory in use (reserved and allocated), and in all, in bytes.
+    pub memory_used_bytes: Probe<u64>,
+    pub memory_total_bytes: Probe<u64>,
+}
+
 #[cfg(windows)]
 pub use real::NvmlSampler;
 
@@ -190,11 +209,21 @@ mod real {
     type Count = unsafe extern "C" fn(*mut u32) -> NvmlReturn;
     type HandleByIndex = unsafe extern "C" fn(u32, *mut *mut c_void) -> NvmlReturn;
     type Reasons = unsafe extern "C" fn(*mut c_void, *mut u64) -> NvmlReturn;
+    type Utilization = unsafe extern "C" fn(*mut c_void, *mut [u32; 2]) -> NvmlReturn;
+    type Temperature = unsafe extern "C" fn(*mut c_void, u32, *mut u32) -> NvmlReturn;
+    /// `nvmlMemory_t`: total, free, used.
+    type Memory = unsafe extern "C" fn(*mut c_void, *mut [u64; 3]) -> NvmlReturn;
+    type Name = unsafe extern "C" fn(*mut c_void, *mut u8, u32) -> NvmlReturn;
 
     struct Lib {
         get_count: Count,
         get_handle: HandleByIndex,
         get_reasons: Reasons,
+        // For the live readings only; a driver without one still loads.
+        get_utilization: Option<Utilization>,
+        get_temperature: Option<Temperature>,
+        get_memory: Option<Memory>,
+        get_name: Option<Name>,
         // The module stays loaded for the life of the process.
         _module: HMODULE,
     }
@@ -269,6 +298,12 @@ mod real {
             Some(f) => std::mem::transmute::<unsafe extern "system" fn() -> isize, Reasons>(f),
             None => sym!("nvmlDeviceGetCurrentClocksThrottleReasons", Reasons),
         };
+        macro_rules! optional {
+            ($name:literal, $ty:ty) => {
+                GetProcAddress(module, s!($name))
+                    .map(|f| std::mem::transmute::<unsafe extern "system" fn() -> isize, $ty>(f))
+            };
+        }
         let rc = init();
         if rc != NVML_SUCCESS {
             return Err(format!("nvmlInit_v2 failed with code {rc}"));
@@ -277,8 +312,86 @@ mod real {
             get_count,
             get_handle,
             get_reasons,
+            get_utilization: optional!("nvmlDeviceGetUtilizationRates", Utilization),
+            // Marked deprecated in NVML 13 in favour of the V call, still exported.
+            get_temperature: optional!("nvmlDeviceGetTemperature", Temperature),
+            get_memory: optional!("nvmlDeviceGetMemoryInfo", Memory),
+            get_name: optional!("nvmlDeviceGetName", Name),
             _module: module,
         })
+    }
+
+    impl NvmlSampler {
+        fn with_lib<T>(&self, f: impl FnOnce(&Lib) -> Probe<T>) -> Probe<T> {
+            let mut guard = match self.state.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            match guard.get_or_insert_with(|| unsafe { open() }) {
+                Ok(lib) => f(lib),
+                Err(e) => Probe::unknown(e.clone()),
+            }
+        }
+
+        /// Every NVIDIA GPU's live readings. No when NVML lists none.
+        pub fn live(&self) -> Probe<Vec<GpuLive>> {
+            self.with_lib(|lib| unsafe {
+                let mut count = 0u32;
+                let rc = (lib.get_count)(&mut count);
+                if rc != NVML_SUCCESS {
+                    return Probe::unknown(format!("nvmlDeviceGetCount_v2 failed with code {rc}"));
+                }
+                if count == 0 {
+                    return Probe::no("NVML reports no NVIDIA GPU");
+                }
+                let mut gpus = Vec::new();
+                for i in 0..count {
+                    let mut handle: *mut c_void = std::ptr::null_mut();
+                    let rc = (lib.get_handle)(i, &mut handle);
+                    if rc != NVML_SUCCESS {
+                        return Probe::unknown(format!("nvmlDeviceGetHandleByIndex_v2({i}) failed with code {rc}"));
+                    }
+                    gpus.push(gpu_live(lib, handle));
+                }
+                Probe::yes(gpus)
+            })
+        }
+    }
+
+    /// One reading through an optional NVML call.
+    fn read<F, T>(f: Option<F>, what: &str, call: impl FnOnce(F) -> (NvmlReturn, T)) -> Probe<T> {
+        let Some(f) = f else {
+            return Probe::unknown(format!("this NVIDIA driver's NVML has no {what} call"));
+        };
+        match call(f) {
+            (NVML_SUCCESS, value) => Probe::yes(value),
+            (rc, _) => Probe::unknown(format!("reading the {what} failed with code {rc}")),
+        }
+    }
+
+    unsafe fn gpu_live(lib: &Lib, handle: *mut c_void) -> GpuLive {
+        let memory = read(lib.get_memory, "memory use", |f| {
+            let mut m = [0u64; 3];
+            (f(handle, &mut m), m)
+        });
+        GpuLive {
+            name: read(lib.get_name, "name", |f| {
+                let mut buf = [0u8; 96];
+                let rc = f(handle, buf.as_mut_ptr(), buf.len() as u32);
+                let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                (rc, String::from_utf8_lossy(&buf[..end]).into_owned())
+            }),
+            busy_percent: read(lib.get_utilization, "utilization", |f| {
+                let mut u = [0u32; 2];
+                (f(handle, &mut u), u[0])
+            }),
+            temperature_c: read(lib.get_temperature, "temperature", |f| {
+                let mut t = 0u32;
+                (f(handle, 0, &mut t), t)
+            }),
+            memory_used_bytes: memory.clone().map(|m| m[2]),
+            memory_total_bytes: memory.map(|m| m[0]),
+        }
     }
 
     impl ThrottleSampler for NvmlSampler {

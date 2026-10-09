@@ -20,6 +20,7 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { BlockedReason } from "../generated/BlockedReason";
 import type { EngineError } from "../generated/EngineError";
 import type { JournalEntry } from "../generated/JournalEntry";
+import type { LiveReadings } from "../generated/LiveReadings";
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
@@ -102,6 +103,8 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   // Startup apps (H12): each entry's switch is a change like any other, so
   // apply, undo, Undo all and Backups treat it as one.
   let startup: StartupList = clone(fx.startupList) as StartupList;
+  // How many live readings were asked for (they move a little each time).
+  let live = 0;
   // MSI mode per device (H6): changes like any other, as startup switches.
   let msi: MsiDeviceList = clone(fx.msiDevices) as MsiDeviceList;
   let settings: Settings = { ...(clone(fx.systemAudit.settings) as Settings), welcomeSeen: !options.firstRun };
@@ -376,6 +379,29 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       }),
     listStartupApps: () => reply("listStartupApps", [], () => clone(startup)),
     listMsiDevices: () => reply("listMsiDevices", [], () => clone(msi)),
+    liveReadings: () =>
+      reply("liveReadings", [], (): LiveReadings => {
+        // SAMPLE numbers that move a little, so the tiles can be seen updating.
+        live += 1;
+        const wobble = (base: number) => base + ((live * 7) % 9) - 4;
+        return {
+          cpuBusyPercent: { state: "yes", value: wobble(23) },
+          memory: { state: "yes", value: { totalBytes: 16 * 2 ** 30, availableBytes: 6.9 * 2 ** 30, cachedBytes: 4.2 * 2 ** 30 } },
+          gpus: {
+            state: "yes",
+            value: [
+              {
+                name: { state: "yes", value: "Sample graphics card" },
+                busyPercent: { state: "yes", value: wobble(41) },
+                temperatureC: { state: "yes", value: wobble(58) },
+                memoryUsedBytes: { state: "yes", value: 3.2 * 2 ** 30 },
+                memoryTotalBytes: { state: "yes", value: 8 * 2 ** 30 },
+              },
+            ],
+          },
+          unixMs: Date.now(),
+        };
+      }),
     checkConnection: () =>
       reply("checkConnection", [], () => {
         emit("netcheck", "Checking the connection");

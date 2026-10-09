@@ -101,6 +101,7 @@ fn main() {
             commands::engine_context,
             commands::list_tweaks,
             commands::list_games,
+            commands::live_readings,
             commands::play_status,
             commands::get_settings,
             commands::set_settings,

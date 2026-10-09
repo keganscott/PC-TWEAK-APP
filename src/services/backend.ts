@@ -15,6 +15,7 @@ import type { DriveOptimization } from "../generated/DriveOptimization";
 import type { GameInfo } from "../generated/GameInfo";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
+import type { LiveReadings } from "../generated/LiveReadings";
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { NetworkCheck } from "../generated/NetworkCheck";
 import type { PlayStatus } from "../generated/PlayStatus";
@@ -55,6 +56,8 @@ export interface Backend {
   listStartupApps(): Promise<StartupList>;
   /** MSI mode per device (catalogue H6). Each is a change: applyTweak / revertTweak. */
   listMsiDevices(): Promise<MsiDeviceList>;
+  /** Live readings for Home: processor, memory, NVIDIA GPUs. Reads only. */
+  liveReadings(): Promise<LiveReadings>;
   /** Connection check (catalogue E4): round trips, jitter and lost echoes. Changes nothing. */
   checkConnection(): Promise<NetworkCheck>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;

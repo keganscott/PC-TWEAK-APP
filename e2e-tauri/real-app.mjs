@@ -149,6 +149,20 @@ try {
     assert.ok(server || client, "neither the restore step nor the no-System-Restore notice is shown");
   });
 
+  await step("Home shows live readings of this machine", async () => {
+    // Real readings: the processor and memory meters, and the graphics card
+    // as read (a runner has no NVIDIA card, so it says why).
+    const cpu = await driver.wait(
+      until.elementLocated(By.xpath("//*[@role='meter' and starts-with(@aria-label, 'Processor: ')]")),
+      30_000,
+    );
+    const memory = await driver.findElement(By.xpath("//*[@role='meter' and starts-with(@aria-label, 'Memory: ')]"));
+    const section = await driver.findElement(sectionOf("Right now")).getText();
+    console.log(
+      `\n===== Right now =====\n${await cpu.getAttribute("aria-label")}\n${await memory.getAttribute("aria-label")}\n${section.slice(0, 600)}\n`,
+    );
+  });
+
   await step("Tools lists the real catalogue", async () => {
     await open("Tools");
     await driver.wait(until.elementLocated(text("Pointer precision")), 15_000);

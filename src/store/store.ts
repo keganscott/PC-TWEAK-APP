@@ -32,6 +32,7 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { LiveReadings } from "../generated/LiveReadings";
 import type { StandbyPurge } from "../generated/StandbyPurge";
 import type { StartupList } from "../generated/StartupList";
 import type { SystemAudit } from "../generated/SystemAudit";
@@ -117,6 +118,9 @@ export interface State {
   /** MSI mode per device (H6), once the Advanced devices section has asked. */
   msi: MsiDeviceList | null;
   msiOp: Op;
+  /** Home's live readings: the newest answer, kept while the next is read. */
+  live: LiveReadings | null;
+  liveOp: Op;
   bus: BusEntry[];
 }
 
@@ -154,6 +158,8 @@ export function initialState(sample: boolean): State {
     startupOp: IDLE,
     msi: null,
     msiOp: IDLE,
+    live: null,
+    liveOp: IDLE,
     bus: [],
   };
 }
@@ -546,6 +552,20 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     /** Read the graphics and network devices. Reads only; MSI mode is set with applyTweak / revertTweak. */
     async loadMsi() {
       await refreshMsi();
+    },
+
+    /** Read the live processor, memory and GPU readings once. Reads only. The
+     * newest answer wins; one already being read is not asked for again. */
+    async readLive() {
+      if (state.liveOp.status === "running") return;
+      const current = tag("live");
+      set((s) => ({ ...s, liveOp: RUNNING }));
+      try {
+        const live = await backend.liveReadings();
+        if (current()) set((s) => ({ ...s, live, liveOp: { status: "done", value: null } }));
+      } catch (e) {
+        if (current()) set((s) => ({ ...s, liveOp: failed(e) }));
+      }
     },
 
     /** Look at what each junk-file area holds. Reads only. */

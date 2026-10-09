@@ -220,3 +220,13 @@ pub fn hklm_dword(fake: &FakeRegistry, key: &str, name: &str) -> Option<u32> {
 pub fn dword(v: u32) -> RawValue {
     RawValue::dword(v)
 }
+
+/// A temp folder, named by its real path without `\\?\`, so checks that
+/// compare against where Windows says a file is see the same names (Windows
+/// runners keep temp under an 8.3 short name, `RUNNER~1`).
+pub fn real_temp() -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let c = std::fs::canonicalize(tmp.path()).unwrap();
+    let base = std::path::PathBuf::from(c.to_string_lossy().trim_start_matches(r"\\?\"));
+    (tmp, base)
+}

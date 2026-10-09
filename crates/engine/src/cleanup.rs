@@ -552,16 +552,8 @@ mod tests {
         places: Places,
     }
 
-    /// The real path, without `\\?\`, so the checks see the names Windows
-    /// would report (Windows runners keep temp under an 8.3 short name).
-    fn real(p: &Path) -> PathBuf {
-        let c = fs::canonicalize(p).unwrap();
-        PathBuf::from(c.to_string_lossy().trim_start_matches(r"\\?\"))
-    }
-
     fn pc() -> Pc {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = real(tmp.path());
+        let (tmp, base) = crate::testutil::real_temp();
         let places = Places {
             windows: Some(base.join("Windows")),
             program_data: Some(base.join("ProgramData")),

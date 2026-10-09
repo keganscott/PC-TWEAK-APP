@@ -23,6 +23,7 @@ pub type Stored = Option<u32>;
 pub mod status {
     pub const OK: i32 = 0;
     pub const NVIDIA_DEVICE_NOT_FOUND: i32 = -6;
+    pub const END_ENUMERATION: i32 = -7;
     pub const INCOMPATIBLE_STRUCT_VERSION: i32 = -9;
     pub const INVALID_USER_PRIVILEGE: i32 = -137;
     pub const SETTING_NOT_FOUND: i32 = -160;
@@ -39,6 +40,7 @@ pub mod func {
     pub const DRS_GET_SETTING: u32 = 0x73BF_8338;
     pub const DRS_SET_SETTING: u32 = 0x577D_D202;
     pub const DRS_RESTORE_PROFILE_DEFAULT_SETTING: u32 = 0x53F0_381E;
+    pub const DRS_ENUM_AVAILABLE_SETTING_IDS: u32 = 0xF020_614A;
 }
 
 /// `NVDRS_SETTING_V1` (`nvapi.h`, packed to 4 bytes). The two value unions
@@ -111,6 +113,10 @@ impl DrsSetting {
 pub enum NvError {
     /// No NVIDIA graphics card, or no NVIDIA driver: nothing to change.
     NoNvidia,
+    /// The driver is there but does not know this setting id: an older or
+    /// newer driver without it. Seen on a real PC for a Low Latency Mode id
+    /// (`NvAPI_DRS_SetSetting` returned -160, NOTES N86).
+    UnknownSetting(u32),
     /// The driver is there and refused or failed, in plain words.
     Failed(String),
 }
@@ -119,6 +125,7 @@ impl std::fmt::Display for NvError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoNvidia => f.write_str("no NVIDIA graphics card with its driver was found"),
+            Self::UnknownSetting(id) => write!(f, "this NVIDIA driver has no setting 0x{id:08X}"),
             Self::Failed(detail) => f.write_str(detail),
         }
     }
@@ -160,6 +167,7 @@ mod real {
     type GetSetting = unsafe extern "C" fn(Handle, Handle, u32, *mut DrsSetting) -> i32;
     type SetSetting = unsafe extern "C" fn(Handle, Handle, *mut DrsSetting) -> i32;
     type RestoreDefault = unsafe extern "C" fn(Handle, Handle, u32) -> i32;
+    type EnumIds = unsafe extern "C" fn(*mut u32, *mut u32) -> i32;
 
     struct Api {
         create_session: CreateSession,
@@ -170,6 +178,34 @@ mod real {
         get_setting: GetSetting,
         set_setting: SetSetting,
         restore_default: RestoreDefault,
+        /// The ids this driver knows (`NvAPI_DRS_EnumAvailableSettingIds`),
+        /// read once at load; `None` if the driver could not list them, and
+        /// then no id is refused up front.
+        known: Option<Vec<u32>>,
+    }
+
+    impl Api {
+        fn knows(&self, id: u32) -> bool {
+            self.known.as_ref().is_none_or(|ids| ids.contains(&id))
+        }
+    }
+
+    /// Every setting id the driver knows, or `None` if it would not say.
+    unsafe fn available_ids(enum_ids: EnumIds) -> Option<Vec<u32>> {
+        let mut len = 4096u32;
+        for _ in 0..4 {
+            let mut ids = vec![0u32; len as usize];
+            let mut count = len;
+            match enum_ids(ids.as_mut_ptr(), &mut count) {
+                status::OK if count <= len => {
+                    ids.truncate(count as usize);
+                    return Some(ids);
+                }
+                status::OK | status::END_ENUMERATION => len = len.saturating_mul(4).max(count),
+                _ => return None,
+            }
+        }
+        None
     }
 
     // Function pointers into a library that stays loaded for the process;
@@ -212,12 +248,19 @@ mod real {
             get_setting: func!(func::DRS_GET_SETTING, GetSetting),
             set_setting: func!(func::DRS_SET_SETTING, SetSetting),
             restore_default: func!(func::DRS_RESTORE_PROFILE_DEFAULT_SETTING, RestoreDefault),
+            known: None,
         };
+        let enum_ids = query(func::DRS_ENUM_AVAILABLE_SETTING_IDS);
         let rc = initialize();
         if rc != status::OK {
             return Err(error("NvAPI_Initialize", rc));
         }
-        Ok(api)
+        let known = if enum_ids.is_null() {
+            None
+        } else {
+            available_ids(std::mem::transmute::<*mut c_void, EnumIds>(enum_ids))
+        };
+        Ok(Api { known, ..api })
     }
 
     fn check(call: &str, rc: i32) -> std::result::Result<(), NvError> {
@@ -265,6 +308,9 @@ mod real {
         pub fn get(&self, id: u32) -> std::result::Result<Stored, NvError> {
             self.with_base(|api, session, profile| unsafe {
                 let mut setting = DrsSetting::boxed();
+                if !api.knows(id) {
+                    return Err(NvError::UnknownSetting(id));
+                }
                 match (api.get_setting)(session, profile, id, &mut *setting) {
                     status::SETTING_NOT_FOUND => Ok(None),
                     rc => {
@@ -281,11 +327,14 @@ mod real {
             self.with_base(|api, session, profile| unsafe {
                 match value {
                     Some(v) => {
+                        if !api.knows(id) {
+                            return Err(NvError::UnknownSetting(id));
+                        }
                         let mut setting = DrsSetting::dword(id, v);
-                        check(
-                            "NvAPI_DRS_SetSetting",
-                            (api.set_setting)(session, profile, &mut *setting),
-                        )?;
+                        match (api.set_setting)(session, profile, &mut *setting) {
+                            status::SETTING_NOT_FOUND => return Err(NvError::UnknownSetting(id)),
+                            rc => check("NvAPI_DRS_SetSetting", rc)?,
+                        }
                     }
                     None => match (api.restore_default)(session, profile, id) {
                         // Nothing of its own to remove.

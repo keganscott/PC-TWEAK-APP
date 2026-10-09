@@ -71,7 +71,18 @@ impl<'a> Transaction<'a> {
             action,
             tx_id,
             written: Vec::new(),
-            sys_allowlist: tweak.system_targets(),
+            sys_allowlist: tweak
+                .system_targets()
+                .into_iter()
+                .map(|item| match item {
+                    // Made concrete for this user. One that cannot be (no
+                    // profile folder) stays as declared and so matches nothing.
+                    SysItem::File { path } => SysItem::File {
+                        path: resolver.profile_path(&path).unwrap_or(path),
+                    },
+                    other => other,
+                })
+                .collect(),
             changes: Vec::new(),
             effects: Vec::new(),
             effect_allowlist: tweak.effect_targets(),

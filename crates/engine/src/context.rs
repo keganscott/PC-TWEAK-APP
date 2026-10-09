@@ -107,6 +107,34 @@ impl ContextResolver {
         self.system.read_file(path)
     }
 
+    /// The signed-in user's profile folder, from the machine's list of
+    /// profiles (`ProfileList`, which only administrators can change), never
+    /// from the user's own settings: a file path built on it cannot be steered
+    /// by the user into a folder they could not write.
+    pub fn user_profile_dir(&self) -> Result<String> {
+        let key = format!(
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{}",
+            self.user.sid
+        );
+        let raw = self
+            .read_string(RegRoot::LocalMachine, &key, "ProfileImagePath")?
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| EngineError::UserContextUnresolved {
+                detail: format!("Windows lists no profile folder for {}", self.user.sid),
+            })?;
+        let path = super::profile::expand_percent_vars(&raw, |name| std::env::var(name).ok());
+        Ok(path.trim_end_matches('\\').to_owned())
+    }
+
+    /// A path declared as `<profile>\...` (`system::PROFILE_PREFIX`), made
+    /// concrete for the signed-in user. Any other path is returned as it is.
+    pub fn profile_path(&self, declared: &str) -> Result<String> {
+        match declared.strip_prefix(super::system::PROFILE_PREFIX) {
+            Some(rest) => Ok(format!("{}\\{rest}", self.user_profile_dir()?)),
+            None => Ok(declared.to_owned()),
+        }
+    }
+
     /// The engine's latest game installs (`Engine::rescan`).
     pub(crate) fn set_game_installs(&mut self, games: Option<Vec<GameInstall>>) {
         self.games = games;

@@ -202,6 +202,16 @@ pub fn build_engine_with_system(
     Engine::new(resolver, journal, tweaks, Box::new(probe), License::dev(tier))
 }
 
+/// Where Windows' list of profiles says the test user's profile folder is.
+pub fn set_profile_dir(fake: &FakeRegistry, path: &str) {
+    fake.set_external(
+        Hive::LocalMachine,
+        &format!(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{SID}"),
+        "ProfileImagePath",
+        RawValue::sz(path),
+    );
+}
+
 pub fn hklm_dword(fake: &FakeRegistry, key: &str, name: &str) -> Option<u32> {
     fake.read_value_for_test(Hive::LocalMachine, key, name)
         .and_then(|v| v.as_dword())

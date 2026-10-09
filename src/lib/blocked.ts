@@ -5,6 +5,7 @@
 
 import type { BlockedCode } from "../generated/BlockedCode";
 import type { BlockedReason } from "../generated/BlockedReason";
+import type { TweakView } from "../generated/TweakView";
 
 export const BLOCKED_HINT = {
   anti_cheat_requirement:
@@ -27,4 +28,12 @@ export const BLOCKED_HINT = {
 
 export function blockedHint(reason: BlockedReason): string {
   return BLOCKED_HINT[reason.code];
+}
+
+/** Why the engine does not offer a change, if it does not. What this PC is
+ * (protected software, no such hardware, a policy), read from its state, comes
+ * before the change's own rules (plan, anti-cheat): a plan line on Windows
+ * Security's startup entry would suggest another plan could turn it off. */
+export function whyBlocked(t: Pick<TweakView, "blocked" | "state">): BlockedReason | null {
+  return (t.state.status === "blocked" ? t.state.reason : null) ?? t.blocked;
 }

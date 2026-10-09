@@ -2,7 +2,7 @@ import { useEffect, useId } from "react";
 
 import type { StartupApp } from "../../generated/StartupApp";
 import type { StartupSource } from "../../generated/StartupSource";
-import { blockedHint } from "../../lib/blocked";
+import { blockedHint, whyBlocked } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
@@ -120,9 +120,9 @@ function StartupRow({ app, gateOpen }: { app: StartupApp; gateOpen: boolean | nu
   const on = startsAtSignIn(app);
   const change = startupChange(app, !on);
   const next = change.id === tweak.id ? tweak : app.turnOn;
-  // The engine's reason the change is not offered: the plan, or (turning
-  // off) a protected program.
-  const blocked = next.blocked ?? (next.state.status === "blocked" ? next.state.reason : null);
+  // The engine's reason the change is not offered: a protected program
+  // (turning off) before the plan.
+  const blocked = whyBlocked(next);
   // An undo is always offered. A new change needs a readable switch and a
   // restore point.
   const canTurn = change.undo || (!blocked && status !== "unknown" && gateOpen !== false);

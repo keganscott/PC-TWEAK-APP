@@ -19,7 +19,7 @@
         "height": 820,
         "minWidth": 1024,
         "minHeight": 640,
-      "visible": false,
+        "visible": false,
         "backgroundColor": "#000000",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings"
       }

@@ -4,7 +4,7 @@ import type { BlockedCode } from "../../generated/BlockedCode";
 import type { CleanupArea } from "../../generated/CleanupArea";
 import type { DiskMedia } from "../../generated/DiskMedia";
 import type { TweakView } from "../../generated/TweakView";
-import { blockedHint } from "../../lib/blocked";
+import { blockedHint, whyBlocked } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
 import { formatBytes, formatDateTime, formatDuration, formatNumber, probeValue } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -617,9 +617,9 @@ export function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boo
   // Our apply is still on record but Windows has another value now: both
   // directions stay open (set ours again, or put back what was there before).
   const drifted = tweak.state.status === "drifted";
-  // Why the engine does not offer it: its plan or its rules, or what this PC
-  // has (no such adapter, say), which only reading its state shows.
-  const blocked = tweak.blocked ?? (tweak.state.status === "blocked" ? tweak.state.reason : null);
+  // Why the engine does not offer it: what this PC has (no such adapter, say),
+  // which only reading its state shows, else its plan or its rules.
+  const blocked = whyBlocked(tweak);
   const canApply =
     !applied && !blocked && gateOpen !== false && tweak.state.status !== "unknown" && (!needsConfirm || acknowledged);
   const tier = TIER_LABEL[tweak.tier];

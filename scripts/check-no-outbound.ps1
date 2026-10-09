@@ -57,18 +57,29 @@ $control = @(Get-Connections $controlStart @{ $PID = 'this script' } | Where-Obj
 if ($control.Count -eq 0) { throw "positive control failed: Windows logged no connection for this script's own outbound connect, so the audit cannot be trusted" }
 Write-Host "positive control: Windows logged this script's connection to $($control[0].Remote)"
 
-# The app and everything it starts.
+# The app and everything it starts. Windows reuses the number of a process
+# that has ended, so each one is kept with when it started: a child counts
+# only if it started after its parent, and only a process whose number and
+# start time both still match is stopped at the end. (Stopping by number
+# alone once ended this step itself, run 37998699235.)
 $start = (Get-Date).AddSeconds(-1)
 $app = Start-Process -FilePath $Exe -PassThru
 $pids = @{ $app.Id = 'peaktweaks.exe' }
+$born = @{}
 $deadline = (Get-Date).AddSeconds($Seconds)
 while ((Get-Date) -lt $deadline) {
-  $procs = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name
+  $procs = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate)
+  foreach ($p in $procs) {
+    if ([int]$p.ProcessId -eq $app.Id -and -not $born.ContainsKey($app.Id)) { $born[$app.Id] = $p.CreationDate }
+  }
   do {
     $added = $false
     foreach ($p in $procs) {
-      if ($pids.ContainsKey([int]$p.ParentProcessId) -and -not $pids.ContainsKey([int]$p.ProcessId)) {
-        $pids[[int]$p.ProcessId] = $p.Name
+      $id = [int]$p.ProcessId
+      $parent = [int]$p.ParentProcessId
+      if ($id -ne $PID -and $born.ContainsKey($parent) -and -not $pids.ContainsKey($id) -and $p.CreationDate -ge $born[$parent]) {
+        $pids[$id] = $p.Name
+        $born[$id] = $p.CreationDate
         $added = $true
       }
     }
@@ -76,7 +87,14 @@ while ((Get-Date) -lt $deadline) {
   if ($app.HasExited) { throw "peaktweaks.exe exited early with code $($app.ExitCode)" }
   Start-Sleep -Milliseconds 500
 }
-foreach ($id in @($pids.Keys)) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+# The app through its own process object, which cannot point at another one.
+Stop-Process -InputObject $app -Force -ErrorAction SilentlyContinue
+foreach ($p in @(Get-CimInstance Win32_Process -Property ProcessId, CreationDate)) {
+  $id = [int]$p.ProcessId
+  if ($id -ne $PID -and $id -ne $app.Id -and $born.ContainsKey($id) -and $p.CreationDate -eq $born[$id]) {
+    Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+  }
+}
 Start-Sleep -Seconds 2
 
 $all = @(Get-Connections $start $pids)

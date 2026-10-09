@@ -521,6 +521,10 @@ fn errors() -> Vec<EngineError> {
             path: "p".into(),
             detail: "d".into(),
         },
+        EngineError::SettingsFile {
+            path: r"C:\Users\Kegan\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini".into(),
+            detail: "is read-only, so PeakTweaks leaves it as it is".into(),
+        },
         EngineError::NoJournalEntry { tweak_id: "t".into() },
         EngineError::Blocked {
             reason: BlockedReason::new(BlockedCode::AntiCheatEligibility, "m").with_trigger("fortnite"),
@@ -797,6 +801,7 @@ fn every_engine_error_variant_has_a_fixture() {
             | EngineError::Win32 { .. }
             | EngineError::Storage { .. }
             | EngineError::InsecureStorage { .. }
+            | EngineError::SettingsFile { .. }
             | EngineError::NoJournalEntry { .. }
             | EngineError::Blocked { .. }
             | EngineError::UnknownTweak { .. }

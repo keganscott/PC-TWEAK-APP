@@ -46,6 +46,11 @@ pub enum EngineError {
     /// writes, so its contents cannot be trusted and mutation is refused.
     InsecureStorage { path: String, detail: String },
 
+    /// A settings file outside PeakTweaks (a game's) could not be read or
+    /// replaced, or is not one PeakTweaks will touch: a link, a hard link,
+    /// read-only (`settings_file.rs`).
+    SettingsFile { path: String, detail: String },
+
     /// The journal has no record of this tweak, so there is nothing to restore.
     NoJournalEntry { tweak_id: String },
 
@@ -113,6 +118,7 @@ impl fmt::Display for EngineError {
             Self::InsecureStorage { path, detail } => {
                 write!(f, "{path} is not safe to trust: {detail}")
             }
+            Self::SettingsFile { path, detail } => write!(f, "{path}: {detail}"),
             Self::NoJournalEntry { tweak_id } => {
                 write!(f, "no journal entry for {tweak_id}")
             }

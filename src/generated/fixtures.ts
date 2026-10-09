@@ -307,6 +307,11 @@ export const engineErrors = [
     "detail": "d"
   },
   {
+    "kind": "settings_file",
+    "path": "C:\\Users\\Kegan\\AppData\\Local\\FortniteGame\\Saved\\Config\\WindowsClient\\GameUserSettings.ini",
+    "detail": "is read-only, so PeakTweaks leaves it as it is"
+  },
+  {
     "kind": "no_journal_entry",
     "tweakId": "t"
   },

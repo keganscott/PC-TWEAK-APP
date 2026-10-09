@@ -333,6 +333,155 @@ const REQUIREMENTS: &[Requirement] = &[
         requires: &[],
         scope: "",
         source: "",
+    },    Requirement {
+        game_id: "cod",
+        requires: &[SecurityFeature::Tpm, SecurityFeature::SecureBoot],
+        scope: "Black Ops 7 and Warzone",
+        // VERIFY against the publisher's own page (NOTES N99).
+        source: "Activision's announcement for Black Ops 7, from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "league",
+        requires: &[SecurityFeature::Tpm, SecurityFeature::SecureBoot],
+        scope: "playing on Windows 11",
+        // VERIFY against the publisher's own page (NOTES N99).
+        source: "Riot Vanguard's requirements, the same as Valorant's, from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "dota2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "pubg",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "overwatch",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "r6siege",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "rocketleague",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "gta5",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "marvelrivals",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "destiny2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "rust",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "tarkov",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "thefinals",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "tf2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "dbd",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "warframe",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "wow",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "genshin",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "eafc",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "helldivers2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "poe2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "deltaforce",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "battlefield6",
+        requires: &[SecurityFeature::SecureBoot],
+        scope: "playing",
+        // VERIFY against the publisher's own page (NOTES N99).
+        source: "EA's requirements for Battlefield 6 (EA Javelin), from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "naraka",
+        requires: &[],
+        scope: "",
+        source: "",
     },
 ];
 

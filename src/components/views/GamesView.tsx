@@ -35,6 +35,12 @@ export function GamesView() {
   // with more than one chip.
   const twoChips = audit?.scan.findings.some((f) => f.id === "gpu.choice") ?? false;
   const choices = twoChips ? (audit?.env.gpuChoices ?? []) : [];
+  const featured = games.filter((g) => g.featured);
+  const others = games.filter((g) => !g.featured).sort((a, b) => a.name.localeCompare(b.name));
+  // A card for each featured game, and for the main game when it is from the list.
+  const shown = (readiness?.perGame ?? []).filter(
+    (g) => g.gameId === target || featured.some((f) => f.id === g.gameId),
+  );
 
   return (
     <>
@@ -44,14 +50,14 @@ export function GamesView() {
       />
       <div className="flex max-w-4xl flex-col gap-5 2xl:max-w-6xl">
         <Card>
-          <fieldset>
+          <fieldset disabled={targetOp.status === "running"}>
             <legend className="mb-3 font-bold">Main game</legend>
             <div className="flex flex-wrap gap-2">
-              {[{ id: null as string | null, name: "None" }, ...games].map((g) => {
+              {featured.map((g) => {
                 const checked = target === g.id;
                 return (
                   <label
-                    key={g.id ?? "none"}
+                    key={g.id}
                     className={`cursor-pointer rounded-lg border px-3.5 py-2 text-sm has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-lime ${
                       checked ? "border-violet bg-violet font-bold text-white" : "border-line-strong text-ink-muted hover:bg-surface-2 hover:text-ink"
                     }`}
@@ -61,13 +67,43 @@ export function GamesView() {
                       name="target-game"
                       className="sr-only"
                       checked={checked}
-                      disabled={targetOp.status === "running"}
                       onChange={() => void selectTargetGame(g.id)}
                     />
                     {g.name}
                   </label>
                 );
               })}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label htmlFor="other-game" className="text-sm text-ink-muted">
+                Or another game
+              </label>
+              <select
+                id="other-game"
+                value={target !== null && !featured.some((g) => g.id === target) ? target : ""}
+                onChange={(e) => {
+                  if (e.target.value) void selectTargetGame(e.target.value);
+                }}
+                className={`min-w-60 rounded-md border bg-surface-0 px-3 py-2 text-sm ${
+                  target !== null && others.some((g) => g.id === target) ? "border-violet font-bold" : "border-line-strong"
+                }`}
+              >
+                <option value="">More games</option>
+                {others.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+              {target !== null && (
+                <button
+                  type="button"
+                  onClick={() => void selectTargetGame(null)}
+                  className="text-sm font-semibold text-ink-muted underline-offset-2 hover:text-ink hover:underline"
+                >
+                  No main game
+                </button>
+              )}
             </div>
           </fieldset>
           {targetOp.status === "failed" && (
@@ -116,12 +152,16 @@ export function GamesView() {
               {sample && <SampleBadge />}
             </div>
             <ul className="flex flex-col gap-3">
-              {readiness.perGame.map((g) => (
+              {shown.map((g) => (
                 <li key={g.gameId}>
                   <GameCard
                     readiness={g}
                     name={games.find((x) => x.id === g.gameId)?.name ?? g.gameId}
-                    install={installs ? (installs.find((i) => i.gameId === g.gameId) ?? null) : undefined}
+                    install={
+                      installs && games.find((x) => x.id === g.gameId)?.lookedFor
+                        ? (installs.find((i) => i.gameId === g.gameId) ?? null)
+                        : undefined
+                    }
                     choice={choices.find((c) => c.gameId === g.gameId)}
                   />
                 </li>

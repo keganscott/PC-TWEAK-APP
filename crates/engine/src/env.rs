@@ -112,45 +112,74 @@ impl License {
 pub struct GameInfo {
     pub id: &'static str,
     pub name: &'static str,
+    /// One of the competitive shooters shown as buttons on Games; the rest
+    /// are in its list of the most-played games (Kegan, 2026-10-09).
+    pub featured: bool,
+    /// PeakTweaks looks for this game's install (`game_installs.rs`), so "not
+    /// found" means something. For the other games it is not looked for.
+    pub looked_for: bool,
 }
 
 /// Kegan's answer to "Add Valorant, CS2 and Apex Legends to PeakTweaks' game
-/// list?" (plan section 11, item 5; NOTES N75). Until he answers, they are
-/// recognised but not offered: not listed, not selectable, no per-game tools,
-/// not reported as found. Flip to `true` to offer them.
-pub const OFFER_VALORANT_CS2_APEX: bool = false;
+/// list?" (plan section 11, item 5; NOTES N75): yes, 2026-10-09 ("5 options
+/// for top 5 most competitive FPS games like apex"). Offering a game lists it
+/// and lets it be picked; its per-game tools still wait on its anti-cheat
+/// (`games::anti_cheat_block`, N75).
+pub const OFFER_VALORANT_CS2_APEX: bool = true;
 
-const FORTNITE: GameInfo = GameInfo {
-    id: "fortnite",
-    name: "Fortnite",
-};
-const MINECRAFT: GameInfo = GameInfo {
-    id: "minecraft",
-    name: "Minecraft",
-};
-const ROBLOX: GameInfo = GameInfo {
-    id: "roblox",
-    name: "Roblox",
-};
-const VALORANT: GameInfo = GameInfo {
-    id: "valorant",
-    name: "Valorant",
-};
-const CS2: GameInfo = GameInfo {
-    id: "cs2",
-    name: "Counter-Strike 2",
-};
-const APEX: GameInfo = GameInfo {
-    id: "apex",
-    name: "Apex Legends",
-};
+const fn game(id: &'static str, name: &'static str, featured: bool, looked_for: bool) -> GameInfo {
+    GameInfo {
+        id,
+        name,
+        featured,
+        looked_for,
+    }
+}
+
+const FORTNITE: GameInfo = game("fortnite", "Fortnite", true, true);
+const MINECRAFT: GameInfo = game("minecraft", "Minecraft", false, true);
+const ROBLOX: GameInfo = game("roblox", "Roblox", false, true);
 
 /// Every game PeakTweaks can recognise, offered or not (`games.rs` has their
-/// anti-cheat and program files).
-pub const ALL_GAMES: &[GameInfo] = &[FORTNITE, MINECRAFT, ROBLOX, VALORANT, CS2, APEX];
+/// anti-cheat and program files). The five featured shooters, then the
+/// most-played games on PC (Kegan asked for about 25; the list is mine, from
+/// public player-count charts as I recall them, NOTES N99). Only the first
+/// six have install detection and program files; the others can be picked as
+/// the main game but have no per-game tools.
+pub const ALL_GAMES: &[GameInfo] = &[
+    FORTNITE,
+    MINECRAFT,
+    ROBLOX,
+    game("valorant", "Valorant", true, true),
+    game("cs2", "Counter-Strike 2", true, true),
+    game("apex", "Apex Legends", true, true),
+    game("cod", "Call of Duty", true, false),
+    game("league", "League of Legends", false, false),
+    game("dota2", "Dota 2", false, false),
+    game("pubg", "PUBG: Battlegrounds", false, false),
+    game("overwatch", "Overwatch 2", false, false),
+    game("r6siege", "Rainbow Six Siege", false, false),
+    game("rocketleague", "Rocket League", false, false),
+    game("gta5", "Grand Theft Auto V", false, false),
+    game("marvelrivals", "Marvel Rivals", false, false),
+    game("destiny2", "Destiny 2", false, false),
+    game("rust", "Rust", false, false),
+    game("tarkov", "Escape from Tarkov", false, false),
+    game("thefinals", "The Finals", false, false),
+    game("tf2", "Team Fortress 2", false, false),
+    game("dbd", "Dead by Daylight", false, false),
+    game("warframe", "Warframe", false, false),
+    game("wow", "World of Warcraft", false, false),
+    game("genshin", "Genshin Impact", false, false),
+    game("eafc", "EA Sports FC", false, false),
+    game("helldivers2", "Helldivers 2", false, false),
+    game("poe2", "Path of Exile 2", false, false),
+    game("deltaforce", "Delta Force", false, false),
+    game("battlefield6", "Battlefield 6", false, false),
+    game("naraka", "Naraka: Bladepoint", false, false),
+];
 
-/// The games offered: the titles named in the plan's game cards, and the three
-/// above once Kegan says so. Ids are validated against this list.
+/// The games offered. Ids are validated against this list.
 pub const KNOWN_GAMES: &[GameInfo] = if OFFER_VALORANT_CS2_APEX {
     ALL_GAMES
 } else {

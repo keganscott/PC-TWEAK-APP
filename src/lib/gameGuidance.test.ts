@@ -4,10 +4,12 @@ import * as fx from "../generated/fixtures";
 import { GAME_GUIDANCE } from "./gameGuidance";
 
 describe("game guidance", () => {
-  it("covers every game the engine knows, and only those", () => {
-    const known = fx.systemAudit.antiCheat!.perGame.map((g) => g.gameId).sort();
+  it("covers the plan's three games, and only games the engine knows", () => {
+    // The others have no checked advice yet, so their cards show none.
+    const known = fx.systemAudit.antiCheat!.perGame.map((g) => g.gameId);
     expect(known.length).toBeGreaterThan(0);
-    expect(Object.keys(GAME_GUIDANCE).sort()).toEqual(known);
+    for (const id of Object.keys(GAME_GUIDANCE)) expect(known, id).toContain(id);
+    expect(Object.keys(GAME_GUIDANCE).sort()).toEqual(["fortnite", "minecraft", "roblox"]);
   });
 
   it("advice always names its source, and no source means no advice", () => {

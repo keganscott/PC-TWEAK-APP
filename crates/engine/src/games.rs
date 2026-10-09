@@ -29,6 +29,12 @@ pub enum AntiCheat {
     Hyperion,
     Vanguard,
     Vac,
+    Ricochet,
+    Javelin,
+    AntiCheatExpert,
+    GameGuard,
+    /// The game runs an anti-cheat PeakTweaks has not identified yet.
+    NotIdentified,
 }
 
 impl AntiCheat {
@@ -39,6 +45,11 @@ impl AntiCheat {
             AntiCheat::Hyperion => "Hyperion",
             AntiCheat::Vanguard => "Riot Vanguard",
             AntiCheat::Vac => "Valve Anti-Cheat",
+            AntiCheat::Ricochet => "Ricochet",
+            AntiCheat::Javelin => "EA Javelin",
+            AntiCheat::AntiCheatExpert => "Anti-Cheat Expert",
+            AntiCheat::GameGuard => "nProtect GameGuard",
+            AntiCheat::NotIdentified => "an anti-cheat not identified yet",
         }
     }
 }
@@ -49,7 +60,9 @@ pub struct GameFacts {
     pub anti_cheat: &'static [AntiCheat],
     /// The program file names Windows starts for the game itself, the names
     /// its per-program settings are keyed by. Empty when the game runs inside
-    /// a shared program (Minecraft Java Edition runs in Java).
+    /// a shared program (Minecraft Java Edition runs in Java), or when they
+    /// have not been checked yet (every game after Apex): no per-game tool is
+    /// offered for a game without one.
     pub programs: &'static [&'static str],
     /// True when the program's folder stays put between updates, so a setting
     /// Windows keeps by full path (fullscreen optimizations) lasts. Roblox
@@ -95,6 +108,153 @@ pub const GAME_FACTS: &[GameFacts] = &[
         // The DirectX 11 and DirectX 12 builds.
         programs: &["r5apex.exe", "r5apex_dx12.exe"],
         stable_path: true,
+    },
+    // The rest of the list (`env::ALL_GAMES`): anti-cheat from memory, and
+    // `NotIdentified` where I am not sure which one it runs (VERIFY, NOTES
+    // N99). No program files yet, so no per-game tools.
+    GameFacts {
+        id: "cod",
+        anti_cheat: &[AntiCheat::Ricochet],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "league",
+        anti_cheat: &[AntiCheat::Vanguard],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "dota2",
+        anti_cheat: &[AntiCheat::Vac],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "pubg",
+        anti_cheat: &[AntiCheat::BattlEye],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "overwatch",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "r6siege",
+        anti_cheat: &[AntiCheat::BattlEye],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "rocketleague",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "gta5",
+        anti_cheat: &[AntiCheat::BattlEye],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "marvelrivals",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "destiny2",
+        anti_cheat: &[AntiCheat::BattlEye],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "rust",
+        anti_cheat: &[AntiCheat::EasyAntiCheat],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "tarkov",
+        anti_cheat: &[AntiCheat::BattlEye],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "thefinals",
+        anti_cheat: &[AntiCheat::EasyAntiCheat],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "tf2",
+        anti_cheat: &[AntiCheat::Vac],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "dbd",
+        anti_cheat: &[AntiCheat::EasyAntiCheat],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "warframe",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "wow",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "genshin",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "eafc",
+        anti_cheat: &[AntiCheat::Javelin],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "helldivers2",
+        anti_cheat: &[AntiCheat::GameGuard],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "poe2",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "deltaforce",
+        anti_cheat: &[AntiCheat::AntiCheatExpert],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "battlefield6",
+        anti_cheat: &[AntiCheat::Javelin],
+        programs: &[],
+        stable_path: false,
+    },
+    GameFacts {
+        id: "naraka",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
     },
 ];
 
@@ -149,6 +309,28 @@ mod tests {
                     f.id
                 );
             }
+        }
+    }
+
+    #[test]
+    fn five_featured_shooters_and_twenty_five_more_each_once() {
+        // Kegan, 2026-10-09: five buttons, then about 25 most-played games.
+        let featured = ALL_GAMES.iter().filter(|g| g.featured).count();
+        assert_eq!(featured, 5);
+        assert_eq!(ALL_GAMES.len() - featured, 25);
+        let mut ids: Vec<&str> = ALL_GAMES.iter().map(|g| g.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), ALL_GAMES.len(), "an id is listed twice");
+        // Install detection exists exactly for the games with program files
+        // or a known data folder (`game_installs.rs`).
+        for g in ALL_GAMES {
+            assert_eq!(
+                g.looked_for,
+                matches!(g.id, "fortnite" | "minecraft" | "roblox" | "valorant" | "cs2" | "apex"),
+                "{}",
+                g.id
+            );
         }
     }
 

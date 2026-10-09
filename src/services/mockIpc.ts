@@ -254,12 +254,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     sample: true,
     context: () => reply("context", [], () => clone(fx.contextInfo)),
     listTweaks: () => reply("listTweaks", [], () => clone(tweaks)),
-    listGames: () =>
-      reply("listGames", [], () => [
-        { id: "fortnite", name: "Fortnite" },
-        { id: "minecraft", name: "Minecraft" },
-        { id: "roblox", name: "Roblox" },
-      ]),
+    listGames: () => reply("listGames", [], () => clone(fx.games)),
     getSettings: () => reply("getSettings", [], () => clone(settings)),
     setSettings: (s) =>
       reply("setSettings", [s], () => {
@@ -269,7 +264,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       }),
     selectTargetGame: (gameId) =>
       reply("selectTargetGame", [gameId], () => {
-        if (gameId !== null && !["fortnite", "minecraft", "roblox"].includes(gameId)) {
+        if (gameId !== null && !fx.games.some((g) => g.id === gameId)) {
           throw new EngineFault({ kind: "unknown_game", gameId });
         }
         targetGame = gameId;

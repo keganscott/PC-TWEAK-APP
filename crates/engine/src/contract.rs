@@ -648,6 +648,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { ContextInfo } from \"./ContextInfo\";\n\
          import type { DriveOptimization } from \"./DriveOptimization\";\n\
          import type { EngineError } from \"./EngineError\";\n\
+         import type { GameInfo } from \"./GameInfo\";\n\
          import type { JournalView } from \"./JournalView\";\n\
          import type { MsiDeviceList } from \"./MsiDeviceList\";\n\
          import type { NetworkCheck } from \"./NetworkCheck\";\n\
@@ -779,6 +780,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         },
     );
 
+    ts_const(&mut out, "games", "GameInfo[]", &crate::env::KNOWN_GAMES);
     ts_const(&mut out, "startupList", "StartupList", &startup_list());
     ts_const(&mut out, "msiDevices", "MsiDeviceList", &msi_devices());
 

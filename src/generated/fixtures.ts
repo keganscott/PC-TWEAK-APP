@@ -6,6 +6,7 @@ import type { Comparison } from "./Comparison";
 import type { ContextInfo } from "./ContextInfo";
 import type { DriveOptimization } from "./DriveOptimization";
 import type { EngineError } from "./EngineError";
+import type { GameInfo } from "./GameInfo";
 import type { JournalView } from "./JournalView";
 import type { MsiDeviceList } from "./MsiDeviceList";
 import type { NetworkCheck } from "./NetworkCheck";
@@ -604,6 +605,282 @@ export const systemAudit = {
         "status": {
           "status": "no_known_requirements"
         }
+      },
+      {
+        "gameId": "valorant",
+        "requires": [
+          "tpm",
+          "secure_boot"
+        ],
+        "scope": "playing on Windows 11",
+        "source": "Riot's support articles for the VAN 9001 and VAN 9003 errors, from memory. Not independently verified.",
+        "status": {
+          "status": "not_ready",
+          "missing": [
+            "secure_boot"
+          ],
+          "unresolved": [
+            "tpm"
+          ]
+        }
+      },
+      {
+        "gameId": "cs2",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "apex",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "cod",
+        "requires": [
+          "tpm",
+          "secure_boot"
+        ],
+        "scope": "Black Ops 7 and Warzone",
+        "source": "Activision's announcement for Black Ops 7, from memory. Not independently verified.",
+        "status": {
+          "status": "not_ready",
+          "missing": [
+            "secure_boot"
+          ],
+          "unresolved": [
+            "tpm"
+          ]
+        }
+      },
+      {
+        "gameId": "league",
+        "requires": [
+          "tpm",
+          "secure_boot"
+        ],
+        "scope": "playing on Windows 11",
+        "source": "Riot Vanguard's requirements, the same as Valorant's, from memory. Not independently verified.",
+        "status": {
+          "status": "not_ready",
+          "missing": [
+            "secure_boot"
+          ],
+          "unresolved": [
+            "tpm"
+          ]
+        }
+      },
+      {
+        "gameId": "dota2",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "pubg",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "overwatch",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "r6siege",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "rocketleague",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "gta5",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "marvelrivals",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "destiny2",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "rust",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "tarkov",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "thefinals",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "tf2",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "dbd",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "warframe",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "wow",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "genshin",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "eafc",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "helldivers2",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "poe2",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "deltaforce",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
+      },
+      {
+        "gameId": "battlefield6",
+        "requires": [
+          "secure_boot"
+        ],
+        "scope": "playing",
+        "source": "EA's requirements for Battlefield 6 (EA Javelin), from memory. Not independently verified.",
+        "status": {
+          "status": "not_ready",
+          "missing": [
+            "secure_boot"
+          ],
+          "unresolved": []
+        }
+      },
+      {
+        "gameId": "naraka",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
       }
     ]
   },
@@ -977,9 +1254,195 @@ export const playStatus = {
   "watched": [
     "fortnite",
     "roblox",
+    "valorant",
+    "cs2",
+    "apex",
     "minecraft"
   ]
 } satisfies PlayStatus;
+
+export const games = [
+  {
+    "id": "fortnite",
+    "name": "Fortnite",
+    "featured": true,
+    "lookedFor": true
+  },
+  {
+    "id": "minecraft",
+    "name": "Minecraft",
+    "featured": false,
+    "lookedFor": true
+  },
+  {
+    "id": "roblox",
+    "name": "Roblox",
+    "featured": false,
+    "lookedFor": true
+  },
+  {
+    "id": "valorant",
+    "name": "Valorant",
+    "featured": true,
+    "lookedFor": true
+  },
+  {
+    "id": "cs2",
+    "name": "Counter-Strike 2",
+    "featured": true,
+    "lookedFor": true
+  },
+  {
+    "id": "apex",
+    "name": "Apex Legends",
+    "featured": true,
+    "lookedFor": true
+  },
+  {
+    "id": "cod",
+    "name": "Call of Duty",
+    "featured": true,
+    "lookedFor": false
+  },
+  {
+    "id": "league",
+    "name": "League of Legends",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "dota2",
+    "name": "Dota 2",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "pubg",
+    "name": "PUBG: Battlegrounds",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "overwatch",
+    "name": "Overwatch 2",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "r6siege",
+    "name": "Rainbow Six Siege",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "rocketleague",
+    "name": "Rocket League",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "gta5",
+    "name": "Grand Theft Auto V",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "marvelrivals",
+    "name": "Marvel Rivals",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "destiny2",
+    "name": "Destiny 2",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "rust",
+    "name": "Rust",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "tarkov",
+    "name": "Escape from Tarkov",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "thefinals",
+    "name": "The Finals",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "tf2",
+    "name": "Team Fortress 2",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "dbd",
+    "name": "Dead by Daylight",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "warframe",
+    "name": "Warframe",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "wow",
+    "name": "World of Warcraft",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "genshin",
+    "name": "Genshin Impact",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "eafc",
+    "name": "EA Sports FC",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "helldivers2",
+    "name": "Helldivers 2",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "poe2",
+    "name": "Path of Exile 2",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "deltaforce",
+    "name": "Delta Force",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "battlefield6",
+    "name": "Battlefield 6",
+    "featured": false,
+    "lookedFor": false
+  },
+  {
+    "id": "naraka",
+    "name": "Naraka: Bladepoint",
+    "featured": false,
+    "lookedFor": false
+  }
+] satisfies GameInfo[];
 
 export const startupList = {
   "apps": [

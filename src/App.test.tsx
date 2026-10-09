@@ -218,7 +218,7 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
     const section = await screen.findByRole("region", { name: /While you play/ });
-    expect(await within(section).findByText("Watching for Fortnite, Roblox and Minecraft (Bedrock Edition).")).toBeTruthy();
+    expect(await within(section).findByText("Watching for Fortnite, Roblox, Valorant, Counter-Strike 2, Apex Legends and Minecraft (Bedrock Edition).")).toBeTruthy();
     expect((within(section).getByRole("switch", { name: "Gaming Mode" }) as HTMLInputElement).checked).toBe(false);
   });
 
@@ -705,10 +705,43 @@ describe("review regressions", () => {
     // The sample PC is not a two-chip laptop, so no graphics-chip line.
     expect(within(fortnite).queryByText(/Graphics chip/)).toBeNull();
 
+    // A game from the list gets its card once it is the main game.
+    expect(screen.getAllByRole("heading", { level: 3 }).some((h) => h.textContent === "Minecraft")).toBe(false);
+    await userEvent.selectOptions(screen.getByLabelText("Or another game"), "minecraft");
+    await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 }).some((h) => h.textContent === "Minecraft")).toBe(true));
     const minecraft = card("Minecraft");
     expect(within(minecraft).getByText("Not found in the places PeakTweaks looks.")).toBeTruthy();
     expect(within(minecraft).getByText(/no Minecraft settings advice yet/)).toBeTruthy();
     expect(within(minecraft).queryByText(/Source:/)).toBeNull();
+  });
+
+  it("the main game is one of five shooters, or any game from the list of the most played", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const buttons = screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent);
+    expect(buttons).toEqual(["Fortnite", "Valorant", "Counter-Strike 2", "Apex Legends", "Call of Duty"]);
+    const list = screen.getByLabelText("Or another game") as HTMLSelectElement;
+    // A placeholder, then 25 games in name order, none of them a button.
+    const names = Array.from(list.options).slice(1).map((o) => o.text);
+    expect(names).toHaveLength(25);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    expect(names.filter((n) => buttons.includes(n))).toEqual([]);
+
+    await userEvent.click(screen.getByRole("radio", { name: "Apex Legends" }));
+    await waitFor(() => expect((screen.getByRole("radio", { name: "Apex Legends" }) as HTMLInputElement).checked).toBe(true));
+    expect(list.value).toBe("");
+
+    await userEvent.selectOptions(list, "rust");
+    await waitFor(() => expect(list.value).toBe("rust"));
+    expect(screen.getAllByRole("radio").every((r) => !(r as HTMLInputElement).checked)).toBe(true);
+    // Not looked for, so the card does not claim it is missing.
+    const rust = screen.getAllByRole("heading", { level: 3 }).find((h) => h.textContent === "Rust")!.closest("li") as HTMLElement;
+    expect(within(rust).queryByText("Not found in the places PeakTweaks looks.")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "No main game" }));
+    await waitFor(() => expect(list.value).toBe(""));
+    expect(screen.queryByRole("button", { name: "No main game" })).toBeNull();
   });
 
   it("the proof guide walks before runs, one change, then after runs", async () => {

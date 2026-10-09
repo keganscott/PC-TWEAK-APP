@@ -35,22 +35,35 @@ export function notForThisPc(t: TweakView): boolean {
   return t.state.status === "blocked" && NOT_HERE.includes(t.state.reason.code);
 }
 
+/** Does a change match what was typed in Tools' search box? Every word must
+ * appear in its name, summary, cost line, category or what it changes. */
+export function matchesSearch(t: TweakView, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const text = [t.name, t.summary, t.tradeoff ?? "", t.category, t.target].join(" ").toLowerCase();
+  return words.every((w) => text.includes(w));
+}
+
 export function ToolsView() {
   const tweaks = useStore((s) => s.tweaks);
   // null until the audit has answered (or if it failed): the engine still
   // checks at apply time, so only a definite "no restore point" locks the UI.
   const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
   const [advanced, setAdvanced] = useState(false);
+  const [query, setQuery] = useState("");
   const advancedId = useId();
+  const searchId = useId();
   const canMake = useCanMakeRestorePoint();
 
   const groups = useMemo(() => {
-    const visible = tweaks.filter((t) => advanced || t.safety === "safe");
+    const visible = tweaks.filter((t) => (advanced || t.safety === "safe") && matchesSearch(t, query));
     const byCategory = new Map<string, TweakView[]>();
     for (const t of visible) byCategory.set(t.category, [...(byCategory.get(t.category) ?? []), t]);
     return [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [tweaks, advanced]);
+  }, [tweaks, advanced, query]);
   const hiddenCount = tweaks.filter((t) => t.safety !== "safe").length;
+  // Matches the search would show with Advanced on.
+  const hiddenMatches = advanced || !query.trim() ? 0 : tweaks.filter((t) => t.safety !== "safe" && matchesSearch(t, query)).length;
   // Settings this PC already has count as done, whoever set them: they are
   // listed, not hidden, so the user sees the whole set. Changes this PC
   // cannot take are not counted.
@@ -89,12 +102,39 @@ export function ToolsView() {
               : "A restore point lets Windows put the whole PC back the way it is now. One click makes it; it can take a minute."}
           </Callout>
         )}
-        {forThisPc > 0 && (
-          <p className="text-sm text-ink-muted">
-            {doneCount} of {forThisPc} already optimized on this PC.
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {forThisPc > 0 && (
+            <p className="text-sm text-ink-muted">
+              {doneCount} of {forThisPc} already optimized on this PC.
+            </p>
+          )}
+          <div className="w-full sm:w-72">
+            <label htmlFor={searchId} className="sr-only">
+              Search the tools
+            </label>
+            <input
+              id={searchId}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search the tools"
+              className="w-full rounded-lg border border-line bg-surface-1 px-3 py-2 text-sm placeholder:text-ink-faint focus:border-violet-soft focus:outline-none"
+            />
+          </div>
+        </div>
+        {hiddenMatches > 0 && (
+          <p className="text-sm text-ink-muted" role="status">
+            {hiddenMatches} more {hiddenMatches === 1 ? "tool matches" : "tools match"} under Advanced.{" "}
+            <button type="button" className="font-bold text-ink underline" onClick={() => setAdvanced(true)}>
+              Show Advanced
+            </button>
           </p>
         )}
-        {groups.length === 0 && <p className="text-sm text-ink-muted">No changes are available in this view.</p>}
+        {groups.length === 0 && (
+          <p className="text-sm text-ink-muted">
+            {query.trim() ? `No tools match "${query.trim()}".` : "No changes are available in this view."}
+          </p>
+        )}
         {groups.map(([category, list]) => (
           <section key={category} aria-labelledby={`cat-${category}`}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -619,7 +659,14 @@ export function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boo
             </p>
           )}
           {restartLine && <p className="mt-2 text-xs text-ink-faint">Takes effect after a restart.</p>}
-          {technical && <p className="mt-2 break-all font-mono text-xs text-ink-faint">{tweak.target}</p>}
+          {technical ? (
+            <p className="mt-2 break-all font-mono text-xs text-ink-faint">{tweak.target}</p>
+          ) : (
+            <details className="mt-2 text-xs text-ink-muted">
+              <summary className="cursor-pointer font-semibold">What this changes</summary>
+              <p className="mt-1 break-all font-mono text-ink-faint">{tweak.target}</p>
+            </details>
+          )}
         </div>
         <div className="flex shrink-0 gap-2">
           {foreign ? null : applied ? (

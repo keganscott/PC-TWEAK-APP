@@ -151,6 +151,32 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: "Apply all basic changes (1)" })).toBeTruthy();
   });
 
+  it("Tools search narrows the list, points to Advanced matches, and every tool says what it changes", async () => {
+    const base = createMockBackend();
+    renderApp({
+      ...base,
+      listTweaks: async () =>
+        (await base.listTweaks()).map((t) => (t.id === "fixture.blocked" ? { ...t, safety: "moderate" as const } : t)),
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const search = await screen.findByRole("searchbox", { name: "Search the tools" });
+    expect(screen.getByText("Sample setting B")).toBeTruthy();
+
+    await userEvent.type(search, "not applied");
+    expect(screen.getByText("Sample setting A")).toBeTruthy();
+    expect(screen.queryByText("Sample setting B")).toBeNull();
+    const card = screen.getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(card).getByText("What this changes")).toBeTruthy();
+    expect(within(card).getByText(/PeakTweaks\\Sample\\fixture\.default/)).toBeTruthy();
+
+    await userEvent.clear(search);
+    await userEvent.type(search, "not available");
+    expect(screen.getByText("No tools match \"not available\".")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Show Advanced" }));
+    expect(await screen.findByText("Sample setting D")).toBeTruthy();
+  });
+
   it("each Tools category has Apply recommended", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

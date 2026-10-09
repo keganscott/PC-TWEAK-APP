@@ -219,16 +219,16 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn place() -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp
-            .path()
+    /// The temp folder, its real path, and a game's settings folder in it.
+    fn place() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let (tmp, base) = crate::testutil::real_temp();
+        let dir = base
             .join("FortniteGame")
             .join("Saved")
             .join("Config")
             .join("WindowsClient");
         fs::create_dir_all(&dir).unwrap();
-        (tmp, dir)
+        (tmp, base, dir)
     }
 
     fn detail(e: EngineError) -> String {
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn a_file_is_replaced_whole_read_back_and_deleted() {
-        let (_tmp, dir) = place();
+        let (_tmp, _, dir) = place();
         let file = dir.join("GameUserSettings.ini");
         assert_eq!(read(&file).unwrap(), None);
 
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn a_file_whose_folder_does_not_exist_is_not_created() {
-        let (_tmp, dir) = place();
+        let (_tmp, _, dir) = place();
         let file = dir.join("missing").join("GameUserSettings.ini");
         assert_eq!(read(&file).unwrap(), None);
         assert!(detail(write(&file, Some(b"x")).unwrap_err()).contains("does not exist yet"));
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn a_read_only_file_is_left_as_it_is() {
-        let (_tmp, dir) = place();
+        let (_tmp, _, dir) = place();
         let file = dir.join("GameUserSettings.ini");
         fs::write(&file, b"mine").unwrap();
         let mut perms = fs::metadata(&file).unwrap().permissions();
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn a_new_version_left_over_from_a_crash_does_not_stop_the_next_write() {
-        let (_tmp, dir) = place();
+        let (_tmp, _, dir) = place();
         let file = dir.join("GameUserSettings.ini");
         fs::write(&file, b"old").unwrap();
         fs::write(dir.join(".GameUserSettings.ini.peaktweaks-new"), b"half").unwrap();
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn a_hard_link_is_left_alone() {
-        let (tmp, dir) = place();
-        let elsewhere = tmp.path().join("precious.ini");
+        let (_tmp, base, dir) = place();
+        let elsewhere = base.join("precious.ini");
         fs::write(&elsewhere, b"precious").unwrap();
         let file = dir.join("GameUserSettings.ini");
         fs::hard_link(&elsewhere, &file).unwrap();
@@ -329,8 +329,8 @@ mod tests {
     #[test]
     fn links_on_the_way_are_left_alone() {
         use std::os::unix::fs::symlink;
-        let (tmp, dir) = place();
-        let elsewhere = tmp.path().join("elsewhere");
+        let (_tmp, base, dir) = place();
+        let elsewhere = base.join("elsewhere");
         fs::create_dir_all(&elsewhere).unwrap();
         fs::write(elsewhere.join("GameUserSettings.ini"), b"precious").unwrap();
 
@@ -369,8 +369,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_junction_on_the_way_is_left_alone() {
-        let (tmp, dir) = place();
-        let precious = tmp.path().join("precious");
+        let (_tmp, base, dir) = place();
+        let precious = base.join("precious");
         fs::create_dir_all(&precious).unwrap();
         fs::write(precious.join("GameUserSettings.ini"), b"precious").unwrap();
 

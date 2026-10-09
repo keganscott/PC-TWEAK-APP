@@ -205,8 +205,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_held_folder_cannot_be_renamed_until_it_is_let_go() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = tmp.path();
+        let (_tmp, base) = crate::testutil::real_temp();
         let dir = base.join("a").join("b");
         fs::create_dir_all(&dir).unwrap();
         let held = hold_chain(&dir).expect("a real folder").expect("it exists");

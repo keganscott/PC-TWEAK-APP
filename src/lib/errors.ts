@@ -49,7 +49,7 @@ export function explain(error: EngineError): ErrorText {
         detail: `${error.path}\\${error.value} (type ${error.vtype})`,
       };
     case "win32":
-      return { title: "A Windows call failed.", hint: null, detail: `${error.call} (${error.code}): ${error.detail}` };
+      return { ...win32Text(error.code), detail: `${error.call} (${error.code}): ${error.detail}` };
     case "storage":
       return { title: "PeakTweaks could not save its records.", hint: "Check free disk space, then try again.", detail: `${error.path}: ${error.detail}` };
     case "insecure_storage":
@@ -73,7 +73,7 @@ export function explain(error: EngineError): ErrorText {
     case "context_violation":
       return { title: "PeakTweaks stopped a change that went outside what it may touch.", hint: null, detail: error.detail };
     case "command":
-      return { title: `${error.what} did not finish.`, hint: null, detail: error.detail };
+      return { ...commandText(error.what, error.detail), detail: `${error.what}: ${error.detail}` };
     case "wmi":
       return {
         title: error.timedOut ? "Windows took too long to answer." : "Windows could not answer a question about this PC.",
@@ -88,6 +88,64 @@ export function explain(error: EngineError): ErrorText {
         hint: "Close this window and use the one that is already open. If the field-check tool is running, let it finish first. Only one copy runs at a time so the record of changes stays correct.",
         detail: null,
       };
+  }
+}
+
+// The engine names the step that failed (`what`) in its own terms, often a
+// Windows command; these turn the common ones into a sentence and a next step.
+// Anything not listed keeps the engine's name, so nothing is ever hidden.
+function commandText(what: string, detail: string): Omit<ErrorText, "detail"> {
+  const d = detail.toLowerCase();
+  const timedOut = d.includes("and was stopped");
+  const busy = "Windows was busy and did not answer in time. Try again in a moment.";
+  if (/restore|checkpoint-computer/i.test(what)) {
+    return {
+      title: "Windows did not make a restore point.",
+      hint: timedOut
+        ? busy
+        : "Check that System Protection is on for drive C: and has disk space, then try again. If a restore point was made recently, Windows may skip a new one.",
+    };
+  }
+  if (what === "NVIDIA settings" || what === "AMD graphics settings") {
+    const panel = what === "NVIDIA settings" ? "NVIDIA Control Panel" : "AMD Software";
+    return {
+      title: `The ${what === "NVIDIA settings" ? "NVIDIA" : "AMD"} driver did not accept the change.`,
+      hint: `Try again after restarting PeakTweaks. If it keeps failing, the same setting can be changed in ${panel}.`,
+    };
+  }
+  const service = /^service (.+)$/.exec(what);
+  if (service) return { title: `Windows did not change the service ${service[1]}.`, hint: timedOut ? busy : null };
+  const task = /^scheduled task (.+)$/.exec(what);
+  if (task) return { title: `Windows did not change the scheduled task ${task[1]}.`, hint: timedOut ? busy : null };
+  if (what === "Proof store") return { title: "PeakTweaks could not save the test run.", hint: "Check free disk space, then try again." };
+  if (/presentmon|capture|proof run|frame statistics/i.test(what)) {
+    return {
+      title: "The test run did not finish.",
+      hint: d.includes("wrote no data")
+        ? "No frames were recorded. Keep the game open and in focus for the whole run, then try again."
+        : timedOut
+          ? busy
+          : null,
+    };
+  }
+  if (what === "PowerShell") return { title: "A Windows tool did not finish.", hint: timedOut ? busy : null };
+  return { title: `${what} did not finish.`, hint: timedOut ? busy : null };
+}
+
+// Win32 codes worth a plain sentence (winerror.h); others stay generic.
+function win32Text(code: number): Omit<ErrorText, "detail"> {
+  switch (code) {
+    case 5:
+      return { title: "Windows refused access.", hint: "Another program may be guarding this setting. Try again, or restart Windows first." };
+    case 32:
+    case 33:
+      return { title: "Another program is using a file PeakTweaks needs.", hint: "Close other programs, then try again." };
+    case 112:
+      return { title: "The disk is full.", hint: "Free some disk space, then try again." };
+    case 1460:
+      return { title: "Windows took too long to answer.", hint: "Try again in a moment." };
+    default:
+      return { title: "A Windows call failed.", hint: null };
   }
 }
 

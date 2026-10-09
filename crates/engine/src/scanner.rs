@@ -590,18 +590,33 @@ fn gpu_choice(hw: &HardwareReport, choices: &[GameGpuChoice]) -> Option<Finding>
         if !unknowns.is_empty() {
             lines.push(format!("Could not be read: {}.", unknowns.join("; ")));
         }
+        // One game, with a tool PeakTweaks offers for it now (not held back by
+        // its anti-cheat, N75): that tool is the fix. Otherwise guided only.
+        let fix = match not_high.as_slice() {
+            [only] if crate::games::anti_cheat_block(&only.game_id).is_none() => {
+                crate::tweaks::gpu_pref::HighPerformanceGpu::for_game(&only.game_id).map(|t| {
+                    use crate::types::Tweak;
+                    t.id().to_owned()
+                })
+            }
+            _ => None,
+        };
         let mut f = finding(
             ID,
             Status::Attention,
             "A game is not set to the high-performance graphics chip",
             format!("{lead} {}", lines.join(" ")),
-            Some(
+            Some(if fix.is_some() {
+                "In Windows Settings > System > Display > Graphics, find the game (add it with Browse if it is \
+                 not listed), open its options and choose High performance."
+            } else {
                 "In Windows Settings > System > Display > Graphics, find the game (add it with Browse if it is \
                  not listed), open its options and choose High performance. PeakTweaks does not change this \
-                 setting yet.",
-            ),
-            true,
+                 setting for this game."
+            }),
+            fix.is_none(),
         );
+        f.fix_tweak_id = fix;
         // VERIFY (N56): each Roblox update installs to a new folder.
         if let (Some(remedy), true) = (f.remedy.as_mut(), not_high.iter().any(|c| c.game_id == "roblox")) {
             remedy.push_str(
@@ -1375,7 +1390,15 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::You)));
+        // Fortnite's tool, once its anti-cheat is cleared (N75); until then
+        // the finding stays guided.
+        if crate::games::anti_cheat_block("fortnite").is_none() {
+            assert_eq!(f.fix_tweak_id.as_deref(), Some("gpu.choice.fortnite"));
+            assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::Us)));
+        } else {
+            assert_eq!(f.fix_tweak_id, None);
+            assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::You)));
+        }
         assert_eq!(
             f.reading,
             "This laptop has more than one graphics chip (NVIDIA GeForce RTX 4060 Laptop GPU, Intel UHD). \

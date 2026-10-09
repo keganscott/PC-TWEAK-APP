@@ -8,6 +8,7 @@ pub mod cable;
 pub mod dns;
 pub mod fullscreen;
 pub mod game_ini;
+pub mod gpu_pref;
 pub mod ifeo_priority;
 pub mod mouse_accel;
 pub mod msi;
@@ -46,6 +47,9 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
         all.push(Box::new(t));
     }
     for t in fullscreen::FullscreenOptimizations::offered() {
+        all.push(Box::new(t));
+    }
+    for t in gpu_pref::HighPerformanceGpu::offered() {
         all.push(Box::new(t));
     }
     all

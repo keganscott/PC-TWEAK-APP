@@ -17,6 +17,7 @@ use crate::secure_dir::TrustedDir;
 use crate::system::FakeSystem;
 use crate::testutil::{hklm_dword, user};
 use crate::tweaks::fullscreen::{FullscreenOptimizations, LAYERS};
+use crate::tweaks::gpu_pref::HighPerformanceGpu;
 use crate::tweaks::ifeo_priority::{CsrssPriority, IfeoPriority};
 use crate::types::{BlockedCode, PredicateOutcome, RawValue, SystemEnv, Tier, Tweak, TweakState};
 
@@ -502,8 +503,99 @@ mod game_qos {
     }
 }
 
+fn gpu_value(r: &Rig, exe: &str) -> Option<String> {
+    r.fake
+        .read_value_for_test(Hive::CurrentUser, crate::gpu_choice::KEY, exe)
+        .and_then(|v| v.as_sz())
+}
+
+fn gpu_rig(before: Option<&str>) -> (Rig, &'static str) {
+    const EXE: &str = r"D:\Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe";
+    let r = rig(
+        vec![Box::new(
+            HighPerformanceGpu::for_game("fortnite").unwrap().cleared_for_tests(),
+        )],
+        Some(vec![install("fortnite", Some(EXE))]),
+    );
+    if let Some(data) = before {
+        r.fake
+            .set_external(Hive::CurrentUser, crate::gpu_choice::KEY, EXE, RawValue::sz(data));
+    }
+    (r, EXE)
+}
+
+#[test]
+fn high_performance_chip_is_set_for_the_found_program_and_undo_removes_it() {
+    let (mut r, exe) = gpu_rig(None);
+    assert_eq!(state(&r, "gpu.choice.fortnite"), TweakState::Default);
+    r.engine.apply("gpu.choice.fortnite").unwrap();
+    assert_eq!(gpu_value(&r, exe).as_deref(), Some("GpuPreference=2;"));
+    assert_eq!(state(&r, "gpu.choice.fortnite"), TweakState::Applied);
+    r.engine.revert("gpu.choice.fortnite").unwrap();
+    assert_eq!(gpu_value(&r, exe), None);
+}
+
+#[test]
+fn high_performance_chip_keeps_other_entries_windows_keeps_for_the_game() {
+    let (mut r, exe) = gpu_rig(Some("AutoHDREnable=1;GpuPreference=1;"));
+    r.engine.apply("gpu.choice.fortnite").unwrap();
+    assert_eq!(gpu_value(&r, exe).as_deref(), Some("AutoHDREnable=1;GpuPreference=2;"));
+    r.engine.revert("gpu.choice.fortnite").unwrap();
+    assert_eq!(gpu_value(&r, exe).as_deref(), Some("AutoHDREnable=1;GpuPreference=1;"));
+}
+
+#[test]
+fn high_performance_chip_already_chosen_reads_as_already_set_and_an_odd_choice_is_left_alone() {
+    let (r, _) = gpu_rig(Some("GpuPreference=2;"));
+    assert_eq!(state(&r, "gpu.choice.fortnite"), TweakState::Foreign);
+
+    let (mut r, exe) = gpu_rig(Some("GpuPreference=7;"));
+    assert!(matches!(state(&r, "gpu.choice.fortnite"), TweakState::Unknown { .. }));
+    assert!(r.engine.apply("gpu.choice.fortnite").is_err());
+    assert_eq!(gpu_value(&r, exe).as_deref(), Some("GpuPreference=7;"));
+}
+
+#[test]
+fn high_performance_chip_is_not_offered_with_one_chip_or_before_the_anti_cheat_is_cleared() {
+    use crate::hardware::{GpuAdapter, HardwareReport};
+    let with_chips = |n: usize| HardwareReport {
+        os: Probe::unknown("test"),
+        cpu: Probe::unknown("test"),
+        memory: Probe::unknown("test"),
+        gpus: Probe::yes(
+            (0..n)
+                .map(|i| GpuAdapter {
+                    name: format!("chip {i}"),
+                    vendor_id: 0x10DE,
+                    dedicated_vram_bytes: 0,
+                    shared_memory_bytes: 0,
+                    is_software: false,
+                })
+                .collect(),
+        ),
+        gpu_drivers: Probe::unknown("test"),
+        boot_disk: Probe::unknown("test"),
+        display: Probe::unknown("test"),
+        is_laptop: Probe::unknown("test"),
+        rig_class: Probe::unknown("test"),
+    };
+    let mut env = SystemEnv {
+        game_installs: Some(vec![install("fortnite", Some(r"D:\x.exe"))]),
+        ..SystemEnv::default()
+    };
+    let cleared = HighPerformanceGpu::for_game("fortnite").unwrap().cleared_for_tests();
+    env.hardware = Some(with_chips(1));
+    assert_eq!(blocked_code(&cleared, &env), Some(BlockedCode::HardwareUnsupported));
+    env.hardware = Some(with_chips(2));
+    assert_eq!(blocked_code(&cleared, &env), None);
+    let shipped = HighPerformanceGpu::for_game("fortnite").unwrap();
+    if crate::games::anti_cheat_block("fortnite").is_some() {
+        assert_eq!(blocked_code(&shipped, &env), Some(BlockedCode::AntiCheatEligibility));
+    }
+}
+
 /// Evidence on a real Windows (CI step "Per-game tools on this runner"): the
-/// csrss priority, a game's priority and fullscreen optimizations applied and
+/// csrss priority, a game's priority, fullscreen optimizations and graphics chip applied and
 /// undone through the engine on the real registry, every value printed before,
 /// during and after, and the fullscreen `.reg` backup imported with Windows'
 /// own `reg.exe`. The game is made up for the test (an install path that does
@@ -536,6 +628,7 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
     impl Drop for Cleanup {
         fn drop(&mut self) {
             let _ = self.0.delete_value(Hive::CurrentUser, LAYERS, &self.1);
+            let _ = self.0.delete_value(Hive::CurrentUser, crate::gpu_choice::KEY, &self.1);
         }
     }
     let _cleanup = Cleanup(reg.clone(), exe.clone());
@@ -552,6 +645,7 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
         (Hive::LocalMachine, apex.clone(), "CpuPriorityClass"),
         (Hive::LocalMachine, apex12.clone(), "CpuPriorityClass"),
         (Hive::CurrentUser, LAYERS.to_owned(), exe.as_str()),
+        (Hive::CurrentUser, crate::gpu_choice::KEY.to_owned(), exe.as_str()),
     ];
     let read = |label: &str| -> Vec<Option<RawValue>> {
         let now: Vec<Option<RawValue>> = values
@@ -595,6 +689,7 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
                     .unwrap()
                     .cleared_for_tests(),
             ),
+            Box::new(HighPerformanceGpu::for_game("fortnite").unwrap().cleared_for_tests()),
         ],
         Box::new(GamesProbe(Arc::new(Mutex::new(Some(vec![
             install("fortnite", Some(&exe)),
@@ -603,7 +698,12 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
         License::dev(Tier::Ultimate),
     );
     engine.rescan();
-    let ids = ["scheduling.csrss", "priority.ifeo.apex", "gaming.fullscreen.fortnite"];
+    let ids = [
+        "scheduling.csrss",
+        "priority.ifeo.apex",
+        "gaming.fullscreen.fortnite",
+        "gpu.choice.fortnite",
+    ];
     let states = |engine: &Engine| -> Vec<TweakState> {
         let list = engine.list().unwrap();
         ids.iter()
@@ -645,7 +745,12 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
         during[4].as_ref().and_then(RawValue::as_sz).as_deref(),
         Some("~ RUNASADMIN DISABLEDXMAXIMIZEDWINDOWEDMODE")
     );
-    assert_eq!(states(&engine), vec![TweakState::Applied; 3]);
+    assert_eq!(
+        during[5].as_ref().and_then(RawValue::as_sz).as_deref(),
+        Some("GpuPreference=2;"),
+        "Fortnite on the high-performance chip"
+    );
+    assert_eq!(states(&engine), vec![TweakState::Applied; 4]);
 
     // The offline path: Windows' own reg.exe puts the earlier layers back
     // from the backup, a value named by a full program path included.
@@ -677,6 +782,6 @@ fn per_game_tools_apply_and_undo_on_this_pc() {
         .collect();
     assert_eq!(keys_after, keys_before, "keys Undo created are gone again");
     println!(
-        "per-game tools on this PC: 3 applied, backup imported with reg.exe, 3 undone; keys there before: {keys_before:?}"
+        "per-game tools on this PC: 4 applied, backup imported with reg.exe, 4 undone; keys there before: {keys_before:?}"
     );
 }

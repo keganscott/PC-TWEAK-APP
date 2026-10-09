@@ -12,6 +12,12 @@ export type StartupApp = {
  */
 tweak: TweakView, 
 /**
+ * The switch that turns it back on when it was turned off outside
+ * PeakTweaks: default = turned off, so offered; applied = turned on by
+ * PeakTweaks; foreign = it starts.
+ */
+turnOn: TweakView, 
+/**
  * The name shown: the entry's own, a shortcut without `.lnk`.
  */
 name: string, source: StartupSource, 

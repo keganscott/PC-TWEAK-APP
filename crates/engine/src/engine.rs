@@ -412,14 +412,23 @@ impl Engine {
     /// with its switch. `folders` are the two Startup folders on this PC.
     pub fn startup_apps(&mut self, folders: &crate::startup::StartupFolders) -> crate::startup::StartupList {
         let (toggles, problems) = crate::startup::entries(&self.resolver, folders);
+        let turn_on: Vec<_> = toggles
+            .iter()
+            .map(|t| crate::tweaks::startup::StartupToggle::turning_on(t.source, &t.name))
+            .collect();
         self.relist(
             crate::tweaks::startup::ID_PREFIX,
-            toggles.iter().map(|t| (t.id().to_owned(), String::new())),
+            toggles
+                .iter()
+                .chain(&turn_on)
+                .map(|t| (t.id().to_owned(), String::new())),
         );
         let mut apps: Vec<crate::startup::StartupApp> = toggles
             .into_iter()
-            .map(|t| crate::startup::StartupApp {
+            .zip(turn_on)
+            .map(|(t, on)| crate::startup::StartupApp {
                 tweak: self.view_of(&t),
+                turn_on: self.view_of(&on),
                 name: crate::tweaks::startup::display_name(t.source, &t.name),
                 source: t.source,
                 command: t.command(&self.resolver).ok().flatten(),

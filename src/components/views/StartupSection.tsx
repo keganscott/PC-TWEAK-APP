@@ -22,10 +22,20 @@ export function startsAtSignIn(app: StartupApp): boolean {
   return status !== "applied" && status !== "foreign";
 }
 
+/** Which change a switch makes. Turning off: undo PeakTweaks' turning on if
+ * there is one, so Windows gets back exactly what it had, else turn it off.
+ * Turning on: likewise undo PeakTweaks' turning off, else turn on what was
+ * turned off elsewhere. */
+export function startupChange(app: StartupApp, wantOn: boolean): { id: string; undo: boolean } {
+  const [ours, other] = wantOn ? [app.tweak, app.turnOn] : [app.turnOn, app.tweak];
+  const undo = ours.state.status === "applied" || ours.state.status === "drifted";
+  return undo ? { id: ours.id, undo } : { id: other.id, undo };
+}
+
 /** Catalogue H12: the programs Windows starts when the user signs in, each with
- * Task Manager's own on/off switch. Turning one off is a change like any other:
- * recorded first, undone here or from Backups. The engine refuses security
- * software and anti-cheat. */
+ * Task Manager's own on/off switch. Turning one off or back on is a change like
+ * any other: recorded first, undone here or from Backups. The engine refuses
+ * to turn off security software and anti-cheat. */
 export function StartupSection() {
   const list = useStore((s) => s.startup);
   const op = useStore((s) => s.startupOp);
@@ -97,22 +107,29 @@ export function StartupSection() {
 function StartupRow({ app, gateOpen }: { app: StartupApp; gateOpen: boolean | null }) {
   const { tweak } = app;
   const op = useStore((s) => s.tweakOps[tweak.id]);
+  const onOp = useStore((s) => s.tweakOps[app.turnOn.id]);
   const technical = useTechnical();
   const { applyTweak, revertTweak, clearTweakOp } = useActions();
   const id = useId();
   const hintId = useId();
 
   const status = tweak.state.status;
-  const running = op?.status === "running";
+  const running = op?.status === "running" || onOp?.status === "running";
+  const failed = op?.status === "failed" ? op : onOp?.status === "failed" ? onOp : null;
   const on = startsAtSignIn(app);
-  // The engine's reason it is not offered: its plan, or a protected program.
-  const blocked = tweak.blocked ?? (tweak.state.status === "blocked" ? tweak.state.reason : null);
-  // Off: ours to turn back on. On: ours to turn off, once there is a restore
-  // point. Turned off elsewhere, or unreadable: nothing to do here.
-  const canTurn =
-    status === "applied" || (on && !blocked && status !== "unknown" && gateOpen !== false);
+  const change = startupChange(app, !on);
+  const next = change.id === tweak.id ? tweak : app.turnOn;
+  // The engine's reason the change is not offered: the plan, or (turning
+  // off) a protected program.
+  const blocked = next.blocked ?? (next.state.status === "blocked" ? next.state.reason : null);
+  // An undo is always offered. A new change needs a readable switch and a
+  // restore point.
+  const canTurn = change.undo || (!blocked && status !== "unknown" && gateOpen !== false);
 
-  const turn = (wantOn: boolean) => void (wantOn ? revertTweak(tweak.id) : applyTweak(tweak.id));
+  const turn = (wantOn: boolean) => {
+    const { id, undo } = startupChange(app, wantOn);
+    void (undo ? revertTweak(id) : applyTweak(id));
+  };
 
   return (
     <div>
@@ -148,6 +165,7 @@ function StartupRow({ app, gateOpen }: { app: StartupApp; gateOpen: boolean | nu
               </p>
             )}
             {status === "foreign" && <p className="mt-1">Turned off outside PeakTweaks, for example in Task Manager.</p>}
+            {app.turnOn.state.status === "applied" && <p className="mt-1">Turned back on by PeakTweaks.</p>}
             {status === "unknown" && <p className="mt-1">PeakTweaks could not read its switch, so it leaves it alone.</p>}
           </div>
           {technical && (
@@ -158,13 +176,19 @@ function StartupRow({ app, gateOpen }: { app: StartupApp; gateOpen: boolean | nu
           )}
         </div>
       </div>
-      {op?.status === "failed" && (
+      {failed?.status === "failed" && (
         <div className="mt-2">
           <ErrorCallout
-            text={explain(op.error)}
+            text={explain(failed.error)}
             technical={technical}
             action={
-              <Button variant="ghost" onClick={() => clearTweakOp(tweak.id)}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  clearTweakOp(tweak.id);
+                  clearTweakOp(app.turnOn.id);
+                }}
+              >
                 Dismiss
               </Button>
             }

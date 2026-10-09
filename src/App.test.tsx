@@ -219,10 +219,18 @@ describe("App", () => {
     expect(security.disabled).toBe(true);
     expect(within(section).getByText("This starts Windows Security.", { exact: false })).toBeTruthy();
     expect(within(section).getByText(/never turns off security software/)).toBeTruthy();
-    // Turned off in Task Manager: shown as off, nothing of ours to undo.
+    // Turned off in Task Manager: shown as off, and can be turned back on;
+    // switching it off again undoes that.
     const updater = within(section).getByRole("switch", { name: "Sample updater" }) as HTMLInputElement;
-    expect([updater.checked, updater.disabled]).toEqual([false, true]);
+    expect([updater.checked, updater.disabled]).toEqual([false, false]);
     expect(within(section).getByText(/Turned off outside PeakTweaks/)).toBeTruthy();
+    await userEvent.click(updater);
+    expect(apply).toHaveBeenLastCalledWith("startup.user_run.on:Sample updater");
+    await waitFor(() => expect(updater.checked).toBe(true));
+    expect(within(section).getByText("Turned back on by PeakTweaks.")).toBeTruthy();
+    await userEvent.click(updater);
+    expect(revert).toHaveBeenLastCalledWith("startup.user_run.on:Sample updater");
+    await waitFor(() => expect(updater.checked).toBe(false));
   });
 
   it("Tools lists MSI mode per device only under Advanced, and applying one asks first", async () => {
@@ -271,8 +279,9 @@ describe("App", () => {
     const section = await screen.findByRole("region", { name: /Startup apps/ });
     const chat = (await within(section).findByRole("switch", { name: "Sample chat app" })) as HTMLInputElement;
     await waitFor(() => expect(chat.disabled).toBe(true));
-    // Ours to turn back on, whatever the gate.
+    // Ours to turn back on, whatever the gate; turned off elsewhere needs one.
     expect((within(section).getByRole("switch", { name: "Sample game launcher" }) as HTMLInputElement).disabled).toBe(false);
+    expect((within(section).getByRole("switch", { name: "Sample updater" }) as HTMLInputElement).disabled).toBe(true);
   });
 
   it("Tools shows junk sizes first, asks once, then says what it deleted and what was left", async () => {

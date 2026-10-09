@@ -1,7 +1,7 @@
 //! The startup apps list (CATALOGUE H12): every entry Windows starts at sign
 //! in from the `Run` keys and the Startup folders, each with its switch
-//! (`tweaks::startup::StartupToggle`). Reads only; turning one off is an
-//! ordinary apply of its toggle, through `Engine::apply`.
+//! (`tweaks::startup::StartupToggle`). Reads only; turning one off or back
+//! on is an ordinary apply of a toggle, through `Engine::apply`.
 //!
 //! Not listed: Store apps' own startup tasks, scheduled tasks and services,
 //! which Task Manager does not list here either (or lists elsewhere).
@@ -54,6 +54,10 @@ pub struct StartupApp {
     /// Its switch: id, state (default = starts at sign in; applied or
     /// foreign = turned off), and why it is not offered, if it is not.
     pub tweak: TweakView,
+    /// The switch that turns it back on when it was turned off outside
+    /// PeakTweaks: default = turned off, so offered; applied = turned on by
+    /// PeakTweaks; foreign = it starts.
+    pub turn_on: TweakView,
     /// The name shown: the entry's own, a shortcut without `.lnk`.
     pub name: String,
     pub source: StartupSource,

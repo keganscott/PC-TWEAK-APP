@@ -8,12 +8,15 @@
 //! value or the shortcut in a Startup folder) is never changed, so the program
 //! stays installed and Undo puts the switch back exactly.
 //!
-//! One `StartupToggle` per entry. Its id names the entry (`startup.<source>:
-//! <name>`), so a change can be undone from the id alone, even after the
+//! Two `StartupToggle`s per entry: one turns it off (`startup.<source>:
+//! <name>`), one turns back on an entry that was turned off elsewhere, for
+//! example in Task Manager (`startup.<source>.on:<name>`). Each id names the
+//! entry, so a change can be undone from the id alone, even after the
 //! program was uninstalled (`Engine::slot_of`).
 //!
 //! Never turned off: Windows Security's icon, and anti-cheat programs
-//! (Kegan's brief: never touch Defender or anti-cheat).
+//! (Kegan's brief: never touch Defender or anti-cheat). Turning one of them
+//! back on is allowed.
 //!
 //! VERIFY: the `StartupApproved` key names, which key each source's switch
 //! is in, and the byte layout are Task Manager's as recalled (NOTES N82).
@@ -35,6 +38,7 @@ pub const ID_PREFIX: &str = "startup.";
 
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_32: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
+const TURN_ON: &str = ".on";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved";
 
 /// Where a startup entry comes from.
@@ -113,6 +117,14 @@ pub fn off_value(filetime: u64) -> RawValue {
     RawValue { vtype: 3, bytes }
 }
 
+/// The switch value Task Manager writes when it turns an entry on: 12 bytes,
+/// 2 and eleven zero bytes.
+pub fn on_value() -> RawValue {
+    let mut bytes = vec![0; 12];
+    bytes[0] = 2;
+    RawValue { vtype: 3, bytes }
+}
+
 impl StartupToggle {
     /// A switch turned off at some time, as Task Manager leaves it.
     #[cfg(test)]
@@ -173,22 +185,41 @@ pub struct StartupToggle {
     /// The entry's own name: the `Run` value's name, or the file name in the
     /// Startup folder.
     pub name: String,
+    /// Turns the entry on, rather than off.
+    pub turn_on: bool,
 }
 
 impl StartupToggle {
+    /// The switch that turns the entry off.
     pub fn new(source: StartupSource, name: &str) -> Self {
         Self {
             id: format!("{ID_PREFIX}{}:{name}", source.tag()),
             source,
             name: name.to_owned(),
+            turn_on: false,
+        }
+    }
+
+    /// The switch that turns the entry back on.
+    pub fn turning_on(source: StartupSource, name: &str) -> Self {
+        Self {
+            id: format!("{ID_PREFIX}{}{TURN_ON}:{name}", source.tag()),
+            source,
+            name: name.to_owned(),
+            turn_on: true,
         }
     }
 
     /// The toggle an id names, if it names one.
     pub fn from_id(id: &str) -> Option<Self> {
         let (tag, name) = id.strip_prefix(ID_PREFIX)?.split_once(':')?;
-        let source = StartupSource::from_tag(tag)?;
-        (!name.is_empty()).then(|| Self::new(source, name))
+        if name.is_empty() {
+            return None;
+        }
+        match tag.strip_suffix(TURN_ON) {
+            Some(tag) => Some(Self::turning_on(StartupSource::from_tag(tag)?, name)),
+            None => Some(Self::new(StartupSource::from_tag(tag)?, name)),
+        }
     }
 
     /// The command a `Run` entry starts, if it has one.
@@ -200,6 +231,9 @@ impl StartupToggle {
     }
 
     fn blocked(&self, res: &ContextResolver) -> Result<Option<BlockedReason>> {
+        if self.turn_on {
+            return Ok(None);
+        }
         Ok(protected(&self.name, self.command(res)?.as_deref()))
     }
 }
@@ -216,12 +250,23 @@ impl Tweak for StartupToggle {
             RegRoot::InteractiveUser => r"HKEY_USERS\<sid>",
             _ => "HKLM",
         };
+        let (name, summary) = if self.turn_on {
+            (
+                format!("{shown} at sign-in, turned back on"),
+                format!("Starts {shown} when you sign in again. It was turned off outside PeakTweaks."),
+            )
+        } else {
+            (
+                format!("{shown} at sign-in"),
+                format!(
+                    "Stops {shown} from starting when you sign in. It stays installed and starts when you open it."
+                ),
+            )
+        };
         TweakMetadata {
             id: Cow::Owned(self.id.clone()),
-            name: Cow::Owned(format!("{shown} at sign-in")),
-            summary: Cow::Owned(format!(
-                "Stops {shown} from starting when you sign in. It stays installed and starts when you open it."
-            )),
+            name: Cow::Owned(name),
+            summary: Cow::Owned(summary),
             target: Cow::Owned(format!(r"{root}\{key}\{}", self.name)),
             category: Cow::Borrowed("startup"),
             tier: Tier::Pro,
@@ -249,18 +294,18 @@ impl Tweak for StartupToggle {
             }
         }
         let (root, key) = self.source.approved_key();
-        Ok(match res.read_raw(root, &key, &self.name)? {
-            None => TweakState::Default,
-            Some(raw) => match switched_off(&raw) {
-                Some(false) => TweakState::Default,
-                Some(true) if has_journal_entry => TweakState::Applied,
-                Some(true) => TweakState::Foreign,
-                None => TweakState::Unknown {
-                    detail: format!(
-                        "its startup switch has data of type {} PeakTweaks does not know",
-                        raw.vtype
-                    ),
-                },
+        // No switch value: it starts.
+        let off = match res.read_raw(root, &key, &self.name)? {
+            None => Ok(false),
+            Some(raw) => switched_off(&raw).ok_or(raw.vtype),
+        };
+        // Done means off for the turning-off switch, on for the other.
+        Ok(match off.map(|off| off != self.turn_on) {
+            Ok(false) => TweakState::Default,
+            Ok(true) if has_journal_entry => TweakState::Applied,
+            Ok(true) => TweakState::Foreign,
+            Err(vtype) => TweakState::Unknown {
+                detail: format!("its startup switch has data of type {vtype} PeakTweaks does not know"),
             },
         })
     }
@@ -278,6 +323,11 @@ impl Tweak for StartupToggle {
             }
         }
         let (root, key) = self.source.approved_key();
-        tx.set_raw(root, &key, &self.name, off_value(filetime_now()))
+        let value = if self.turn_on {
+            on_value()
+        } else {
+            off_value(filetime_now())
+        };
+        tx.set_raw(root, &key, &self.name, value)
     }
 }

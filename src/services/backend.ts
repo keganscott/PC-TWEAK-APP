@@ -51,7 +51,7 @@ export interface Backend {
   cleanupMeasure(): Promise<AreaSize[]>;
   cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;
   optimizeDrive(): Promise<DriveOptimization>;
-  /** Startup apps (catalogue H12). Each switch is a change: applyTweak turns one off, revertTweak puts it back. */
+  /** Startup apps (catalogue H12). Each entry has two switches, each a change: one turns it off, one turns back on what was turned off elsewhere; revertTweak puts either back. */
   listStartupApps(): Promise<StartupList>;
   /** MSI mode per device (catalogue H6). Each is a change: applyTweak / revertTweak. */
   listMsiDevices(): Promise<MsiDeviceList>;

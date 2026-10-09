@@ -996,6 +996,23 @@ export const startupList = {
         },
         "blocked": null
       },
+      "turnOn": {
+        "id": "startup.user_run.on:Sample chat app",
+        "name": "Sample chat app at sign-in, turned back on",
+        "summary": "Starts Sample chat app when you sign in again. It was turned off outside PeakTweaks.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\Sample chat app",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "foreign"
+        },
+        "blocked": null
+      },
       "name": "Sample chat app",
       "source": "user_run",
       "command": "C:\\Sample\\chat.exe --minimized"
@@ -1015,6 +1032,23 @@ export const startupList = {
         "context": "user",
         "state": {
           "status": "applied"
+        },
+        "blocked": null
+      },
+      "turnOn": {
+        "id": "startup.user_run.on:Sample game launcher",
+        "name": "Sample game launcher at sign-in, turned back on",
+        "summary": "Starts Sample game launcher when you sign in again. It was turned off outside PeakTweaks.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\Sample game launcher",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "default"
         },
         "blocked": null
       },
@@ -1040,6 +1074,23 @@ export const startupList = {
         },
         "blocked": null
       },
+      "turnOn": {
+        "id": "startup.user_folder.on:Sample notes.lnk",
+        "name": "Sample notes at sign-in, turned back on",
+        "summary": "Starts Sample notes when you sign in again. It was turned off outside PeakTweaks.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder\\Sample notes.lnk",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "foreign"
+        },
+        "blocked": null
+      },
       "name": "Sample notes",
       "source": "user_folder",
       "command": null
@@ -1059,6 +1110,23 @@ export const startupList = {
         "context": "user",
         "state": {
           "status": "foreign"
+        },
+        "blocked": null
+      },
+      "turnOn": {
+        "id": "startup.user_run.on:Sample updater",
+        "name": "Sample updater at sign-in, turned back on",
+        "summary": "Starts Sample updater when you sign in again. It was turned off outside PeakTweaks.",
+        "target": "HKEY_USERS\\<sid>\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\Sample updater",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "user",
+        "state": {
+          "status": "default"
         },
         "blocked": null
       },
@@ -1086,6 +1154,23 @@ export const startupList = {
             "trigger": null,
             "message": "This starts Windows Security."
           }
+        },
+        "blocked": null
+      },
+      "turnOn": {
+        "id": "startup.machine_run.on:SecurityHealth",
+        "name": "SecurityHealth at sign-in, turned back on",
+        "summary": "Starts SecurityHealth when you sign in again. It was turned off outside PeakTweaks.",
+        "target": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\\SecurityHealth",
+        "category": "startup",
+        "tier": "pro",
+        "safety": "safe",
+        "impact": "moderate",
+        "tradeoff": null,
+        "requiresReboot": false,
+        "context": "service",
+        "state": {
+          "status": "foreign"
         },
         "blocked": null
       },

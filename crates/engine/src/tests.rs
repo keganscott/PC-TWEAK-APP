@@ -4445,6 +4445,64 @@ mod startup_apps {
     }
 
     #[test]
+    fn one_turned_off_elsewhere_can_be_turned_back_on_and_undo_puts_it_back() {
+        let (mut h, _dir, folders) = pc();
+        let list = h.engine.startup_apps(&folders);
+        let steam = app(&list, "Steam");
+        assert_eq!(steam.turn_on.state, TweakState::Default, "offered");
+        assert_eq!(app(&list, "Discord").turn_on.state, TweakState::Foreign, "it starts");
+        let id = steam.turn_on.metadata.id.to_string();
+        assert_eq!(id, "startup.user_run.on:Steam");
+        let before = h.fake.snapshot();
+
+        h.engine.apply(&id).unwrap();
+        assert_eq!(
+            h.fake.read_value_for_test(Hive::CurrentUser, APPROVED_RUN, "Steam"),
+            Some(on_value()),
+            "Task Manager's own on value"
+        );
+        let steam = app(&h.engine.startup_apps(&folders), "Steam").clone();
+        assert_eq!(steam.turn_on.state, TweakState::Applied);
+        assert_eq!(steam.tweak.state, TweakState::Default, "it starts again");
+        assert!(h
+            .engine
+            .journal_view()
+            .applied
+            .iter()
+            .any(|c| c.tweak_id == id && c.name == "Steam at sign-in, turned back on"));
+
+        h.engine.revert(&id).unwrap();
+        assert_eq!(h.fake.snapshot(), before, "turned off again, byte for byte");
+        assert_eq!(
+            app(&h.engine.startup_apps(&folders), "Steam").tweak.state,
+            TweakState::Foreign
+        );
+    }
+
+    #[test]
+    fn windows_security_can_be_turned_back_on() {
+        let (mut h, _dir, folders) = pc();
+        h.fake.set_external(
+            Hive::LocalMachine,
+            APPROVED_RUN,
+            "SecurityHealth",
+            StartupToggle::off_for_test(),
+        );
+        let list = h.engine.startup_apps(&folders);
+        let security = app(&list, "SecurityHealth");
+        assert!(matches!(security.tweak.state, TweakState::Blocked { .. }));
+        assert_eq!(security.turn_on.state, TweakState::Default);
+        assert!(security.turn_on.blocked.is_none());
+        let id = security.turn_on.metadata.id.to_string();
+        h.engine.apply(&id).unwrap();
+        assert_eq!(
+            h.fake
+                .read_value_for_test(Hive::LocalMachine, APPROVED_RUN, "SecurityHealth"),
+            Some(on_value())
+        );
+    }
+
+    #[test]
     fn windows_security_is_never_turned_off() {
         let (mut h, _dir, folders) = pc();
         let id = app(&h.engine.startup_apps(&folders), "SecurityHealth")
@@ -4486,7 +4544,11 @@ mod startup_apps {
         // Only what the list showed: an id the UI makes up is never a write,
         // even for a real entry before the list was read.
         let before = h.fake.snapshot();
-        for id in ["startup.user_run:Discord", "startup.user_folder:Made up.lnk"] {
+        for id in [
+            "startup.user_run:Discord",
+            "startup.user_run.on:Steam",
+            "startup.user_folder:Made up.lnk",
+        ] {
             assert!(
                 matches!(h.engine.apply(id), Err(EngineError::UnknownTweak { .. })),
                 "{id}"
@@ -4505,6 +4567,9 @@ mod startup_apps {
             "startup.nowhere:Discord",
             "startup.user_run:",
             "startup.user_run",
+            "startup.user_run.off:Discord",
+            "startup.user_run.on:",
+            "startup..on:Discord",
         ] {
             assert!(
                 matches!(h.engine.apply(id), Err(EngineError::UnknownTweak { .. })),

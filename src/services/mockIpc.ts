@@ -27,6 +27,7 @@ import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSessionSummary } from "../generated/ProofSessionSummary";
 import type { Record as JournalRecord } from "../generated/Record";
 import type { Settings } from "../generated/Settings";
+import type { StartupApp } from "../generated/StartupApp";
 import type { StartupList } from "../generated/StartupList";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
@@ -69,6 +70,25 @@ function sampleTweaks(): TweakView[] {
     category: t.id === "fixture.blocked" ? "Input" : "System",
     target: `HKEY_LOCAL_MACHINE\\SOFTWARE\\PeakTweaks\\Sample\\${t.id}`,
   }));
+}
+
+/** One startup entry after `id`, one of its two switches, took `state`. As the
+ * engine reads them: both switches look at the same value in Windows, so the
+ * other one follows. */
+function startupSwitched(app: StartupApp, id: string, state: TweakView["state"]): StartupApp {
+  if (app.tweak.id === id) {
+    const off = state.status === "applied" || state.status === "foreign";
+    const turnOn: TweakView["state"] = off ? { status: "default" } : { status: "foreign" };
+    return { ...app, tweak: { ...app.tweak, state }, turnOn: { ...app.turnOn, state: turnOn } };
+  }
+  if (app.turnOn.id === id) {
+    const on = state.status === "applied";
+    // A protected program's turning-off switch stays blocked either way.
+    const tweak: TweakView["state"] =
+      app.tweak.state.status === "blocked" ? app.tweak.state : on ? { status: "default" } : { status: "foreign" };
+    return { ...app, turnOn: { ...app.turnOn, state }, tweak: { ...app.tweak, state: tweak } };
+  }
+  return app;
 }
 
 function blocked(reason: BlockedReason): EngineFault {
@@ -174,7 +194,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   const INTERNAL = fx.journalView.applied.find((c) => c.kind === "internal")!;
   let internalApplied = false;
   const outstanding = (): AppliedChange[] => [
-    ...[...tweaks, ...startup.apps.map((a) => a.tweak), ...msi.devices.map((d) => d.tweak)]
+    ...[...tweaks, ...startup.apps.flatMap((a) => [a.tweak, a.turnOn]), ...msi.devices.map((d) => d.tweak)]
       .filter((t) => t.state.status === "applied" || t.state.status === "drifted")
       .map((t): AppliedChange => ({ tweakId: t.id, name: t.name, kind: "catalogue" })),
     ...(internalApplied ? [clone(INTERNAL)] : []),
@@ -209,6 +229,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     const t =
       tweaks.find((x) => x.id === id) ??
       startup.apps.find((a) => a.tweak.id === id)?.tweak ??
+      startup.apps.find((a) => a.turnOn.id === id)?.turnOn ??
       msi.devices.find((d) => d.tweak.id === id)?.tweak;
     if (!t) throw new EngineFault({ kind: "unknown_tweak", tweakId: id });
     return t;
@@ -218,7 +239,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     tweaks = tweaks.map((t) => (t.id === id ? { ...t, state } : t));
     startup = {
       ...startup,
-      apps: startup.apps.map((a) => (a.tweak.id === id ? { ...a, tweak: { ...a.tweak, state } } : a)),
+      apps: startup.apps.map((a) => startupSwitched(a, id, state)),
     };
     msi = {
       ...msi,

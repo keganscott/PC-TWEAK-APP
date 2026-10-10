@@ -82,6 +82,11 @@ export function DriverTool() {
   const hasNvidia = vendors.some((v) => v.id === "nvidia");
   const running = op.status === "running";
   const result = op.status === "done" ? op.value : null;
+  // NVIDIA's package can hand over to its setup before that finishes, so the
+  // drivers read again after it may still be the old one: say so rather than
+  // call it installed.
+  const nvidiaNow = drivers.filter((d) => driverVendor(d)?.id === "nvidia").map((d) => d.nvidiaVersion);
+  const notYet = !!result?.version && nvidiaNow.length > 0 && !nvidiaNow.includes(result.version);
 
   return (
     <section aria-labelledby={headingId} className="relative isolate overflow-hidden rounded-2xl border border-line bg-surface-1 p-5">
@@ -168,11 +173,18 @@ export function DriverTool() {
             {running && <Spinner label="Installing. Keep PeakTweaks open; NVIDIA's installer takes a few minutes." />}
           </div>
           {busy && <p className="mt-2">{BUSY[busy]}</p>}
-          {result && (
-            <p className="mt-2 text-ink" role="status">
-              Driver {result.version ?? result.file} installed{result.restart ? ". Restart Windows to finish." : "."}
-            </p>
-          )}
+          {result &&
+            (notYet ? (
+              <p className="mt-2 text-ink" role="status">
+                NVIDIA's installer for {result.version} finished, but Windows still reports driver{" "}
+                {nvidiaNow.filter(Boolean).join(", ") || "version not read"}. If NVIDIA's installer is still open, let it
+                finish; otherwise restart Windows, then check the version above.
+              </p>
+            ) : (
+              <p className="mt-2 text-ink" role="status">
+                Driver {result.version ?? result.file} installed{result.restart ? ". Restart Windows to finish." : "."}
+              </p>
+            ))}
           {op.status === "failed" && (
             <div className="mt-2">
               <ErrorCallout text={explain(op.error)} technical={technical} />

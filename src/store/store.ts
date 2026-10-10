@@ -699,14 +699,21 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     async installGpuDriver() {
       if (state.driverInstallOp.status === "running") return;
       set((s) => ({ ...s, driverInstallOp: RUNNING }));
+      let ended: Op<GpuDriverInstall | null>;
       try {
         const result = await backend.installGpuDriver();
-        set((s) => ({ ...s, driverInstallOp: { status: "done", value: result } }));
-        if (result === null) return;
+        ended = { status: "done", value: result };
+        if (result === null) {
+          set((s) => ({ ...s, driverInstallOp: ended }));
+          return;
+        }
       } catch (e) {
-        set((s) => ({ ...s, driverInstallOp: failed(e) }));
+        ended = failed(e);
       }
+      // The result shows once the drivers are read again, so it can say
+      // whether Windows reports the new one yet.
       await refreshAfterChange();
+      set((s) => ({ ...s, driverInstallOp: ended }));
     },
 
     /** Run Windows' own drive optimisation. Changes no setting, so nothing to undo. */

@@ -252,6 +252,29 @@ describe("App", () => {
     expect(screen.getByText(/NVIDIA driver clean install: driver 123\.45 installed, restart Windows to finish/)).toBeTruthy();
   });
 
+  it("Tools' driver tool does not call it installed while Windows still reports the old driver", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    // NVIDIA's package handed over to its setup and returned before it finished.
+    vi.spyOn(backend, "installGpuDriver").mockResolvedValue({
+      file: "600.10-desktop-win10-win11-64bit-international-dch-whql.exe",
+      version: "600.10",
+      restart: false,
+      unixMs: 1_791_332_400_000,
+      seconds: 40,
+    });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const tool = await screen.findByRole("region", { name: "Graphics driver" });
+    await userEvent.click(within(tool).getByRole("button", { name: "Choose the file and install" }));
+    expect(
+      await within(tool).findByText(
+        "NVIDIA's installer for 600.10 finished, but Windows still reports driver 581.80. If NVIDIA's installer is still open, let it finish; otherwise restart Windows, then check the version above.",
+      ),
+    ).toBeTruthy();
+    expect(within(tool).queryByText(/installed\./)).toBeNull();
+  });
+
   it("Tools' driver tool says why a file was not installed", async () => {
     const backend = createMockBackend({
       gateOpen: true,

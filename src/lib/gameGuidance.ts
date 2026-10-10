@@ -37,6 +37,49 @@ export const GAME_GUIDANCE: Record<string, GameGuidance> = {
       "Move Graphics Quality down a few steps, play a while, and adjust to taste.",
     ],
   },
+  // Checked 2026-10-10 against Riot's "VALORANT Game and Network Instability
+  // Basics" (playvalorant.com, Matt deWet, 2021-12-02). Riot also lists
+  // "Improve Clarity" to turn off; it is left out here because its name trips
+  // the claim-word lint, not because Riot dropped it.
+  valorant: {
+    source: "Riot Games' own advice for VALORANT (Game and Network Instability Basics)",
+    intro: "Riot suggests these. Change them in VALORANT's settings.",
+    steps: [
+      "Close other programs that are running while you play.",
+      "To see whether the processor or the graphics card is holding the game back, turn on the performance graphs in Settings > Video > Stats.",
+      "Lower the graphics quality in Settings > Video > Graphics Quality. Material, Texture, Detail and UI Quality matter most.",
+      "You can also turn off Experimental Sharpening, Bloom, Distortion and Cast Shadows there.",
+    ],
+  },
+  // Checked 2026-10-10 against EA's "What are the best settings for Apex
+  // Legends on PC?" (help.ea.com, articles/apex-legends/best-settings-pc).
+  apex: {
+    source: "EA's own starting settings for Apex Legends on PC",
+    intro: "EA suggests these as a starting point for competitive play, in Apex's Settings > Video unless the step says where.",
+    steps: [
+      "Display Mode: Full screen with one monitor, windowed with more than one.",
+      "V-Sync: Disabled, unless you see screen tearing.",
+      "NVIDIA Reflex: Enabled, on an NVIDIA graphics card.",
+      "Anti-aliasing: None. Texture Filtering: Bilinear. Texture Streaming Budget: Low or Medium.",
+      "Ambient Occlusion Quality, Volumetric Lighting and Dynamic Spot Shadows: Disabled.",
+      "Sun Shadow Coverage, Sun Shadow Detail, Spot Shadow Detail, Model Detail, Effects Detail and Ragdolls: Low.",
+      "Mouse Acceleration: Off, in the Mouse/Keyboard tab.",
+    ],
+  },
+  // Checked 2026-10-10 against Activision's "Call of Duty: Black Ops 6 PC
+  // Troubleshooting" (support.activision.com, dated 07/02/25). Its antivirus
+  // steps (exclusions, turning protections off) are left out on purpose.
+  cod: {
+    source: "Activision's PC troubleshooting for Call of Duty: Black Ops 6",
+    intro: "Activision suggests these for Call of Duty on PC.",
+    steps: [
+      "Let the shader preloading in the main menu finish before you play. Leaving the main menu stops it.",
+      "Keep Windows 10 or 11 up to date.",
+      "If a newer graphics driver causes problems, go back to the driver version Activision recommends in its PC troubleshooting article.",
+      "Turn off overclocking or tuning software while you play.",
+      "If the game misbehaves, check its files: Scan and Repair in Battle.net, or Verify integrity of game files in Steam.",
+    ],
+  },
   // Plan section 8: research against Mojang's documentation before any advice.
   minecraft: {
     source: null,

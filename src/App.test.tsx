@@ -1191,6 +1191,37 @@ describe("review regressions", () => {
     expect(await screen.findByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeTruthy();
   });
 
+  it("a Games card says when the before runs are in, and points at the result once both sides are", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const { sessionId } = await backend.proofBegin("FortniteClient-Win64-Shipping.exe", "fortnite", null);
+    for (let i = 0; i < 3; i++) await backend.proofCapture(sessionId, "before", 30, 0);
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const fortnite = async () =>
+      (await screen.findAllByRole("heading", { level: 3 })).find((h) => h.textContent === "Fortnite")!.closest("li") as HTMLElement;
+    expect(
+      within(await fortnite()).getByText(
+        "The before side has its 3 runs of Fortnite. Make your changes in Tools, then record the after side the same way.",
+      ),
+    ).toBeTruthy();
+    await userEvent.click(within(await fortnite()).getByRole("button", { name: "Record the after side" }));
+    const card = await screen.findByRole("region", { name: "Record while you play" });
+    expect(await within(card).findByText("0 of 3 runs on the after side so far.")).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Stop recording while I play" }));
+    await within(card).findByRole("button", { name: /^Record the after side while I play/ });
+
+    for (let i = 0; i < 3; i++) await backend.proofCapture(sessionId, "after", 30, 0);
+    await goTo("Games");
+    await goTo("Proof");
+    await goTo("Games");
+    const row = await fortnite();
+    expect(await within(row).findByText(/^Proof has before and after runs of Fortnite, in the test started /)).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "Record a new test" })).toBeTruthy();
+    await userEvent.click(within(row).getByRole("button", { name: "See the result" }));
+    expect(await screen.findByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeTruthy();
+  });
+
   it("recording while playing is offered only for a game PeakTweaks watches for", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

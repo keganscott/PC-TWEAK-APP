@@ -16,7 +16,9 @@
 //! form this can use (NOTES N88).
 //!
 //! Windows: `IcmpSendEcho` (IP Helper, no networking library) and the router
-//! from `GetBestRoute` towards the first public server. IPv4 only.
+//! from `GetBestRoute` towards the first public server. IPv4 only. When this
+//! PC is connected over Wi-Fi, the signal as Windows rates it (WLAN API,
+//! read only: it sends nothing).
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -25,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::error::{EngineError, Result};
+use crate::probe::Probe;
 
 /// Echoes per target.
 pub const ECHOES: u32 = 20;
@@ -117,6 +120,24 @@ pub struct NetworkCheck {
     pub results: Vec<PingResult>,
     pub reading: ConnectionReading,
     pub unix_ms: u64,
+    /// The Wi-Fi connection's signal, when this PC is on Wi-Fi.
+    pub wifi: Probe<WifiSignal>,
+}
+
+/// A Wi-Fi connection's signal, as Windows reports it. Nothing that names the
+/// network (no SSID, no address) is read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct WifiSignal {
+    /// The adapter, as Windows describes it ("Intel(R) Wi-Fi 6 AX201").
+    pub adapter: String,
+    /// Windows' signal quality from 0 to 100 (`wlanSignalQuality`, Microsoft's
+    /// WLAN_ASSOCIATION_ATTRIBUTES documentation): 0 is
+    /// -100 dBm or weaker, 100 is -50 dBm or stronger, linear between.
+    pub quality: u32,
+    /// Received signal strength in dBm, when the driver reports it.
+    pub rssi_dbm: Option<i32>,
 }
 
 /// How this PC sends traffic towards an address.
@@ -139,6 +160,9 @@ pub trait Pinger: Send + Sync {
     /// One echo: its round trip in milliseconds, or `None` when no answer came
     /// (timed out, unreachable). `Err` only when the echo could not be sent.
     fn echo(&self, to: Ipv4Addr, timeout_ms: u32) -> Result<Option<u32>>;
+    /// The signal of the Wi-Fi connection this PC is on: no when it is on
+    /// none.
+    fn wifi(&self) -> Probe<WifiSignal>;
 }
 
 /// Ask every target `echoes` times, side by side.
@@ -190,6 +214,7 @@ pub fn run(pinger: &dyn Pinger, echoes: u32, gap: Duration, unix_ms: u64) -> Net
         results,
         reading,
         unix_ms,
+        wifi: pinger.wifi(),
     }
 }
 
@@ -316,6 +341,9 @@ impl Pinger for Unavailable {
     fn echo(&self, _: Ipv4Addr, _: u32) -> Result<Option<u32>> {
         Err(unavailable())
     }
+    fn wifi(&self) -> Probe<WifiSignal> {
+        Probe::unknown("the Wi-Fi signal is read on Windows only")
+    }
 }
 
 #[cfg(not(windows))]
@@ -336,7 +364,7 @@ mod imp {
         MIB_IPFORWARDROW, MIB_IPROUTE_TYPE_DIRECT,
     };
 
-    use super::{EngineError, Pinger, Result, Route};
+    use super::{EngineError, Pinger, Probe, Result, Route, WifiSignal};
 
     /// What every echo carries: the letters Windows' `ping` sends.
     const PAYLOAD: &[u8; 32] = b"abcdefghijklmnopqrstuvwabcdefghi";
@@ -434,6 +462,105 @@ mod imp {
             // expired on the way) is a message from elsewhere, not an answer.
             Ok((first.Status == 0 && first.Address == raw(to)).then_some(first.RoundTripTime))
         }
+
+        fn wifi(&self) -> Probe<WifiSignal> {
+            wifi::read()
+        }
+    }
+
+    /// The WLAN API, read only: which Wi-Fi interface is connected and its
+    /// signal. Nothing is sent and no setting is changed.
+    mod wifi {
+        use windows::core::GUID;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::NetworkManagement::WiFi::{
+            wlan_interface_state_connected, wlan_intf_opcode_current_connection, wlan_intf_opcode_rssi,
+            WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle, WlanQueryInterface,
+            WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST, WLAN_INTF_OPCODE,
+        };
+
+        use super::{Probe, WifiSignal};
+
+        /// The client version for Windows Vista and later (`WlanOpenHandle`).
+        const CLIENT_VERSION: u32 = 2;
+        /// `ERROR_SERVICE_NOT_ACTIVE`: the WLAN AutoConfig service is not
+        /// running, which is how a PC without Wi-Fi usually answers.
+        const SERVICE_NOT_ACTIVE: u32 = 1062;
+
+        struct Client(HANDLE);
+        impl Drop for Client {
+            fn drop(&mut self) {
+                let _ = unsafe { WlanCloseHandle(self.0, None) };
+            }
+        }
+
+        /// Memory the WLAN API handed out, freed its own way.
+        struct Owned<T>(*mut T);
+        impl<T> Drop for Owned<T> {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    unsafe { WlanFreeMemory(self.0.cast()) };
+                }
+            }
+        }
+
+        fn utf16(chars: &[u16]) -> String {
+            let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
+            String::from_utf16_lossy(&chars[..end]).trim().to_owned()
+        }
+
+        /// One fixed-size value for an interface, or `None`.
+        fn query<T: Copy>(client: &Client, guid: &GUID, opcode: WLAN_INTF_OPCODE) -> Option<T> {
+            let mut size = 0u32;
+            let mut data: *mut core::ffi::c_void = std::ptr::null_mut();
+            let rc = unsafe { WlanQueryInterface(client.0, guid, opcode, None, &mut size, &mut data, None) };
+            let data = Owned(data.cast::<T>());
+            if rc != 0 || data.0.is_null() || (size as usize) < std::mem::size_of::<T>() {
+                return None;
+            }
+            Some(unsafe { std::ptr::read_unaligned(data.0) })
+        }
+
+        pub fn read() -> Probe<WifiSignal> {
+            let mut negotiated = 0u32;
+            let mut handle = HANDLE::default();
+            let rc = unsafe { WlanOpenHandle(CLIENT_VERSION, None, &mut negotiated, &mut handle) };
+            if rc == SERVICE_NOT_ACTIVE {
+                return Probe::no("Windows' Wi-Fi service is not running, so this PC is not on Wi-Fi");
+            }
+            if rc != 0 {
+                return Probe::unknown(format!("Windows did not open its Wi-Fi interface list (error {rc})"));
+            }
+            let client = Client(handle);
+            let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+            let rc = unsafe { WlanEnumInterfaces(client.0, None, &mut list) };
+            let list = Owned(list);
+            if rc != 0 || list.0.is_null() {
+                return Probe::unknown(format!("Windows did not list its Wi-Fi adapters (error {rc})"));
+            }
+            // The list is a count followed by that many entries.
+            let count = unsafe { (*list.0).dwNumberOfItems } as usize;
+            let first = unsafe { std::ptr::addr_of!((*list.0).InterfaceInfo) }.cast::<WLAN_INTERFACE_INFO>();
+            let interfaces: Vec<WLAN_INTERFACE_INFO> = (0..count)
+                .map(|i| unsafe { std::ptr::read_unaligned(first.add(i)) })
+                .collect();
+            if interfaces.is_empty() {
+                return Probe::no("this PC has no Wi-Fi adapter");
+            }
+            let Some(on) = interfaces.iter().find(|i| i.isState == wlan_interface_state_connected) else {
+                return Probe::no("no Wi-Fi adapter is connected");
+            };
+            let Some(attributes) =
+                query::<WLAN_CONNECTION_ATTRIBUTES>(&client, &on.InterfaceGuid, wlan_intf_opcode_current_connection)
+            else {
+                return Probe::unknown("Windows did not say how strong the Wi-Fi signal is");
+            };
+            Probe::yes(WifiSignal {
+                adapter: utf16(&on.strInterfaceDescription),
+                quality: attributes.wlanAssociationAttributes.wlanSignalQuality.min(100),
+                rssi_dbm: query::<i32>(&client, &on.InterfaceGuid, wlan_intf_opcode_rssi),
+            })
+        }
     }
 
     #[cfg(test)]
@@ -463,6 +590,9 @@ mod imp {
                 assert!(r.received <= r.sent);
             }
             println!("reading: {:?}", check.reading);
+            // A runner has no Wi-Fi: it should say so, not fail.
+            println!("wifi: {:?}", check.wifi);
+            assert!(!matches!(check.wifi, Probe::Unknown { .. }), "{:?}", check.wifi);
             assert_eq!(check.results.len(), PingTarget::ALL.len());
         }
     }
@@ -514,6 +644,9 @@ mod tests {
                 .get_mut(&to)
                 .and_then(Vec::pop)
                 .unwrap_or(Ok(None))
+        }
+        fn wifi(&self) -> Probe<WifiSignal> {
+            Probe::no("not on Wi-Fi")
         }
     }
 

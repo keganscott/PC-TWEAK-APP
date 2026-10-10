@@ -222,6 +222,8 @@ describe("App", () => {
     expect(within(router).getByText("Through Wi-Fi")).toBeTruthy();
     const cloudflare = within(card).getByRole("rowheader", { name: /Cloudflare DNS/ }).closest("tr") as HTMLElement;
     expect(within(cloudflare).getByText("19 of 20")).toBeTruthy();
+    expect(within(card).getByText("Wi-Fi signal: 62%")).toBeTruthy();
+    expect(within(card).getByText("(-69 dBm)")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Check again" })).toBeTruthy();
   });
 

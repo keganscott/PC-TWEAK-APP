@@ -3,6 +3,8 @@ import { useId } from "react";
 import type { ConnectionReading } from "../../generated/ConnectionReading";
 import type { PingResult } from "../../generated/PingResult";
 import type { PingTarget } from "../../generated/PingTarget";
+import type { Probe } from "../../generated/Probe";
+import type { WifiSignal } from "../../generated/WifiSignal";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatNumber } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -164,6 +166,7 @@ export function ConnectionSection() {
                 </tbody>
               </table>
             </div>
+            <WifiLine wifi={check.wifi} />
             <p className="text-xs text-ink-muted">Checked {formatDateTime(check.unixMs)}.</p>
           </div>
         )}
@@ -174,5 +177,23 @@ export function ConnectionSection() {
         )}
       </Card>
     </section>
+  );
+}
+
+/** The Wi-Fi signal as Windows rates it, when this PC is on Wi-Fi. Nothing
+ * when it is not; "could not tell" rather than a guess. */
+export function WifiLine({ wifi }: { wifi: Probe<WifiSignal> }) {
+  if (wifi.state === "no") return null;
+  if (wifi.state === "unknown") return <p className="text-sm text-ink-muted">Wi-Fi signal: could not tell.</p>;
+  const { quality, rssiDbm, adapter } = wifi.value;
+  return (
+    <p className="text-sm">
+      <span className="font-semibold">Wi-Fi signal: {quality}%</span>
+      {rssiDbm !== null && <span className="text-ink-muted"> ({rssiDbm} dBm)</span>}
+      <span className="text-ink-muted">
+        {" "}
+        on Windows' scale, where 100 is -50 dBm or stronger. Adapter: {adapter}.
+      </span>
+    </p>
   );
 }

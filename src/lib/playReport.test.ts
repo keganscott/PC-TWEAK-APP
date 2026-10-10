@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PlayReport } from "../generated/PlayReport";
 import type { ThrottleSeen } from "../generated/ThrottleSeen";
 import { playStatus } from "../generated/fixtures";
-import { reportNotes } from "./playReport";
+import { reportNotes, reportSummary, sameReport } from "./playReport";
 
 const report = (samples: number, seen: ThrottleSeen[], counts: { heat?: number; hardware?: number } = {}): PlayReport => ({
   game: "fortnite",
@@ -56,5 +56,25 @@ describe("reportNotes", () => {
     expect(unknown).toEqual([expect.objectContaining({ tone: "neutral", text: "nvml.dll was not found" })]);
     const none = reportNotes({ ...report(1, []), gpuThrottle: { state: "no", reason: "NVML reports no NVIDIA GPU" } });
     expect(none[0]!.title).toBe("No NVIDIA graphics card, so there are no graphics card readings.");
+  });
+});
+
+describe("reportSummary", () => {
+  it("leads with heat, then the card's hardware, and otherwise says none was seen", () => {
+    expect(reportSummary(playStatus.lastSession!)).toBe("Slowed for heat in 48 of 800 readings.");
+    expect(reportSummary(report(100, [{ reason: "hardware_slowdown", samples: 2 }], { hardware: 2 }))).toBe(
+      "Hardware slowdown in 2 of 100 readings.",
+    );
+    expect(reportSummary(report(600, [{ reason: "software_power_cap", samples: 50 }]))).toBe(
+      "No slowdown for heat or the card's hardware in any of 600 readings.",
+    );
+    expect(reportSummary({ ...report(1, []), gpuThrottle: { state: "unknown", reason: "x" } })).toBe(
+      "The graphics card could not be read.",
+    );
+  });
+
+  it("finds the last session in the history", () => {
+    expect(sameReport(playStatus.history.at(-1)!, playStatus.lastSession!)).toBe(true);
+    expect(sameReport(playStatus.history[0]!, playStatus.lastSession!)).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import type { PlayReport } from "../../generated/PlayReport";
 import type { Settings } from "../../generated/Settings";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatDuration } from "../../lib/format";
-import { reportNotes } from "../../lib/playReport";
+import { reportNotes, reportSummary, sameReport } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
 
@@ -39,6 +39,13 @@ export function PlaySection() {
   const [failedHere, setFailedHere] = useState(false);
 
   const name = (id: string) => games.find((g) => g.id === id)?.name ?? id;
+  // This run's last game, or after a restart the newest one kept.
+  const history = play?.history ?? [];
+  const shownLast = play?.lastSession ?? history.at(-1) ?? null;
+  const earlier = history
+    .filter((r) => !shownLast || !sameReport(r, shownLast))
+    .reverse()
+    .slice(0, EARLIER_SHOWN);
   const flip = async (key: Switch, on: boolean) => {
     if (!settings) return;
     setSaving(key);
@@ -113,7 +120,8 @@ export function PlaySection() {
           on a laptop while a game runs.
         </SwitchRow>
         {failedHere && settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
-        {play?.lastSession && <LastSession report={play.lastSession} name={name(play.lastSession.game)} />}
+        {shownLast && <LastSession report={shownLast} name={name(shownLast.game)} />}
+        {earlier.length > 0 && <EarlierGames reports={earlier} name={name} />}
       </Card>
     </section>
   );
@@ -121,6 +129,36 @@ export function PlaySection() {
 
 /** What the graphics card did during the last game (plan 6.2 item 6,
  * advice only). Read while the game ran; nothing was changed by it. */
+/** How many earlier games are listed under the last one. */
+const EARLIER_SHOWN = 5;
+
+/** The games before the last one, newest first, one line each. */
+function EarlierGames({ reports, name }: { reports: readonly PlayReport[]; name: (id: string) => string }) {
+  const headingId = useId();
+  return (
+    <div className="border-t border-line pt-4" role="group" aria-labelledby={headingId}>
+      <h3 id={headingId} className="font-bold">
+        Earlier games
+      </h3>
+      <ul className="mt-2 flex flex-col gap-1.5 text-sm">
+        {reports.map((r) => {
+          const hottest = r.gpuHottestC;
+          return (
+            <li key={`${r.game}-${r.startedUnixMs}`}>
+              <span className="font-semibold">{name(r.game)}</span>
+              <span className="text-ink-muted">
+                , {formatDateTime(r.endedUnixMs)}, watched for {formatDuration((r.endedUnixMs - r.startedUnixMs) / 1000)}
+                {hottest.state === "yes" && `, hottest ${hottest.value} °C`}. {reportSummary(r)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-2 text-xs text-ink-faint">The last few games are kept on this PC only.</p>
+    </div>
+  );
+}
+
 function LastSession({ report, name }: { report: PlayReport; name: string }) {
   const headingId = useId();
   const seconds = (report.endedUnixMs - report.startedUnixMs) / 1000;

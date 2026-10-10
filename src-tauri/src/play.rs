@@ -43,13 +43,15 @@ struct Session {
     /// Why some could not be put back (they stay listed in Backups).
     not_put_back: Option<String>,
     timer_problem: Option<String>,
+    /// Why the last game's report could not be kept in the history.
+    not_kept: Option<String>,
     /// On Wi-Fi only when the game started.
     on_wifi: bool,
 }
 
 impl Session {
     fn problem(&self) -> Option<String> {
-        let parts: Vec<&str> = [&self.not_put_back, &self.not_made, &self.timer_problem]
+        let parts: Vec<&str> = [&self.not_put_back, &self.not_made, &self.timer_problem, &self.not_kept]
             .into_iter()
             .flatten()
             .map(String::as_str)
@@ -70,13 +72,17 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
     let mut watch = Watch::new();
     let mut session = Session::default();
     let mut reports = PlayReports::default();
+    // A finished report waiting for the engine lock to be kept.
+    let mut ended = None;
     let mut first = true;
     loop {
         let running = running_images().ok().and_then(|images| game_running(&images, &games));
         let event = watch.look(running);
         // The graphics card's readings, outside the engine lock: they read
         // NVML only and change nothing.
-        reports.look(event.clone(), running, now_ms(), gpu_look);
+        if let Some(report) = reports.look(event.clone(), running, now_ms(), gpu_look) {
+            ended = Some(report);
+        }
         // Engine work only while the lock is free of an earlier panic; the
         // next look tries again.
         if let Ok(mut e) = engine.lock() {
@@ -87,12 +93,19 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                     e.end_play_session().into_iter().filter_map(|r| r.error),
                 );
             }
+            if let Some(report) = ended.take() {
+                session.not_kept = e
+                    .record_play(report)
+                    .err()
+                    .map(|err| format!("The last game's report could not be kept: {err}"));
+            }
             let settings = e.settings();
             match event {
                 Some(WatchEvent::Started(_)) => {
                     session.tried = false;
                     session.not_made = None;
                     session.not_put_back = None;
+                    session.not_kept = None;
                     // Once per game: listing adapters starts PowerShell.
                     session.on_wifi = e.on_wifi_only();
                 }
@@ -150,6 +163,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 on_wifi: watch.current().is_some() && session.on_wifi,
                 watched: watched_ids(&games),
                 last_session: reports.last().cloned(),
+                history: e.play_history(),
             };
             drop(e);
             let changed = {

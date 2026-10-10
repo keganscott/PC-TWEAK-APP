@@ -1316,7 +1316,80 @@ export const playStatus = {
       "value": 84
     },
     "temperatureMissed": null
-  }
+  },
+  "history": [
+    {
+      "game": "fortnite",
+      "startedUnixMs": 1786100000000,
+      "endedUnixMs": 1786101800000,
+      "gpuThrottle": {
+        "state": "yes",
+        "value": {
+          "samples": 600,
+          "seen": []
+        }
+      },
+      "heatReadings": 0,
+      "hardwareReadings": 0,
+      "gpuHottestC": {
+        "state": "yes",
+        "value": 76
+      },
+      "temperatureMissed": null
+    },
+    {
+      "game": "valorant",
+      "startedUnixMs": 1786190400000,
+      "endedUnixMs": 1786194000000,
+      "gpuThrottle": {
+        "state": "yes",
+        "value": {
+          "samples": 1200,
+          "seen": [
+            {
+              "reason": "software_power_cap",
+              "samples": 300
+            }
+          ]
+        }
+      },
+      "heatReadings": 0,
+      "hardwareReadings": 0,
+      "gpuHottestC": {
+        "state": "yes",
+        "value": 71
+      },
+      "temperatureMissed": null
+    },
+    {
+      "game": "fortnite",
+      "startedUnixMs": 1786280400000,
+      "endedUnixMs": 1786282800000,
+      "gpuThrottle": {
+        "state": "yes",
+        "value": {
+          "samples": 800,
+          "seen": [
+            {
+              "reason": "software_power_cap",
+              "samples": 760
+            },
+            {
+              "reason": "software_thermal_slowdown",
+              "samples": 48
+            }
+          ]
+        }
+      },
+      "heatReadings": 48,
+      "hardwareReadings": 0,
+      "gpuHottestC": {
+        "state": "yes",
+        "value": 84
+      },
+      "temperatureMissed": null
+    }
+  ]
 } satisfies PlayStatus;
 
 export const games = [

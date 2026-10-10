@@ -185,6 +185,9 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
    the hottest graphics card reading, and whether the card slowed down for heat
    or power. Compare the temperature with the NVIDIA overlay if you use it.
    NVIDIA cards only.
+11. **Game history** (N111): after step 10, close PeakTweaks and open it again.
+   Tools > While you play still shows that game as **Last game**, and its card
+   on **Games** says when it was last played.
 
 ## 6. Backups and Undo all
 

@@ -807,7 +807,60 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         },
     );
 
-    // A game running with Gaming Mode on and the timer held at 0.5 ms.
+    // A game running with Gaming Mode on and the timer held at 0.5 ms, after
+    // a Fortnite session in which the card slowed for heat, with two earlier
+    // games kept in the history.
+    let last = PlayReport {
+        game: "fortnite".into(),
+        started_unix_ms: 1_786_280_400_000,
+        ended_unix_ms: 1_786_282_800_000,
+        gpu_throttle: Probe::yes(ThrottleSummary {
+            samples: 800,
+            seen: vec![
+                ThrottleSeen {
+                    reason: ThrottleReason::SoftwarePowerCap,
+                    samples: 760,
+                },
+                ThrottleSeen {
+                    reason: ThrottleReason::SoftwareThermalSlowdown,
+                    samples: 48,
+                },
+            ],
+        }),
+        heat_readings: 48,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::yes(84),
+        temperature_missed: None,
+    };
+    let valorant = PlayReport {
+        game: "valorant".into(),
+        started_unix_ms: 1_786_190_400_000,
+        ended_unix_ms: 1_786_194_000_000,
+        gpu_throttle: Probe::yes(ThrottleSummary {
+            samples: 1_200,
+            seen: vec![ThrottleSeen {
+                reason: ThrottleReason::SoftwarePowerCap,
+                samples: 300,
+            }],
+        }),
+        heat_readings: 0,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::yes(71),
+        temperature_missed: None,
+    };
+    let earlier_fortnite = PlayReport {
+        game: "fortnite".into(),
+        started_unix_ms: 1_786_100_000_000,
+        ended_unix_ms: 1_786_101_800_000,
+        gpu_throttle: Probe::yes(ThrottleSummary {
+            samples: 600,
+            seen: vec![],
+        }),
+        heat_readings: 0,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::yes(76),
+        temperature_missed: None,
+    };
     ts_const(
         &mut out,
         "playStatus",
@@ -817,28 +870,8 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             gaming_mode_active: true,
             timer_held: Some(5_000),
             problem: None,
-            last_session: Some(PlayReport {
-                game: "fortnite".into(),
-                started_unix_ms: 1_786_280_400_000,
-                ended_unix_ms: 1_786_282_800_000,
-                gpu_throttle: Probe::yes(ThrottleSummary {
-                    samples: 800,
-                    seen: vec![
-                        ThrottleSeen {
-                            reason: ThrottleReason::SoftwarePowerCap,
-                            samples: 760,
-                        },
-                        ThrottleSeen {
-                            reason: ThrottleReason::SoftwareThermalSlowdown,
-                            samples: 48,
-                        },
-                    ],
-                }),
-                heat_readings: 48,
-                hardware_readings: 0,
-                gpu_hottest_c: Probe::yes(84),
-                temperature_missed: None,
-            }),
+            last_session: Some(last.clone()),
+            history: vec![earlier_fortnite, valorant, last],
             ..PlayStatus::watching()
         },
     );

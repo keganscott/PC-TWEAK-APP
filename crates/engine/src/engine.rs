@@ -143,6 +143,9 @@ pub struct Engine {
     settings: crate::settings::Settings,
     settings_store: crate::settings::SettingsStore,
     window_store: crate::window_place::WindowPlaceStore,
+    /// The reports of the last games watched, newest last (`play_history.rs`).
+    play_history: Vec<crate::play::PlayReport>,
+    play_history_store: crate::play_history::PlayHistoryStore,
     offline_error: Option<String>,
     /// The ids the last `startup_apps` and `msi_devices` listed, with the
     /// name each was shown with. Only those can be applied, so an id the UI
@@ -182,6 +185,8 @@ impl Engine {
             settings: crate::settings::Settings::default(),
             settings_store: crate::settings::SettingsStore::in_memory(),
             window_store: crate::window_place::WindowPlaceStore::in_memory(),
+            play_history: Vec::new(),
+            play_history_store: crate::play_history::PlayHistoryStore::in_memory(),
             offline_error: None,
             listed: std::collections::HashMap::new(),
             _instance: None,
@@ -201,6 +206,29 @@ impl Engine {
         self.settings = self.settings_store.load();
         self.window_store = crate::window_place::WindowPlaceStore::in_dir(dir);
         self
+    }
+
+    /// Keep the game history in the protected data directory and load what is
+    /// there.
+    pub fn with_play_history_in(mut self, dir: &super::secure_dir::TrustedDir) -> Self {
+        self.play_history_store = crate::play_history::PlayHistoryStore::in_dir(dir);
+        self.play_history = self.play_history_store.load();
+        self
+    }
+
+    /// The reports of the last games watched, newest last.
+    pub fn play_history(&self) -> Vec<crate::play::PlayReport> {
+        self.play_history.clone()
+    }
+
+    /// Add the report of a game that just ended. Saved first; the in-memory
+    /// history changes only if the save worked, so what the UI shows is what
+    /// is on disk.
+    pub fn record_play(&mut self, report: crate::play::PlayReport) -> Result<()> {
+        let history = crate::play_history::with_report(self.play_history.clone(), report);
+        self.play_history_store.save(&history)?;
+        self.play_history = history;
+        Ok(())
     }
 
     /// Where the window's last place is kept, for the window to use without
@@ -940,7 +968,8 @@ impl Engine {
         let proof = Arc::new(build_proof_service(&dir));
         let mut engine = Self::new(resolver, journal, tweaks, probe, license)
             .with_proof_service(proof)
-            .with_settings_in(&dir);
+            .with_settings_in(&dir)
+            .with_play_history_in(&dir);
         engine._instance = Some(instance);
         engine.refresh_offline_undo();
         Ok(engine)

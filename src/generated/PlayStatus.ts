@@ -34,6 +34,12 @@ onWifi: boolean,
 watched: Array<string>, 
 /**
  * What the graphics card did during the last game that closed while
- * PeakTweaks was open. Kept until PeakTweaks closes; not saved.
+ * PeakTweaks was open. Kept until PeakTweaks closes; the history keeps
+ * it longer.
  */
-lastSession: PlayReport | null, };
+lastSession: PlayReport | null, 
+/**
+ * The reports of the last games watched, newest last, kept on this PC
+ * across restarts (`play_history.rs`, at most `play_history::KEEP`).
+ */
+history: Array<PlayReport>, };

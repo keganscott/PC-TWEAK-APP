@@ -130,12 +130,24 @@ describe("App", () => {
     expect(await screen.findByText("Not read: nvml.dll was not found. AMD and Intel cards are not read yet.")).toBeTruthy();
   });
 
-  it("Home keeps the basic changes locked until there is a restore point", async () => {
+  it("Home makes the restore point first, then applies the basic changes, in one click", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });
-    const button = await screen.findByRole("button", { name: "Apply all basic changes (1)" });
-    expect(button.hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText("Make a restore point first, in the step above.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Apply all basic changes/ })).toBeNull();
+    const card = screen.getByRole("region", { name: /basic change/ });
+    await userEvent.click(within(card).getByRole("button", { name: "Make a restore point, then apply 1" }));
+    expect(await screen.findByText(/Restore point #\d+ is ready\./)).toBeTruthy();
+    expect(await within(card).findByText("Every basic change is in place.")).toBeTruthy();
+  });
+
+  it("Home applies nothing when the restore point fails", async () => {
+    const backend = createMockBackend({ failures: { createRestorePoint: { kind: "command", what: "System Restore", exitCode: null, detail: "SAMPLE: Windows said no" } } });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const card = screen.getByRole("region", { name: /basic change/ });
+    await userEvent.click(within(card).getByRole("button", { name: "Make a restore point, then apply 1" }));
+    await waitFor(() => expect(within(card).getByRole("button", { name: "Make a restore point, then apply 1" }).hasAttribute("disabled")).toBe(false));
+    expect(within(card).getByText("1 basic change to make")).toBeTruthy();
   });
 
   it("Home offers the basic changes whenever the gate is open, also before the restore status is read", async () => {

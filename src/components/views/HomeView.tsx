@@ -299,8 +299,9 @@ function Recommended() {
   const tweaks = useStore((s) => s.tweaks);
   const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen === true || s.restoreOp.status === "done");
   const applyingMany = useStore((s) => s.applyManyOp.status === "running");
+  const restoring = useStore((s) => s.restoreOp.status === "running");
   const sample = useStore((s) => s.sample);
-  const { applyMany } = useActions();
+  const { applyMany, restoreThenApply } = useActions();
   const navigate = useNavigate();
   const [all, setAll] = useState(false);
 
@@ -365,11 +366,16 @@ function Recommended() {
         })}
       </ul>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-        {todo.length > 0 && (
-          <Button variant="go" busy={applyingMany} disabled={!gateOpen} onClick={() => void applyMany(todo)}>
-            Apply all basic changes ({todo.length})
-          </Button>
-        )}
+        {todo.length > 0 &&
+          (gateOpen ? (
+            <Button variant="go" busy={applyingMany} onClick={() => void applyMany(todo)}>
+              Apply all basic changes ({todo.length})
+            </Button>
+          ) : (
+            <Button variant="go" busy={restoring || applyingMany} onClick={() => void restoreThenApply()}>
+              Make a restore point, then apply {todo.length}
+            </Button>
+          ))}
         {basic.length > TOP && (
           <Button variant="ghost" aria-expanded={all} onClick={() => setAll(!all)}>
             {all ? "Show fewer" : `Show all ${basic.length}`}
@@ -378,7 +384,9 @@ function Recommended() {
         <LinkButton onClick={() => navigate("tools")}>Choose one by one in Tools</LinkButton>
       </div>
       {todo.length > 0 && !gateOpen && (
-        <p className="mt-2 text-xs text-ink-muted">Make a restore point first, in the step above.</p>
+        <p className="mt-2 text-xs text-ink-muted">
+          Windows makes the restore point first, which can take a minute; the changes are made only once it is ready.
+        </p>
       )}
       {todo.length > 0 && restarts > 0 && (
         <p className="mt-2 text-xs text-ink-muted">

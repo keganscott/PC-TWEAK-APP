@@ -189,6 +189,35 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
 11. **Game history** (N111): after step 10, close PeakTweaks and open it again.
    Tools > While you play still shows that game as **Last game**, and its card
    on **Games** says when it was last played.
+12. **Game search and ARC Raiders** (N113): on **Games**, type a few letters in
+   **Or another game**; matching games list as you type. With ARC Raiders
+   installed through Steam it is marked as on this PC. While you play it, open
+   Task Manager > Details: the game should show as `PioneerGame.exe`. If it shows
+   another name, send that name.
+13. **Gaming Mode button** (N114): the pill at the top of every page and the
+   card on Home. Click it on and off; it should glow while on, and Tools > While
+   you play should match.
+14. **Clean memory** (N115, N120): Tools > Quick tools. The gauge and figures
+   should roughly match Task Manager > Performance > Memory. Click **Clean
+   memory** and note the "let go" figure. Turn on **Clean memory during games**,
+   play for a while, and the game's report in While you play says how often it
+   cleaned.
+15. **Presets** (N116): Tools > Presets. Open **Review** on each and check the
+   list makes sense for your PC. Applying one is optional; Backups can undo it.
+16. **New look** (N117, N118): Tools and Games. Say what you like and what you
+   don't.
+17. **Graphics driver** (N119): Tools > Quick tools > Graphics driver. Check
+   the driver number it shows against NVIDIA's app or Device Manager. **Open
+   NVIDIA's driver page** should open your browser. Installing a driver is
+   optional and takes a few minutes; only do it with a restore point and a
+   driver file from NVIDIA you want anyway.
+18. **Record while I play** (N121): on **Games**, your main game's card has
+   **Record my next games**. Click it, then play as usual: after 2 minutes, and
+   every 3 minutes after that, Proof records 30 seconds while the game is the
+   window in front. After 3 samples the card says the before side is ready. Make
+   your changes in Tools, click **Record the after side**, play again, and Proof
+   shows the result with a chart of each run. Note whether the timings suit how
+   you play.
 
 ## 6. Backups and Undo all
 
@@ -209,9 +238,10 @@ engine part while the app is open.
 
 ## 8. Optional: Proof (only if you have a game installed)
 
-Proof records a game before and after a change and compares the two. In
-**Proof**, click **New comparison**, pick the game, and follow the steps on the
-page. Note anything that fails or is confusing.
+Proof records a game before and after a change and compares the two. The
+easy way is step 18 above. By hand: in **Proof**, click **New comparison**,
+pick the game, and follow the steps on the page. Note anything that fails or
+is confusing.
 
 ## 9. The field-check report
 

@@ -61,7 +61,6 @@ export function HomeView() {
       <LastChange />
       <DriftCheck />
       <AfterRestart />
-      <Reminders />
       <section aria-label="Safety and next step" className="grid gap-3.5 lg:grid-cols-[1.5fr_1fr] print:hidden">
         <NextStep />
         <div className="flex flex-col gap-3.5">
@@ -70,6 +69,8 @@ export function HomeView() {
         </div>
       </section>
       <Recommended />
+      {/* Gentle, so after the steps that matter now. */}
+      <Reminders />
       <YourPc audit={audit} />
       <RightNow />
       <div className="grid items-start gap-3.5 lg:grid-cols-[1.65fr_1fr]">

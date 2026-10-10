@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Check, ClipboardCopy, Gamepad2, Play, Plus, Scale } from "lucide-react";
 
 import type { Comparison } from "../../generated/Comparison";
+import type { MetricComparison } from "../../generated/MetricComparison";
 import type { ProofRun } from "../../generated/ProofRun";
 import type { ProofSessionSummary } from "../../generated/ProofSessionSummary";
 import type { Side } from "../../generated/Side";
@@ -417,12 +418,89 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
           </div>
         )}
         {comparison?.status === "done" ? (
-          <ComparisonResult comparison={comparison.value} program={session.exe} sample={sample} />
+          <ComparisonResult comparison={comparison.value} runs={runs ?? []} program={session.exe} sample={sample} />
         ) : (
           <p className="mt-2 text-sm text-ink-muted">Record at least two runs on each side, then compare.</p>
         )}
       </Card>
     </div>
+  );
+}
+
+/** The name of a compared figure. */
+// copy-lint-allow: labels for numbers from stored proof runs
+const METRIC_LABEL: Record<MetricComparison["metric"], string> = { avg_fps: "Average FPS", one_percent_low_fps: "1% low FPS" };
+
+/**
+ * One compared figure drawn from the stored runs: each run a dot (before in
+ * violet, after in lime), each side's median a line, and the band around the
+ * before median that the after median has to leave for the engine to count a
+ * difference (`threshold`). Nothing here is worked out again: the medians and
+ * the band are the engine's, the dots are the runs' own numbers.
+ */
+function RunStrip({ comparison: m, before, after }: { comparison: MetricComparison; before: number[]; after: number[] }) {
+  const label = METRIC_LABEL[m.metric];
+  const bandLo = m.beforeMedian - m.threshold;
+  const bandHi = m.beforeMedian + m.threshold;
+  const all = [...before, ...after, bandLo, bandHi, m.afterMedian];
+  const pad = Math.max((Math.max(...all) - Math.min(...all)) * 0.08, 0.5);
+  const lo = Math.min(...all) - pad;
+  const hi = Math.max(...all) + pad;
+  const at = (v: number) => `${((v - lo) / (hi - lo)) * 100}%`;
+  const list = (vs: number[]) => vs.map((v) => formatNumber(v)).join(", ");
+  const description =
+    `${label}. Before runs: ${list(before)}, median ${formatNumber(m.beforeMedian)}. ` +
+    `After runs: ${list(after)}, median ${formatNumber(m.afterMedian)}. ` +
+    `A difference counts outside ${formatNumber(bandLo)} to ${formatNumber(bandHi)}.`;
+  const row = (top: string, values: number[], median: number, dot: string, line: string) => (
+    <div className="absolute inset-x-0 h-0" style={{ top }}>
+      <div className="absolute inset-x-0 h-px bg-line" />
+      <div className={cx("absolute h-6 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full", line)} style={{ left: at(median) }} />
+      {values.map((v, i) => (
+        <div
+          key={i}
+          className={cx("absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-surface-1", dot)}
+          style={{ left: at(v) }}
+        />
+      ))}
+    </div>
+  );
+  return (
+    <figure className="rounded-xl border border-line bg-surface-0/60 px-4 pt-3 pb-2">
+      <figcaption className="text-xs font-bold text-ink">{label}</figcaption>
+      <div role="img" aria-label={description} className="relative mt-2 h-16">
+        <div
+          className="absolute inset-y-0 rounded-md bg-violet/15"
+          style={{ left: at(bandLo), width: `calc(${at(bandHi)} - ${at(bandLo)})` }}
+        />
+        {row("30%", before, m.beforeMedian, "bg-violet", "bg-violet")}
+        {row("72%", after, m.afterMedian, "bg-lime", "bg-lime")}
+      </div>
+      <p aria-hidden className="flex justify-between text-[11px] text-ink-faint tabular-nums">
+        <span>{formatNumber(lo)}</span>
+        <span>{formatNumber(hi)}</span>
+      </p>
+    </figure>
+  );
+}
+
+/** The key to the run charts above it. */
+function RunLegend() {
+  return (
+    <p aria-hidden className="-mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-2.5 rounded-full bg-violet" /> Before runs
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-2.5 rounded-full bg-lime" /> After runs
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-3 w-[3px] rounded-full bg-ink-muted" /> Median
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2.5 w-4 rounded-sm bg-violet/30" /> Inside this band counts as no difference
+      </span>
+    </p>
   );
 }
 
@@ -678,8 +756,27 @@ function throttleText(run: ProofRun): string {
 
 /** The engine's headline, verbatim, then the numbers behind it, and a way
  * to copy them (with the run ids) to share. */
-function ComparisonResult({ comparison, program, sample }: { comparison: Comparison; program: string; sample: boolean }) {
+function ComparisonResult({
+  comparison,
+  runs,
+  program,
+  sample,
+}: {
+  comparison: Comparison;
+  runs: readonly ProofRun[];
+  program: string;
+  sample: boolean;
+}) {
   const rows = [comparison.average, comparison.lows];
+  const side = (ids: string[], pick: (r: ProofRun) => number) =>
+    ids.flatMap((id) => runs.filter((r) => r.runId === id).map(pick));
+  const charts = rows.flatMap((m) => {
+    // copy-lint-allow: a metric id from stored proof runs, not shown
+    const pick = (r: ProofRun) => (m.metric === "avg_fps" ? r.stats.avgFps : r.stats.onePercentLowFps);
+    const before = side(comparison.beforeRunIds, pick);
+    const after = side(comparison.afterRunIds, pick);
+    return before.length > 0 && after.length > 0 ? [<RunStrip key={m.metric} comparison={m} before={before} after={after} />] : [];
+  });
   const [copy, setCopy] = useState<{ copied: true } | { copied: false; text: string } | null>(null);
   // A new comparison is new text.
   useEffect(() => setCopy(null), [comparison]);
@@ -705,6 +802,12 @@ function ComparisonResult({ comparison, program, sample }: { comparison: Compari
             ))}
           </ul>
         </Callout>
+      )}
+      {charts.length > 0 && (
+        <>
+          <div className="grid gap-3 xl:grid-cols-2">{charts}</div>
+          <RunLegend />
+        </>
       )}
       <table className="w-full text-left text-sm">
         <thead className="text-xs text-ink-faint">

@@ -117,6 +117,8 @@ test("a proof comparison shows the engine's headline as given", async ({ page })
   await page.getByRole("button", { name: "Compare" }).click();
   const headline = page.getByTestId("verdict-headline");
   await expect(headline).toContainText(/^(Better|Worse|No measurable change|Not enough data)/);
+  await expect(page.getByRole("img", { name: /^Average FPS\. Before runs:/ })).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
   // The copied text carries the headline word for word and the run ids.
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.getByRole("button", { name: "Copy result" }).click();

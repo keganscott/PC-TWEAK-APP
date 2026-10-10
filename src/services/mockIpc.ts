@@ -119,18 +119,31 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   const records: JournalRecord[] = clone(fx.journalView.records) as JournalRecord[];
   const sessions: ProofSessionSummary[] = clone(fx.proofSessions) as ProofSessionSummary[];
   const runs = new Map<string, ProofRun[]>();
-  // The seeded session holds the runs its summary and the sample comparison name.
+  // The seeded session holds the runs its summary and the sample comparison name,
+  // with the figures that comparison was worked out from (contract.rs
+  // `comparison_fixture`), so a chart of the runs agrees with its medians.
   {
     const seeded = fx.proofSessions[0]!;
     const ids = [...fx.comparison.beforeRunIds, ...fx.comparison.afterRunIds];
+    const figures: [number, number][] = [
+      [60, 40],
+      [61, 41],
+      [70, 50],
+      [71, 51],
+    ];
     runs.set(
       seeded.session.sessionId,
-      ids.map((runId, i) => ({
-        ...(clone(fx.proofRun) as ProofRun),
-        runId,
-        side: i < fx.comparison.beforeRunIds.length ? "before" : "after",
-        index: (i % fx.comparison.beforeRunIds.length) + 1,
-      })),
+      ids.map((runId, i) => {
+        const run = clone(fx.proofRun) as ProofRun;
+        const [avgFps, onePercentLowFps] = figures[i] ?? [run.stats.avgFps, run.stats.onePercentLowFps];
+        return {
+          ...run,
+          runId,
+          side: i < fx.comparison.beforeRunIds.length ? "before" : "after",
+          index: (i % fx.comparison.beforeRunIds.length) + 1,
+          stats: { ...run.stats, avgFps, onePercentLowFps },
+        };
+      }),
     );
   }
 

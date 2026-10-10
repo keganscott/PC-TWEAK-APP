@@ -1155,6 +1155,20 @@ describe("review regressions", () => {
     expect(await within(card).findByRole("button", { name: "Record the before side while I play" })).toBeTruthy();
   });
 
+  it("a comparison's result draws each compared run with the engine's medians and band", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    await userEvent.click(await screen.findByRole("button", { name: /Game\.exe/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Compare" }));
+    expect(
+      await screen.findByRole("img", {
+        name: "Average FPS. Before runs: 60.0, 61.0, median 60.5. After runs: 70.0, 71.0, median 70.5. A difference counts outside 59.5 to 61.5.",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("img", { name: /^1% low FPS\. Before runs: 40\.0, 41\.0, median 40\.5\./ })).toBeTruthy();
+  });
+
   it("a Games card sets its game to record for Proof in one click and opens Proof on it", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

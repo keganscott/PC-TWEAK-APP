@@ -136,9 +136,9 @@ export function MemoryCleaner() {
         </div>
       </div>
       <p className="mt-4 text-sm text-ink-muted">
-        Windows keeps files it read recently in memory that nothing else is using, and hands that memory to a program as
-        soon as it asks. Cleaning empties that list now; Windows fills it again as files are read. Windows already counts
-        those files as available, so "In use" hardly moves.
+        Windows keeps files it read recently in memory that nothing else is using, and hands that memory to a program as soon as
+        it asks. Cleaning empties that list now; Windows fills it again as files are read. Windows already counts those files as
+        available, so "In use" hardly moves.
       </p>
       {capturing && <p className="mt-2 text-sm text-ink-muted">Available again when the Proof recording finishes.</p>}
       {result && (

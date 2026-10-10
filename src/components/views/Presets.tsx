@@ -23,8 +23,8 @@ export function PresetsSection({ gateOpen }: { gateOpen: boolean | null }) {
         </h2>
         {sample && <SampleBadge />}
         <p className="w-full text-sm text-ink-muted">
-          A set of changes in one go. Each one is listed with what it costs before anything is applied, and each can be
-          undone on its own from Backups.
+          A set of changes in one go. Each one is listed with what it costs before anything is applied, and each can be undone on
+          its own from Backups.
         </p>
       </div>
       <ul className="grid gap-3 md:grid-cols-3">
@@ -85,13 +85,10 @@ function PresetCard({ preset, tweaks, onReview }: { preset: Preset; tweaks: read
           />
         </div>
       </div>
-      <Button
-        className="mt-4"
-        variant={done ? "secondary" : "primary"}
-        disabled={plan.toApply.length === 0}
-        onClick={onReview}
-      >
-        {plan.toApply.length === 0 ? "Nothing to apply" : `Review ${plan.toApply.length} ${plan.toApply.length === 1 ? "change" : "changes"}`}
+      <Button className="mt-4" variant={done ? "secondary" : "primary"} disabled={plan.toApply.length === 0} onClick={onReview}>
+        {plan.toApply.length === 0
+          ? "Nothing to apply"
+          : `Review ${plan.toApply.length} ${plan.toApply.length === 1 ? "change" : "changes"}`}
       </Button>
     </article>
   );
@@ -159,9 +156,7 @@ function PresetReview({
         </p>
       )}
       {plan.notHere.length > 0 && (
-        <p className="mt-2">
-          Not offered on this PC now: {plan.notHere.map((t) => t.name).join(", ")}. Tools says why for each.
-        </p>
+        <p className="mt-2">Not offered on this PC now: {plan.notHere.map((t) => t.name).join(", ")}. Tools says why for each.</p>
       )}
       {tick && (
         <label htmlFor={tickId} className="mt-4 flex cursor-pointer items-start gap-2 text-ink">

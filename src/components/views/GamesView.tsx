@@ -1,3 +1,5 @@
+import { Check, Cpu, Layers, Play, ShieldCheck, type LucideIcon } from "lucide-react";
+
 import type { GameGpuChoice } from "../../generated/GameGpuChoice";
 import type { GameInstall } from "../../generated/GameInstall";
 import type { GameReadiness } from "../../generated/GameReadiness";
@@ -11,14 +13,17 @@ import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { playedReports, reportSummary } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
+import { GameArt } from "./GameArt";
 import { GameSearch } from "./GameSearch";
-import { Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { Button, Card, cx, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
 const FEATURE: Record<SecurityFeature, string> = {
   secure_boot: "Secure Boot",
   tpm: "TPM 2.0",
   iommu: "IOMMU (VT-d / AMD-Vi)",
 };
+
+const FEATURE_ICON: Record<SecurityFeature, LucideIcon> = { secure_boot: ShieldCheck, tpm: Cpu, iommu: Layers };
 
 function probeBadge(p: Probe<unknown>): { tone: Tone; label: string } {
   if (p.state === "yes") return { tone: "ok", label: "On" };
@@ -64,16 +69,21 @@ export function GamesView() {
         <Card>
           <fieldset disabled={targetOp.status === "running"}>
             <legend className="mb-3 font-bold">Main game</legend>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
               {featured.map((g) => {
                 const checked = target === g.id;
                 return (
                   <label
                     key={g.id}
-                    className={`cursor-pointer rounded-lg border px-3.5 py-2 text-sm has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-lime ${
-                      checked ? "border-violet bg-violet font-bold text-white" : "border-line-strong text-ink-muted hover:bg-surface-2 hover:text-ink"
-                    }`}
+                    className={cx(
+                      "group relative isolate flex h-32 cursor-pointer flex-col justify-end overflow-hidden rounded-2xl border p-3 transition-[transform,border-color] duration-200",
+                      "has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-lime",
+                      "motion-safe:hover:-translate-y-0.5",
+                      checked ? "border-lime motion-safe:animate-gm-glow" : "border-line-strong hover:border-violet-soft",
+                    )}
                   >
+                    <GameArt id={g.id} name={g.name} className="-z-10 transition-transform duration-300 motion-safe:group-hover:scale-105" />
+                    <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-t from-black/85 via-black/30 to-transparent" />
                     <input
                       type="radio"
                       name="target-game"
@@ -81,11 +91,19 @@ export function GamesView() {
                       checked={checked}
                       onChange={() => void selectTargetGame(g.id)}
                     />
-                    {g.name}
+                    {checked && (
+                      <span
+                        aria-hidden
+                        className="absolute top-2.5 left-2.5 flex items-center gap-1 rounded-full bg-lime px-2 py-0.5 text-[10px] font-bold tracking-wider text-black uppercase">
+                        <Check aria-hidden className="size-3" strokeWidth={3} />
+                        Main game
+                      </span>
+                    )}
+                    <span className="font-display text-base leading-tight font-extrabold text-white">{g.name}</span>
                     {found.has(g.id) && (
                       <>
                         {" "}
-                        <span className="ml-0.5 text-xs font-normal opacity-80">on this PC</span>
+                        <span className="mt-0.5 text-xs font-semibold text-white/80">on this PC</span>
                       </>
                     )}
                   </label>
@@ -130,21 +148,39 @@ export function GamesView() {
             <Skeleton className="h-28 w-full" label="Loading security features" />
           ) : (
             <Card>
-              <dl className="grid gap-4 sm:grid-cols-3">
+              <ul className="grid gap-3 sm:grid-cols-3">
                 {(["secure_boot", "tpm", "iommu"] as const).map((f) => {
                   const probe = f === "secure_boot" ? readiness.secureBoot : f === "tpm" ? readiness.tpm : readiness.iommu;
                   const { tone, label } = probeBadge(probe);
+                  const Icon = FEATURE_ICON[f];
                   return (
-                    <div key={f}>
-                      <dt className="text-sm text-ink-muted">{FEATURE[f]}</dt>
-                      <dd className="mt-1">
-                        <StatusBadge tone={tone}>{label}</StatusBadge>
-                        {probe.state !== "yes" && <p className="mt-1 text-xs text-ink-faint wrap-anywhere">{probe.reason}</p>}
-                      </dd>
-                    </div>
+                    <li
+                      key={f}
+                      className={cx(
+                        "flex gap-3 rounded-xl border bg-surface-2 p-3",
+                        probe.state === "yes" ? "border-lime/40" : probe.state === "no" ? "border-bad/40" : "border-line",
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className={cx(
+                          "flex size-9 shrink-0 items-center justify-center rounded-lg",
+                          probe.state === "yes" ? "bg-lime/15 text-lime" : probe.state === "no" ? "bg-bad/15 text-bad" : "bg-surface-3 text-ink-muted",
+                        )}
+                      >
+                        <Icon className="size-[18px]" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold">{FEATURE[f]}</p>
+                        <div className="mt-1">
+                          <StatusBadge tone={tone}>{label}</StatusBadge>
+                          {probe.state !== "yes" && <p className="mt-1 text-xs text-ink-faint wrap-anywhere">{probe.reason}</p>}
+                        </div>
+                      </div>
+                    </li>
                   );
                 })}
-              </dl>
+              </ul>
               <p className="mt-4 text-xs text-ink-faint">
                 These are firmware settings: each is turned on in your PC's firmware setup (BIOS/UEFI), and your
                 motherboard manual shows how. PeakTweaks only reads them and never switches them.
@@ -248,88 +284,113 @@ function GameCard({
         : s.status === "unknown"
           ? { tone: "neutral" as const, label: "Could not tell" }
           : { tone: "info" as const, label: "No known requirements" };
+  const steam = install?.steamApp != null;
   return (
-    <Card className="p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-bold">{name}</h3>
-        {main && (
-          <span className="rounded-md border border-violet/60 px-2 py-0.5 text-xs font-bold text-violet-soft">Your main game</span>
-        )}
-        <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
-      </div>
-      {readiness.requires.length > 0 && (
-        <p className="mt-2 text-sm text-ink-muted">
-          Requires {readiness.requires.map((f) => FEATURE[f]).join(", ")}
-          {readiness.scope && ` for ${readiness.scope}`}.
-        </p>
-      )}
-      {s.status === "not_ready" && s.missing.length > 0 && (
-        <p className="mt-1 text-sm">
-          Missing: {s.missing.map((f) => FEATURE[f]).join(", ")}.{" "}
-          <span className="text-ink-muted">{s.missing.length === 1 ? "It is" : "They are"} turned on in your PC's firmware setup (BIOS/UEFI), as above.</span>
-        </p>
-      )}
-      {(s.status === "not_ready" || s.status === "unknown") && s.unresolved.length > 0 && (
-        <p className="mt-1 text-sm text-ink-muted">Could not check: {s.unresolved.map((f) => FEATURE[f]).join(", ")}.</p>
-      )}
-      {readiness.source && <p className="mt-2 text-xs text-ink-faint">Source: {readiness.source}</p>}
-      {install !== undefined && (
-        <p className="mt-3 text-sm wrap-anywhere">
-          {install ? installText(install) : "Not found in the places PeakTweaks looks."}
-        </p>
-      )}
-      {install?.steamApp != null && (
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
+    <section className={cx("overflow-hidden rounded-2xl border bg-surface-1", main ? "border-lime/50" : "border-line")}>
+      <div className="relative isolate flex min-h-28 flex-wrap items-end justify-between gap-3 p-5">
+        <GameArt id={readiness.gameId} name={name} big className="-z-10" />
+        <div aria-hidden className="absolute inset-0 -z-10 bg-linear-to-r from-black/85 via-black/55 to-black/10" />
+        <div className="min-w-0">
+          {main && (
+            <span className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-lime px-2 py-0.5 text-[10px] font-bold tracking-wider text-black uppercase">
+              <Check aria-hidden className="size-3" strokeWidth={3} />
+              Your main game
+            </span>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-display text-2xl font-extrabold tracking-tight text-white">{name}</h3>
+            <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+          </div>
+        </div>
+        {steam && (
+          <Button
+            variant="go"
             onClick={onLaunch}
             disabled={launchOp?.status === "running"}
-            className="rounded-lg bg-violet px-4 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60"
+            icon={<Play aria-hidden className="size-4 fill-current" />}
+            className="px-5 py-2.5"
           >
             Play {name}
-          </button>
-          <p className="text-xs text-ink-faint" role="status">
-            {launchOp?.status === "running"
-              ? "Asking Steam to start it…"
-              : launchOp?.status === "done"
-                ? "Steam was asked to start it."
-                : "Starts through Steam, as you, without PeakTweaks' administrator rights."}
-          </p>
-        </div>
-      )}
-      {install?.steamApp != null && gamingMode !== null && (
-        <p className="mt-1 text-xs text-ink-faint">
-          {gamingMode
-            ? "Gaming Mode is on, so its changes start when the game does."
-            : "Gaming Mode is off. Turn it on in Tools to pause notifications and Windows Search indexing while the game runs."}
-        </p>
-      )}
-      {launchOp?.status === "failed" && (
-        <div className="mt-2">
-          <ErrorCallout text={explain(launchOp.error)} technical={technical} />
-        </div>
-      )}
-      {played.length > 0 && <Played reports={played} />}
-      {choice && (
-        <p className="mt-1 text-sm text-ink-muted">
-          Graphics chip: {choice.preference.state === "yes" ? CHOICE[choice.preference.value] : "could not tell"}.
-        </p>
-      )}
-      {guidance && (
-        <div className="mt-3 border-t border-line pt-3">
-          <h4 className="text-sm font-bold">In the game's own settings</h4>
-          <p className="mt-1 text-sm text-ink-muted">{guidance.intro}</p>
-          {guidance.steps.length > 0 && (
-            <ul className="mt-2 list-disc pl-5 text-sm">
-              {guidance.steps.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ul>
+          </Button>
+        )}
+      </div>
+      <div className={cx("grid gap-x-8 gap-y-4 p-5 pt-4", guidance && "lg:grid-cols-[1fr_1.15fr]")}>
+        <div className="min-w-0">
+          {readiness.requires.length > 0 && (
+            <p className="text-sm text-ink-muted">
+              Requires {readiness.requires.map((f) => FEATURE[f]).join(", ")}
+              {readiness.scope && ` for ${readiness.scope}`}.
+            </p>
           )}
-          {guidance.source && <p className="mt-2 text-xs text-ink-faint">Source: {guidance.source}</p>}
+          {s.status === "not_ready" && s.missing.length > 0 && (
+            <p className="mt-1 text-sm">
+              Missing: {s.missing.map((f) => FEATURE[f]).join(", ")}.{" "}
+              <span className="text-ink-muted">
+                {s.missing.length === 1 ? "It is" : "They are"} turned on in your PC's firmware setup (BIOS/UEFI), as above.
+              </span>
+            </p>
+          )}
+          {(s.status === "not_ready" || s.status === "unknown") && s.unresolved.length > 0 && (
+            <p className="mt-1 text-sm text-ink-muted">Could not check: {s.unresolved.map((f) => FEATURE[f]).join(", ")}.</p>
+          )}
+          {readiness.source && <p className="mt-2 text-xs text-ink-faint">Source: {readiness.source}</p>}
+          {install !== undefined && (
+            <p className="mt-3 text-sm wrap-anywhere">
+              {install ? installText(install) : "Not found in the places PeakTweaks looks."}
+            </p>
+          )}
+          {steam && (
+            <p className="mt-2 text-xs text-ink-faint" role="status">
+              {launchOp?.status === "running"
+                ? "Asking Steam to start it…"
+                : launchOp?.status === "done"
+                  ? "Steam was asked to start it."
+                  : "Starts through Steam, as you, without PeakTweaks' administrator rights."}
+            </p>
+          )}
+          {steam && gamingMode !== null && (
+            <p className="mt-1 text-xs text-ink-faint">
+              {gamingMode
+                ? "Gaming Mode is on, so its changes start when the game does."
+                : "Gaming Mode is off. Turn it on at the top of the window to pause notifications and Windows Search indexing while the game runs."}
+            </p>
+          )}
+          {launchOp?.status === "failed" && (
+            <div className="mt-2">
+              <ErrorCallout text={explain(launchOp.error)} technical={technical} />
+            </div>
+          )}
+          {played.length > 0 && <Played reports={played} />}
+          {choice && (
+            <p className="mt-1 text-sm text-ink-muted">
+              Graphics chip: {choice.preference.state === "yes" ? CHOICE[choice.preference.value] : "could not tell"}.
+            </p>
+          )}
         </div>
-      )}
-    </Card>
+        {guidance && (
+          <div className="min-w-0 border-t border-line pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8">
+            <h4 className="text-sm font-bold">In the game's own settings</h4>
+            <p className="mt-1 text-sm text-ink-muted">{guidance.intro}</p>
+            {guidance.steps.length > 0 && (
+              <ol className="mt-3 flex flex-col gap-2 text-sm">
+                {guidance.steps.map((step, i) => (
+                  <li key={step} className="flex gap-2.5">
+                    <span
+                      aria-hidden
+                      className="flex size-5 shrink-0 items-center justify-center rounded-md bg-violet/20 text-[11px] font-bold text-violet-soft tabular-nums"
+                    >
+                      {i + 1}
+                    </span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {guidance.source && <p className="mt-3 text-xs text-ink-faint">Source: {guidance.source}</p>}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

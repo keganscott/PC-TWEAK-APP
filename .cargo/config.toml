@@ -1,0 +1,5 @@
+# TypeScript bindings generated from the Rust types (ts-rs) land here when the
+# engine tests run. CI fails if they are stale.
+[env]
+TS_RS_EXPORT_DIR = { value = "src/generated", relative = true }
+TS_RS_LARGE_INT = "number"

@@ -1,0 +1,61 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PeakTweaks",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings --remote-debugging-port=9222"
+      }
+    ],
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "e2e-default-minus-revert-all",
+          "description": "The shipped capability (capabilities/default.json) with allow-revert-all removed, so the real-app test can show a registered command is refused when its permission is missing. command_audit.rs keeps the two lists in sync.",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "core:default",
+            "allow-engine-context",
+            "allow-list-tweaks",
+            "allow-list-games",
+            "allow-play-status",
+            "allow-forget-play-history",
+            "allow-get-settings",
+            "allow-set-settings",
+            "allow-select-target-game",
+            "allow-rescan",
+            "allow-apply-tweak",
+            "allow-revert-tweak",
+            "allow-list-journal",
+            "allow-audit-system",
+            "allow-create-restore-point",
+            "allow-proof-begin-session",
+            "allow-proof-capture",
+            "allow-proof-compare",
+            "allow-proof-list-sessions",
+            "allow-proof-runs",
+            "allow-proof-auto-record",
+            "allow-proof-stop-auto-record",
+            "allow-purge-standby-memory",
+            "allow-cleanup-measure",
+            "allow-cleanup-run",
+            "allow-optimize-drive",
+            "allow-list-startup-apps",
+            "allow-list-msi-devices",
+            "allow-live-readings",
+            "allow-check-connection",
+            "allow-launch-game",
+            "allow-open-driver-page",
+            "allow-install-gpu-driver"
+          ]
+        }
+      ]
+    }
+  }
+}

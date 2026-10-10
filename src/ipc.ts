@@ -1,0 +1,170 @@
+// Typed client for the Rust engine. Every type comes from src/generated (ts-rs),
+// so a change to a Rust type that this file does not follow fails `tsc`.
+//
+// The engine builds its own environment, license and restore-gate state; there
+// is deliberately no function here that sends any of that. A Rust test
+// (src-tauri/src/command_audit.rs) fails if a command exists that this file
+// does not wrap.
+
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+import type { AreaSize } from "./generated/AreaSize";
+import type { AutoRecordStatus } from "./generated/AutoRecordStatus";
+import type { CleanupArea } from "./generated/CleanupArea";
+import type { CleanupReport } from "./generated/CleanupReport";
+import type { Comparison } from "./generated/Comparison";
+import type { ContextInfo } from "./generated/ContextInfo";
+import type { DriveOptimization } from "./generated/DriveOptimization";
+import type { DriverVendor } from "./generated/DriverVendor";
+import type { EngineError } from "./generated/EngineError";
+import type { GameInfo } from "./generated/GameInfo";
+import type { GpuDriverInstall } from "./generated/GpuDriverInstall";
+import type { JournalEntry } from "./generated/JournalEntry";
+import type { JournalView } from "./generated/JournalView";
+import type { LiveReadings } from "./generated/LiveReadings";
+import type { MsiDeviceList } from "./generated/MsiDeviceList";
+import type { NetworkCheck } from "./generated/NetworkCheck";
+import type { PlayStatus } from "./generated/PlayStatus";
+import type { Progress } from "./generated/Progress";
+import type { ProofRun } from "./generated/ProofRun";
+import type { ProofSession } from "./generated/ProofSession";
+import type { ProofSessionSummary } from "./generated/ProofSessionSummary";
+import type { RestoreOutcome } from "./generated/RestoreOutcome";
+import type { RevertResult } from "./generated/RevertResult";
+import type { Settings } from "./generated/Settings";
+import type { Side } from "./generated/Side";
+import type { StartupList } from "./generated/StartupList";
+import type { StandbyPurge } from "./generated/StandbyPurge";
+import type { SystemAudit } from "./generated/SystemAudit";
+import type { TweakView } from "./generated/TweakView";
+
+/** What a failed command throws: the engine's structured error, not a string. */
+export class EngineFault extends Error {
+  constructor(readonly error: EngineError) {
+    super(describe(error));
+    this.name = "EngineFault";
+  }
+}
+
+function isEngineError(e: unknown): e is EngineError {
+  return typeof e === "object" && e !== null && typeof (e as { kind?: unknown }).kind === "string";
+}
+
+/** Tauri rejects with whatever the command returned in `Err`, or a string for
+ * failures before it (unknown command, permission denied). Normalise both. */
+export function asEngineError(e: unknown): EngineError {
+  if (isEngineError(e)) return e;
+  return { kind: "internal", detail: typeof e === "string" ? e : e instanceof Error ? e.message : String(e) };
+}
+
+function describe(e: EngineError): string {
+  switch (e.kind) {
+    case "blocked":
+      return e.reason.message;
+    case "internal":
+    case "user_context_unresolved":
+    case "registry":
+    case "win32":
+    case "storage":
+    case "insecure_storage":
+    case "settings_file":
+    case "context_violation":
+    case "command":
+    case "wmi":
+      return `${e.kind}: ${e.detail}`;
+    default:
+      return e.kind;
+  }
+}
+
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (e) {
+    throw new EngineFault(asEngineError(e));
+  }
+}
+
+export const engine = {
+  context: () => call<ContextInfo>("engine_context"),
+  listTweaks: () => call<TweakView[]>("list_tweaks"),
+  listGames: () => call<GameInfo[]>("list_games"),
+  /** Which known game is running and what is in effect for it. Also sent as `onPlay`. */
+  playStatus: () => call<PlayStatus>("play_status"),
+  /** Forget the kept game reports and this run's last game; resolves to the status now shown. */
+  forgetPlayHistory: () => call<PlayStatus>("forget_play_history"),
+  /** Preferences: rig-class override and plain/technical wording. Never a gate or licence. */
+  getSettings: () => call<Settings>("get_settings"),
+  /** Replace the preferences; resolves to what is now stored. */
+  /** `base` is what the window showed: only fields changed from it are saved
+   * over what the engine has now (a tray switch made since is kept). */
+  setSettings: (settings: Settings, base?: Settings) => call<Settings>("set_settings", { settings, base: base ?? null }),
+  /** Pick a known game, or `null` to clear. The id is validated in Rust. */
+  selectTargetGame: (gameId: string | null) => call<TweakView[]>("select_target_game", { gameId }),
+  /** Re-run every probe (nothing cached) and return the refreshed list. */
+  rescan: () => call<TweakView[]>("rescan"),
+  /** Hardware, security state, restore state and anti-cheat readiness. */
+  auditSystem: () => call<SystemAudit>("audit_system"),
+  /** Turn on System Protection if needed, create a restore point, prove it exists. */
+  createRestorePoint: () => call<RestoreOutcome>("create_restore_point"),
+  applyTweak: (id: string) => call<JournalEntry[]>("apply_tweak", { id }),
+  revertTweak: (id: string) => call<JournalEntry[]>("revert_tweak", { id }),
+  revertAll: () => call<RevertResult[]>("revert_all"),
+  listJournal: () => call<JournalView>("list_journal"),
+  /** Empty Windows' standby list (catalogue E6). Changes no setting; nothing to undo. */
+  purgeStandbyMemory: () => call<StandbyPurge>("purge_standby_memory"),
+  /** What each junk-file area holds that a cleanup would delete now (catalogue H28). Reads only. */
+  cleanupMeasure: () => call<AreaSize[]>("cleanup_measure"),
+  /** Delete the junk files in these areas. Cannot be undone: ask the user first. */
+  cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
+  /** Run Windows' own drive optimisation on the Windows drive (catalogue H29). Can take an hour or more on a hard drive. */
+  optimizeDrive: () => call<DriveOptimization>("optimize_drive"),
+  /** The programs Windows starts at sign-in, each with its switch (catalogue H12). Reads only; turn one off with applyTweak(its id). */
+  listStartupApps: () => call<StartupList>("list_startup_apps"),
+  /** MSI mode for each graphics card and network adapter (catalogue H6). Reads only; apply with applyTweak(its id). */
+  listMsiDevices: () => call<MsiDeviceList>("list_msi_devices"),
+  /** Processor, memory and NVIDIA GPU readings right now. Reads only; takes about half a second. */
+  liveReadings: () => call<LiveReadings>("live_readings"),
+  /** Echoes to the router and two public DNS servers (catalogue E4). Sends only echo requests; changes nothing. */
+  checkConnection: () => call<NetworkCheck>("check_connection"),
+  /** Ask Steam to start a game found in a Steam library. The engine builds the link and opens it as the signed-in user, without PeakTweaks' administrator rights. */
+  launchGame: (gameId: string) => call<null>("launch_game", { gameId }),
+  /** Open the card maker's own driver page in the user's browser. The engine holds the address; PeakTweaks opens no connection itself. */
+  openDriverPage: (vendor: DriverVendor) => call<null>("open_driver_page", { vendor }),
+  /** Clean install of an NVIDIA driver the user downloaded: the engine shows Windows' Open dialog, checks NVIDIA signed the file, needs a restore point. `null` when the dialog is cancelled. */
+  installGpuDriver: () => call<GpuDriverInstall | null>("install_gpu_driver"),
+};
+
+/** Measure whether a change did anything. Every number comes from stored runs. */
+export const proof = {
+  /** Start a before/after comparison. The free plan allows one. */
+  beginSession: (exe: string, gameId: string | null, gameBuild: string | null) =>
+    call<ProofSession>("proof_begin_session", { exe, gameId, gameBuild }),
+  /** Capture one run. Takes `delaySeconds + seconds`; listen to `onProgress`. */
+  capture: (sessionId: string, side: Side, seconds: number, delaySeconds: number) =>
+    call<ProofRun>("proof_capture", { sessionId, side, seconds, delaySeconds }),
+  /** Better / no measurable change / worse. Show `headline`; do not reword it. */
+  compare: (sessionId: string) => call<Comparison>("proof_compare", { sessionId }),
+  listSessions: () => call<ProofSessionSummary[]>("proof_list_sessions"),
+  runs: (sessionId: string) => call<ProofRun[]>("proof_runs", { sessionId }),
+  /** Record one side by itself while the comparison's game is in front ("Record while I play"); replaces any other. Records nothing now. */
+  autoRecord: (sessionId: string, side: Side) => call<AutoRecordStatus>("proof_auto_record", { sessionId, side }),
+  /** Stop recording while playing. A sample being recorded is finished and kept. */
+  stopAutoRecord: () => call<null>("proof_stop_auto_record"),
+};
+
+/** Subscribe to the game watcher: a game started or closed, or what is in effect changed. */
+export function onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn> {
+  return listen<PlayStatus>("engine://play", (event) => handler(event.payload));
+}
+
+/** Settings saved from outside the window: Gaming Mode from the tray icon. */
+export function onSettings(handler: (s: Settings) => void): Promise<UnlistenFn> {
+  return listen<Settings>("engine://settings", (event) => handler(event.payload));
+}
+
+/** Subscribe to progress events from long-running commands. */
+export function onProgress(handler: (p: Progress) => void): Promise<UnlistenFn> {
+  return listen<Progress>("engine://progress", (event) => handler(event.payload));
+}

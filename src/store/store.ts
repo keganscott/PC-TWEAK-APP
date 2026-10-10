@@ -521,6 +521,15 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       await many(ids, "apply");
     },
 
+    /** Home's one click on a first run: a restore point, then the basic
+     * changes still to make, read again after it (the engine checks the gate
+     * on each change as always). Nothing is applied if the point failed. */
+    async restoreThenApply() {
+      await actions.createRestorePoint();
+      if (state.restoreOp.status !== "done") return;
+      await many(recommendedIds(state.tweaks), "apply");
+    },
+
     /** Undo each in turn (the result card's "Undo these"). */
     async revertMany(ids: readonly string[]) {
       await many(ids, "revert");

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { BusEntry } from "../../store/store";
 import { useStore, useActions } from "../../store/hooks";
@@ -19,6 +19,8 @@ export function ExecutionBus({ open }: { open: boolean }) {
   const bus = useStore((s) => s.bus);
   const { clearBus } = useActions();
   const [copied, setCopied] = useState<"yes" | "no" | null>(null);
+  // "Copied" is about the lines that were there; new ones make it stale.
+  useEffect(() => setCopied(null), [bus.length]);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(busText(bus));

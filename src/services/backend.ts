@@ -39,7 +39,9 @@ export interface Backend {
   listTweaks(): Promise<TweakView[]>;
   listGames(): Promise<GameInfo[]>;
   getSettings(): Promise<Settings>;
-  setSettings(settings: Settings): Promise<Settings>;
+  /** Saves the fields of `settings` that differ from `base` (all of them
+   * without one) over what is saved now. */
+  setSettings(settings: Settings, base?: Settings): Promise<Settings>;
   selectTargetGame(gameId: string | null): Promise<TweakView[]>;
   rescan(): Promise<TweakView[]>;
   auditSystem(): Promise<SystemAudit>;

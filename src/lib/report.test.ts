@@ -108,5 +108,11 @@ describe("summaryText", () => {
       ].join("\n"),
     );
     expect(comparisonText("x.exe", comparison, new Date(), true)).toMatch(/^SAMPLE DATA/);
+    // Too few runs: the engine's threshold is 0 then, which must not read as
+    // "any difference counts".
+    const thin = { ...comparison, average: { ...comparison.average, threshold: 0, verdict: "not_enough_data" as const } };
+    const text2 = comparisonText("x.exe", thin, new Date(), false, "b");
+    expect(text2).toContain("(too few runs to judge a difference)");
+    expect(text2).not.toContain("counts above 0");
   });
 });

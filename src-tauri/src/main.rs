@@ -92,9 +92,6 @@ fn main() {
                 }
             };
             let status = play::new_status();
-            if let Some(engine) = handle.shared() {
-                play::start(app.handle().clone(), engine, status.clone());
-            }
             // Placed where it was last closed, then shown. Without an engine
             // nothing is remembered, but the window still shows its reason.
             let store = handle
@@ -108,6 +105,11 @@ fn main() {
             // be made leaves the app as it was without one.
             if let Err(e) = tray::build(app, handle.shared()) {
                 eprintln!("tray icon not shown: {e}");
+            }
+            // Started after the icon exists, so the icon hears of the first
+            // game it sees.
+            if let Some(engine) = handle.shared() {
+                play::start(app.handle().clone(), engine, status.clone());
             }
             tauri::Manager::manage(app, handle);
             tauri::Manager::manage(app, status);

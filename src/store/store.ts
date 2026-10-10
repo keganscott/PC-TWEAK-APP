@@ -477,13 +477,18 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     },
 
     /** Resolves to true once the engine has stored the settings. */
-    async saveSettings(settings: Settings): Promise<boolean> {
+    /** Save `settings`, made from `base` (the settings the caller showed;
+     * the store's own by default). Only fields changed from `base` are
+     * saved over what the engine has now. */
+    async saveSettings(settings: Settings, base?: Settings): Promise<boolean> {
       const current = tag("settings");
       set((s) => ({ ...s, settingsOp: RUNNING }));
       try {
         const before = state.settings;
         const trayBefore = traySaves;
-        let saved = await backend.setSettings(settings);
+        // Saved against what this window showed, so a Gaming Mode switch
+        // made from the tray meanwhile is kept, not put back.
+        let saved = await backend.setSettings(settings, base ?? before ?? undefined);
         if (traySaves !== trayBefore) saved = await backend.getSettings();
         if (!current()) return false;
         set((s) => ({ ...s, settings: saved, settingsOp: { status: "done", value: null } }));

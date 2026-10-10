@@ -300,6 +300,9 @@ function Recommended() {
   const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen === true || s.restoreOp.status === "done");
   const applyingMany = useStore((s) => s.applyManyOp.status === "running");
   const restoring = useStore((s) => s.restoreOp.status === "running");
+  // Until the first check says whether a restore point is ready, neither
+  // button: offering to make one could start a needless minute-long one.
+  const checking = useStore((s) => s.audit === null && s.auditOp.status !== "failed" && s.restoreOp.status !== "done");
   const sample = useStore((s) => s.sample);
   const { applyMany, restoreThenApply } = useActions();
   const navigate = useNavigate();
@@ -367,7 +370,11 @@ function Recommended() {
       </ul>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         {todo.length > 0 &&
-          (gateOpen ? (
+          (checking ? (
+            <Button variant="go" busy>
+              Checking for a restore point
+            </Button>
+          ) : gateOpen ? (
             <Button variant="go" busy={applyingMany} onClick={() => void applyMany(todo)}>
               Apply all basic changes ({todo.length})
             </Button>
@@ -383,7 +390,7 @@ function Recommended() {
         )}
         <LinkButton onClick={() => navigate("tools")}>Choose one by one in Tools</LinkButton>
       </div>
-      {todo.length > 0 && !gateOpen && (
+      {todo.length > 0 && !gateOpen && !checking && (
         <p className="mt-2 text-xs text-ink-muted">
           Windows makes the restore point first, which can take a minute; the changes are made only once it is ready.
         </p>
@@ -981,7 +988,7 @@ function AfterRestart() {
         }
         action={
           <div className="flex flex-wrap gap-2">
-            <Button busy={saving} onClick={() => void saveSettings({ ...settings, restartCheckSeenBoot: check.booted })}>
+            <Button busy={saving} onClick={() => void saveSettings({ ...settings, restartCheckSeenBoot: check.booted }, settings)}>
               Got it
             </Button>
             <Button variant="ghost" onClick={() => navigate("backups")}>
@@ -1019,7 +1026,7 @@ function Reminders() {
   const due = dueReminders(settings, audit, journal, now);
   if (!settings || due.length === 0) return null;
 
-  const later = (kind: Reminder["kind"]) => void saveSettings(snooze(settings, kind, Date.now()));
+  const later = (kind: Reminder["kind"]) => void saveSettings(snooze(settings, kind, Date.now()), settings);
   const notNow = (kind: Reminder["kind"]) => (
     <Button variant="ghost" busy={saving} onClick={() => later(kind)}>
       Not now

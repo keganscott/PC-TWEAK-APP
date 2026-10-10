@@ -10,10 +10,14 @@
 //! here follows (`sync`). Hovering the icon says which game is running and
 //! whether Gaming Mode's changes are in effect (`show_play`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
 use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
+use peaktweaks_engine::engine::Progress;
 use peaktweaks_engine::env::KNOWN_GAMES;
 use peaktweaks_engine::play::PlayStatus;
 
@@ -22,9 +26,21 @@ use crate::commands::SharedEngine;
 const GAMING: &str = "gaming_mode";
 const OPEN: &str = "open";
 
-/// The menu's Gaming Mode item, kept so its tick can follow the setting.
+/// The menu's Gaming Mode item, kept so its tick can follow the setting,
+/// and the number of the newest save it shows.
 pub struct Tray {
     gaming: CheckMenuItem<Wry>,
+    shown: Mutex<u64>,
+}
+
+/// Numbers saves in the order the engine made them. Taken while the engine
+/// lock is held, so a save that finished later never shows before an
+/// earlier one when their threads race to the tick.
+static SAVES: AtomicU64 = AtomicU64::new(0);
+
+/// The next save's number; call with the engine lock held.
+pub fn next_seq() -> u64 {
+    SAVES.fetch_add(1, Ordering::SeqCst) + 1
 }
 
 /// Put the icon by the clock. Without an engine Gaming Mode is greyed out,
@@ -54,15 +70,32 @@ pub fn build(app: &tauri::App, engine: Option<SharedEngine>) -> tauri::Result<()
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
-    app.manage(Tray { gaming });
+    app.manage(Tray {
+        gaming,
+        shown: Mutex::new(0),
+    });
     Ok(())
 }
 
-/// Make the tick match the saved setting.
-pub fn sync(app: &AppHandle, gaming_mode: bool) {
-    if let Some(tray) = app.try_state::<Tray>() {
-        let _ = tray.gaming.set_checked(gaming_mode);
+/// Make the tick match save number `seq`, unless a later save already
+/// shows. `also` runs in the same turn (the tray's own saves tell the window).
+fn show_save(app: &AppHandle, gaming_mode: bool, seq: u64, also: impl FnOnce()) {
+    let Some(tray) = app.try_state::<Tray>() else {
+        also();
+        return;
+    };
+    let mut shown = tray.shown.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if seq < *shown {
+        return;
     }
+    *shown = seq;
+    let _ = tray.gaming.set_checked(gaming_mode);
+    also();
+}
+
+/// Make the tick match the saved setting (a save from the window).
+pub fn sync(app: &AppHandle, gaming_mode: bool, seq: u64) {
+    show_save(app, gaming_mode, seq, || {});
 }
 
 /// Flip Gaming Mode on a worker thread, so the engine lock is never waited
@@ -83,14 +116,25 @@ fn toggle_gaming_mode(app: AppHandle, engine: SharedEngine) {
         let mut wanted = engine.settings();
         wanted.gaming_mode = !wanted.gaming_mode;
         // Turning it off can fail to put a change back; the setting is saved
-        // either way, and Backups lists what is still in effect.
-        if let Err(e) = engine.set_settings(wanted) {
-            eprintln!("Gaming Mode from the tray: {e}");
-        }
+        // either way, and Backups lists what is still in effect. The window's
+        // activity log says so.
+        let failed = engine.set_settings(wanted).err();
         let saved = engine.settings();
+        let seq = next_seq();
         drop(engine);
-        sync(&app, saved.gaming_mode);
-        let _ = app.emit("engine://settings", saved);
+        if let Some(e) = failed {
+            let _ = app.emit(
+                "engine://progress",
+                Progress {
+                    stage: "gaming mode".into(),
+                    tweak_id: None,
+                    message: format!("Gaming Mode from the tray: {e}. Backups lists what is still in effect."),
+                },
+            );
+        }
+        show_save(&app, saved.gaming_mode, seq, || {
+            let _ = app.emit("engine://settings", saved);
+        });
     });
 }
 

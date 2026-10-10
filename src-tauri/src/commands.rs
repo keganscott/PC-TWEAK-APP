@@ -149,15 +149,26 @@ pub async fn get_settings(engine: State<'_, EngineHandle>) -> Result<Settings> {
 /// saved, which is the new setting even when turning it off could not put
 /// every change back.
 #[tauri::command]
-pub async fn set_settings(app: AppHandle, engine: State<'_, EngineHandle>, settings: Settings) -> Result<Settings> {
-    let (out, gaming_mode) = blocking(&engine, move |e| {
-        let out = e.set_settings(settings);
-        Ok((out, e.settings().gaming_mode))
+pub async fn set_settings(
+    app: AppHandle,
+    engine: State<'_, EngineHandle>,
+    settings: Settings,
+    base: Option<Settings>,
+) -> Result<Settings> {
+    let (out, gaming_mode, seq) = blocking(&engine, move |e| {
+        // Only what the window changed from the settings it showed: a switch
+        // from the tray made since then stays as it is.
+        let wanted = match base {
+            Some(base) => Settings::with_changes(&e.settings(), &base, &settings)?,
+            None => settings,
+        };
+        let out = e.set_settings(wanted);
+        Ok((out, e.settings().gaming_mode, crate::tray::next_seq()))
     })
     .await?;
     // After the engine lock is let go: the tick is set on the thread that
     // runs the window, which must never wait behind the engine.
-    crate::tray::sync(&app, gaming_mode);
+    crate::tray::sync(&app, gaming_mode, seq);
     out
 }
 

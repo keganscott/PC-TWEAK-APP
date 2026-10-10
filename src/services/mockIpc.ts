@@ -256,9 +256,21 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     listTweaks: () => reply("listTweaks", [], () => clone(tweaks)),
     listGames: () => reply("listGames", [], () => clone(fx.games)),
     getSettings: () => reply("getSettings", [], () => clone(settings)),
-    setSettings: (s) =>
-      reply("setSettings", [s], () => {
-        settings = clone(s);
+    setSettings: (s, base) =>
+      reply("setSettings", [s, base], () => {
+        // As the engine does (`Settings::with_changes`): only what changed
+        // from `base` goes over what is saved now.
+        if (base) {
+          const next = clone(settings) as Record<string, unknown>;
+          const keys = new Set([...Object.keys(base), ...Object.keys(s)]);
+          for (const k of keys) {
+            const want = (s as Record<string, unknown>)[k];
+            if (JSON.stringify(want) !== JSON.stringify((base as Record<string, unknown>)[k])) next[k] = clone(want ?? null);
+          }
+          settings = next as Settings;
+        } else {
+          settings = clone(s);
+        }
         emitPlay();
         return clone(settings);
       }),

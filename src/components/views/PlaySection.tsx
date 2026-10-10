@@ -41,7 +41,7 @@ export function PlaySection() {
     setSaving(key);
     setFailedHere(false);
     const next: Settings = { ...settings, [key]: on };
-    setFailedHere(!(await saveSettings(next)));
+    setFailedHere(!(await saveSettings(next, settings)));
     setSaving(null);
   };
   const busy = settingsOp.status === "running";

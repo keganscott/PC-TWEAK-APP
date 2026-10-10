@@ -178,6 +178,13 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
    where it was.
 8. **Reminders** (N104): Home mentions junk files after 30 days and an old
    graphics driver after 180; "Not now" hides one for 30 days.
+9. **Connection** (N88): on Wi-Fi, Check now also shows the Wi-Fi signal as
+   Windows rates it. Compare it with the bars by the clock.
+10. **Last game** (N110): with PeakTweaks open, play a game for a few minutes,
+   then close it. Tools > While you play shows **Last game**: how long it ran,
+   the hottest graphics card reading, and whether the card slowed down for heat
+   or power. Compare the temperature with the NVIDIA overlay if you use it.
+   NVIDIA cards only.
 
 ## 6. Backups and Undo all
 

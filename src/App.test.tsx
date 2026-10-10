@@ -236,6 +236,17 @@ describe("App", () => {
     expect((within(section).getByRole("switch", { name: "Gaming Mode" }) as HTMLInputElement).checked).toBe(false);
   });
 
+  it("Tools says what the graphics card did during the last game", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    const last = await within(section).findByRole("group", { name: "Last game: Fortnite" });
+    expect(within(last).getByText(/Ran for 40 minutes, until .*\. Hottest reading: 84 °C\./)).toBeTruthy();
+    expect(within(last).getByText("The graphics card held its clocks down because of heat in 48 of 800 readings.")).toBeTruthy();
+    expect(within(last).getByText("The driver kept the card within its power limit in 760 of 800 readings.")).toBeTruthy();
+  });
+
   it("Tools turns Gaming Mode and the game timer on from their switches and says what is in effect", async () => {
     const backend = createMockBackend({ playing: "fortnite", gateOpen: true });
     const save = vi.spyOn(backend, "setSettings");

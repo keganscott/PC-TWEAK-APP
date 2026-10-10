@@ -1287,7 +1287,32 @@ export const playStatus = {
     "cs2",
     "apex",
     "minecraft"
-  ]
+  ],
+  "lastSession": {
+    "game": "fortnite",
+    "startedUnixMs": 1786280400000,
+    "endedUnixMs": 1786282800000,
+    "gpuThrottle": {
+      "state": "yes",
+      "value": {
+        "samples": 800,
+        "seen": [
+          {
+            "reason": "software_power_cap",
+            "samples": 760
+          },
+          {
+            "reason": "software_thermal_slowdown",
+            "samples": 48
+          }
+        ]
+      }
+    },
+    "gpuHottestC": {
+      "state": "yes",
+      "value": 84
+    }
+  }
 } satisfies PlayStatus;
 
 export const games = [

@@ -189,6 +189,14 @@ pub struct GpuLive {
 #[cfg(windows)]
 pub use real::NvmlSampler;
 
+/// The one NVML library handle for live readings and the game watcher, so it
+/// is loaded and initialised once.
+#[cfg(windows)]
+pub fn shared() -> &'static NvmlSampler {
+    static NVML: std::sync::OnceLock<NvmlSampler> = std::sync::OnceLock::new();
+    NVML.get_or_init(NvmlSampler::new)
+}
+
 #[cfg(windows)]
 mod real {
     use std::ffi::c_void;

@@ -236,6 +236,15 @@ describe("App", () => {
     expect((within(section).getByRole("switch", { name: "Gaming Mode" }) as HTMLInputElement).checked).toBe(false);
   });
 
+  it("Home warns about heat in the last game until Got it", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const note = await screen.findByRole("region", { name: "Last game" });
+    expect(within(note).getByText(/During Fortnite: the graphics card held its clocks down because of heat in 48 of 800 readings\./)).toBeTruthy();
+    await userEvent.click(within(note).getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("region", { name: "Last game" })).toBeNull();
+  });
+
   it("Tools says what the graphics card did during the last game", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

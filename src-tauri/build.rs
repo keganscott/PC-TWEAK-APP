@@ -18,6 +18,8 @@ const COMMANDS: &[&str] = &[
     "proof_compare",
     "proof_list_sessions",
     "proof_runs",
+    "proof_auto_record",
+    "proof_stop_auto_record",
     "apply_tweak",
     "revert_tweak",
     "revert_all",

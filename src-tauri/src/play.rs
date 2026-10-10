@@ -3,23 +3,30 @@
 //! a known game runs it keeps Gaming Mode's changes and the timer request in
 //! effect, as the user's settings say, and puts them back when the game closes.
 //! With "Clean memory during games" on, it also empties the standby list when
-//! free memory runs short (`memory::auto_clean_due`).
+//! free memory runs short (`memory::auto_clean_due`). With a Proof comparison
+//! set to "Record while I play", it records that comparison's samples while
+//! its game is in front (`proof::auto`).
 //! What it sees goes to the UI as the `engine://play` event and the
 //! `play_status` command.
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
+use peaktweaks_engine::error::Result;
 use peaktweaks_engine::journal::now_ms;
 use peaktweaks_engine::memory;
 use peaktweaks_engine::play::{
-    game_processes, game_running, play_look, running_images, watched_ids, PlayReports, PlayStatus, TimerRequest, Watch,
-    WatchEvent,
+    foreground_image, game_processes, game_running, play_look, running_images, watched_ids, PlayReports, PlayStatus,
+    TimerRequest, Watch, WatchEvent,
 };
+use peaktweaks_engine::proof::auto::{in_front, AutoRecordStatus, AutoSchedule, AUTO_SECONDS};
+use peaktweaks_engine::proof::service::ProofService;
+use peaktweaks_engine::proof::store::ProofRun;
 
-use crate::commands::SharedEngine;
+use crate::commands::{progress, Activity, SharedEngine};
 
 pub type SharedPlay = Arc<Mutex<PlayStatus>>;
 
@@ -71,6 +78,131 @@ impl Session {
     }
 }
 
+/// "Record while I play" (`proof::auto`): the schedule, kept by the engine's
+/// `AutoSchedule`, and the sample being recorded on a thread of its own.
+#[derive(Default)]
+struct Recorder {
+    schedule: AutoSchedule,
+    sample: Option<JoinHandle<Result<ProofRun>>>,
+}
+
+/// A sample due now: what the watcher starts once the engine lock is let go.
+struct Due {
+    svc: Arc<ProofService>,
+    status: AutoRecordStatus,
+    applied: Vec<String>,
+}
+
+impl Recorder {
+    /// One look, under the engine lock: collect a finished sample and ask the
+    /// schedule what to show and whether the next sample is due. Reads the
+    /// comparison's few small files; records nothing itself.
+    fn look(
+        &mut self,
+        svc: Option<Arc<ProofService>>,
+        game: Option<&str>,
+        applied: impl FnOnce() -> Vec<String>,
+        now: u64,
+    ) -> (Option<AutoRecordStatus>, Option<Due>) {
+        if self.sample.as_ref().is_some_and(JoinHandle::is_finished) {
+            let result = match self.sample.take().map(JoinHandle::join) {
+                Some(Ok(Ok(_))) => Ok(()),
+                Some(Ok(Err(err))) => Err(err.to_string()),
+                Some(Err(_)) | None => Err("its thread stopped".to_owned()),
+            };
+            self.schedule.sample_ended(result, game.is_some(), now);
+        }
+        let Some(svc) = svc else { return (None, None) };
+        match self.schedule.look(&svc, game, now) {
+            (Some(status), true) => (
+                Some(status.clone()),
+                Some(Due {
+                    svc,
+                    status,
+                    applied: applied(),
+                }),
+            ),
+            (status, _) => (status, None),
+        }
+    }
+
+    /// Outside the engine lock: start the sample that is due, if the game is
+    /// in front and no other long work holds the disk; otherwise say why it
+    /// waits (the next look tries again).
+    fn start(&mut self, app: &AppHandle, due: Due, status: &mut PlayStatus) {
+        let Due {
+            svc,
+            status: shown,
+            applied,
+        } = due;
+        let wait = |why: String| {
+            Some(AutoRecordStatus {
+                problem: Some(why),
+                ..shown.clone()
+            })
+        };
+        match foreground_image() {
+            Ok(front) if in_front(front.as_deref(), &shown.exe) => {}
+            Ok(_) => {
+                status.auto_record = wait(format!(
+                    "The next sample waits for {} to be the window in front.",
+                    shown.exe
+                ));
+                return;
+            }
+            Err(err) => {
+                status.auto_record = wait(format!("The window in front could not be read: {err}"));
+                return;
+            }
+        }
+        let activity = match Activity::claim("a Proof recording") {
+            Ok(activity) => activity,
+            Err(running) => {
+                status.auto_record = wait(format!("The next sample waits for {running} to finish."));
+                return;
+            }
+        };
+        let app = app.clone();
+        let (session_id, side) = (shown.session_id.clone(), shown.side);
+        let message = format!(
+            "Proof: recording sample {} of {} while {} runs",
+            shown.recorded + 1,
+            shown.wanted,
+            shown.exe
+        );
+        let spawned = std::thread::Builder::new().name("proof-sample".into()).spawn(move || {
+            let _activity = activity;
+            progress(&app, "proof_auto", None, message);
+            let result = svc.capture(&session_id, side, AUTO_SECONDS, 0, applied, &|stage, message| {
+                progress(&app, stage, None, message)
+            });
+            progress(
+                &app,
+                if result.is_ok() { "proof_done" } else { "proof_failed" },
+                None,
+                "",
+            );
+            result
+        });
+        match spawned {
+            Ok(handle) => {
+                self.sample = Some(handle);
+                self.schedule.sample_started();
+                status.auto_record = Some(AutoRecordStatus {
+                    recording_now: true,
+                    next_unix_ms: None,
+                    problem: None,
+                    ..shown
+                });
+            }
+            Err(err) => {
+                self.schedule.sample_ended(Err(err.to_string()), true, now_ms());
+                status.auto_record = wait(format!("The last sample did not record: {err}"));
+            }
+        }
+    }
+}
+
 pub fn start(app: AppHandle, engine: SharedEngine, status: SharedPlay) {
     std::thread::Builder::new()
         .name("game-watcher".into())
@@ -83,6 +215,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
     let mut watch = Watch::new();
     let mut session = Session::default();
     let mut reports = PlayReports::default();
+    let mut recorder = Recorder::default();
     // A finished report waiting for the engine lock to be kept.
     let mut ended = None;
     let mut first = true;
@@ -177,8 +310,11 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 session.not_put_back = None;
             }
             session.gaming_mode_was_on = settings.gaming_mode;
+            // A Proof sample due now is started once the lock is let go.
+            let (auto_record, due) =
+                recorder.look(e.proof_service(), watch.current(), || e.applied_tweak_ids(), now_ms());
 
-            let now = PlayStatus {
+            let mut now = PlayStatus {
                 game: watch.current().map(str::to_owned),
                 gaming_mode_active: e.play_session_open(),
                 timer_held: session.timer.as_ref().map(TimerRequest::granted),
@@ -189,8 +325,12 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 history: e.play_history(),
                 history_problem: e.play_history_problem(),
                 memory_cleans: if watch.current().is_some() { session.cleans } else { 0 },
+                auto_record,
             };
             drop(e);
+            if let Some(due) = due {
+                recorder.start(app, due, &mut now);
+            }
             let changed = {
                 let mut shown = status.lock().unwrap_or_else(PoisonError::into_inner);
                 let changed = *shown != now;

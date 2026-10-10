@@ -13,6 +13,7 @@
 //   answers, including "blocked".
 
 import type { AreaSize } from "../generated/AreaSize";
+import type { AutoRecordStatus } from "../generated/AutoRecordStatus";
 import type { CleanupArea } from "../generated/CleanupArea";
 import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
@@ -72,6 +73,8 @@ export interface ProofState {
   /** Per comparison. The engine records one capture at a time; `capturingSession` says which. */
   captureOps: Readonly<Record<string, Op<ProofRun>>>;
   capturingSession: string | null;
+  /** Setting or stopping "Record while I play"; what is set shows in `play.autoRecord`. */
+  autoOp: Op<AutoRecordStatus | null>;
   /** The last failure to load sessions or runs, until a load succeeds. */
   loadError: EngineError | null;
 }
@@ -165,7 +168,7 @@ export function initialState(sample: boolean): State {
     driverPageOp: IDLE,
     driverInstallOp: IDLE,
     lastChange: null,
-    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
+    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, autoOp: IDLE, loadError: null },
     play: null,
     forgetHistoryOp: IDLE,
     startup: null,
@@ -241,7 +244,7 @@ export type LongWork = "proof" | "cleanup" | "drive" | "driver";
 /** The long work running now other than `own`, which would make the engine
  * refuse `own`. */
 export function otherLongWork(s: State, own: LongWork): LongWork | null {
-  if (own !== "proof" && s.proof.capturingSession !== null) return "proof";
+  if (own !== "proof" && (s.proof.capturingSession !== null || s.play?.autoRecord?.recordingNow)) return "proof";
   if (own !== "cleanup" && s.cleanupOp.status === "running") return "cleanup";
   if (own !== "drive" && s.driveOp.status === "running") return "drive";
   if (own !== "driver" && s.driverInstallOp.status === "running") return "driver";
@@ -338,8 +341,28 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
   function showPlay(play: PlayStatus) {
     tag("play");
     const wasActive = state.play?.gamingModeActive;
+    const wasRecording = state.play?.autoRecord ?? null;
     set((s) => ({ ...s, play }));
     if (wasActive !== undefined && wasActive !== play.gamingModeActive) void refreshJournal();
+    if (wasRecording) void afterAutoSample(wasRecording, play.autoRecord);
+  }
+
+  /** "Record while I play" records without a request from here: when the
+   * watcher says a sample ended (or the side got its runs and stopped), the
+   * comparison's runs are read again and its old result dropped. A finished
+   * after side is compared at once, as the Compare button would. */
+  async function afterAutoSample(was: AutoRecordStatus, now: AutoRecordStatus | null) {
+    const sampled = was.recordingNow && (!now || !now.recordingNow || now.sessionId !== was.sessionId);
+    if (!sampled && now?.recorded === was.recorded) return;
+    const id = was.sessionId;
+    set((s) => {
+      if (!(id in s.proof.comparisons)) return s;
+      const { [id]: _stale, ...rest } = s.proof.comparisons;
+      return { ...s, proof: { ...s.proof, comparisons: rest } };
+    });
+    await Promise.allSettled([actions.loadRuns(id), actions.loadSessions()]);
+    const finished = sampled && !now && was.recorded + 1 >= was.wanted;
+    if (finished && was.side === "after") await actions.compare(id);
   }
 
   /** Settings saved from the tray icon. Not tagged: a save from the window
@@ -784,6 +807,35 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
         setCapture(failed(e), null);
       }
       await Promise.allSettled([actions.loadRuns(sessionId), actions.loadSessions()]);
+    },
+
+    /** "Record while I play": the game watcher records this side by itself
+     * while the comparison's game is in front, in place of any other. The
+     * reply shows at once; the watcher's next status takes over. */
+    async autoRecord(sessionId: string, side: Side) {
+      if (state.proof.autoOp.status === "running") return;
+      setProof({ autoOp: RUNNING });
+      const current = tag("play");
+      try {
+        const status = await backend.proofAutoRecord(sessionId, side);
+        setProof({ autoOp: { status: "done", value: status } });
+        if (current()) set((s) => (s.play ? { ...s, play: { ...s.play, autoRecord: status } } : s));
+      } catch (e) {
+        setProof({ autoOp: failed(e) });
+      }
+    },
+
+    async stopAutoRecord() {
+      if (state.proof.autoOp.status === "running") return;
+      setProof({ autoOp: RUNNING });
+      const current = tag("play");
+      try {
+        await backend.proofStopAutoRecord();
+        setProof({ autoOp: { status: "done", value: null } });
+        if (current()) set((s) => (s.play ? { ...s, play: { ...s.play, autoRecord: null } } : s));
+      } catch (e) {
+        setProof({ autoOp: failed(e) });
+      }
     },
 
     async compare(sessionId: string) {

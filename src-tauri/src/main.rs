@@ -134,6 +134,8 @@ fn main() {
             commands::proof_compare,
             commands::proof_list_sessions,
             commands::proof_runs,
+            commands::proof_auto_record,
+            commands::proof_stop_auto_record,
             commands::apply_tweak,
             commands::revert_tweak,
             commands::revert_all,

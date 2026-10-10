@@ -23,6 +23,7 @@ use peaktweaks_engine::launch;
 use peaktweaks_engine::memory::{self, StandbyPurge};
 use peaktweaks_engine::netcheck::{self, NetworkCheck};
 use peaktweaks_engine::play::PlayStatus;
+use peaktweaks_engine::proof::auto::AutoRecordStatus;
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use peaktweaks_engine::proof::verdict::Comparison;
@@ -61,7 +62,7 @@ impl EngineHandle {
     }
 }
 
-fn progress(app: &AppHandle, stage: &str, tweak_id: Option<&str>, message: impl Into<String>) {
+pub(crate) fn progress(app: &AppHandle, stage: &str, tweak_id: Option<&str>, message: impl Into<String>) {
     // Progress is advisory; a failed emit must never fail the operation.
     let _ = app.emit(
         "engine://progress",
@@ -407,6 +408,34 @@ pub async fn proof_runs(engine: State<'_, EngineHandle>, session_id: String) -> 
         })?
 }
 
+/// "Record while I play": the game watcher records `side` of this comparison
+/// by itself while its game is in front (`proof::auto`), in place of any other
+/// comparison set to. Records nothing now.
+#[tauri::command]
+pub async fn proof_auto_record(
+    engine: State<'_, EngineHandle>,
+    session_id: String,
+    side: Side,
+) -> Result<AutoRecordStatus> {
+    let shared = engine.get()?;
+    tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.start_auto_record(&session_id, side))
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("proof worker failed: {e}"),
+        })?
+}
+
+/// Stop recording while playing. A sample being recorded is finished and kept.
+#[tauri::command]
+pub async fn proof_stop_auto_record(engine: State<'_, EngineHandle>) -> Result<()> {
+    let shared = engine.get()?;
+    tauri::async_runtime::spawn_blocking(move || proof_service(&shared)?.stop_auto_record())
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("proof worker failed: {e}"),
+        })?
+}
+
 #[tauri::command]
 pub async fn apply_tweak(app: AppHandle, engine: State<'_, EngineHandle>, id: String) -> Result<Vec<JournalEntry>> {
     progress(&app, "apply", Some(&id), "Applying");
@@ -468,16 +497,22 @@ static ACTIVITY: Mutex<Option<&'static str>> = Mutex::new(None);
 /// Holds the activity slot until dropped; moved into the worker, so the slot
 /// stays taken as long as the work runs.
 #[must_use]
-struct Activity;
+pub(crate) struct Activity;
 
 impl Activity {
     /// `name` says what runs, for the refusal another start gets.
     fn start(name: &'static str) -> Result<Self> {
+        Self::claim(name).map_err(|running| EngineError::Internal {
+            detail: format!("{running} is running; try again when it finishes"),
+        })
+    }
+
+    /// Like `start`, with the name of what holds the slot when it is taken
+    /// (the game watcher waits for it instead of failing).
+    pub(crate) fn claim(name: &'static str) -> std::result::Result<Self, &'static str> {
         let mut slot = ACTIVITY.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(running) = *slot {
-            return Err(EngineError::Internal {
-                detail: format!("{running} is running; try again when it finishes"),
-            });
+            return Err(running);
         }
         *slot = Some(name);
         Ok(Self)

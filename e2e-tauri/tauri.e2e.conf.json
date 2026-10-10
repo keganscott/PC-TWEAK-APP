@@ -40,6 +40,8 @@
             "allow-proof-compare",
             "allow-proof-list-sessions",
             "allow-proof-runs",
+            "allow-proof-auto-record",
+            "allow-proof-stop-auto-record",
             "allow-purge-standby-memory",
             "allow-cleanup-measure",
             "allow-cleanup-run",

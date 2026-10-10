@@ -118,6 +118,14 @@ function commandText(what: string, detail: string): Omit<ErrorText, "detail"> {
   const task = /^scheduled task (.+)$/.exec(what);
   if (task) return { title: `Windows did not change the scheduled task ${task[1]}.`, hint: timedOut ? busy : null };
   if (what === "Proof store") return { title: "PeakTweaks could not save the test run.", hint: "Check free disk space, then try again." };
+  if (what === "Record while I play") {
+    return {
+      title: "PeakTweaks cannot record this comparison while you play.",
+      hint: d.includes("already has")
+        ? "That side has its runs. Start a new comparison to record more."
+        : "Start a new comparison and pick the game from the list, so PeakTweaks knows which program to record.",
+    };
+  }
   if (/presentmon|capture|proof run|frame statistics/i.test(what)) {
     return {
       title: "The test run did not finish.",

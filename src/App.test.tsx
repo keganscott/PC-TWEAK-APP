@@ -1139,6 +1139,33 @@ describe("review regressions", () => {
     );
   });
 
+  it("a comparison for a watched game can record itself while the game is played", async () => {
+    renderApp(createMockBackend({ gateOpen: true, playing: "fortnite" }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    await userEvent.click(await screen.findByRole("button", { name: /Game\.exe/ }));
+    const card = await screen.findByRole("region", { name: "Record while you play" });
+    expect(within(card).getByText(/a 30-second sample 2 minutes in, then one every 3 minutes while Fortnite is the window in front/)).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Record the before side while I play" }));
+
+    expect(await within(card).findByText("2 of 3 runs on the before side so far.")).toBeTruthy();
+    expect(within(card).getByText("On")).toBeTruthy();
+    expect(within(card).getByText(/Fortnite is running\. The next sample starts at/)).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Stop recording while I play" }));
+    expect(await within(card).findByRole("button", { name: "Record the before side while I play" })).toBeTruthy();
+  });
+
+  it("recording while playing is offered only for a game PeakTweaks watches for", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    await userEvent.click(screen.getByRole("button", { name: "New comparison" }));
+    await userEvent.type(screen.getByLabelText("Game program name"), "Typed.exe");
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await screen.findByRole("heading", { name: "Steps" });
+    expect(screen.queryByRole("region", { name: "Record while you play" })).toBeNull();
+  });
+
   it("a new comparison fills in the program name of a game found on this PC, never over typed text", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

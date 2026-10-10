@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
@@ -676,5 +676,75 @@ describe("MSI mode per device (catalogue H6)", () => {
     const { store } = await booted({ failures: { listMsiDevices: { kind: "internal", detail: "no answer" } } });
     await store.actions.loadMsi();
     expect(store.getState().msiOp).toMatchObject({ status: "failed", error: { kind: "internal" } });
+  });
+});
+
+describe("record while I play (proof/auto.rs)", () => {
+  const SEEDED = "session-1700000000000";
+
+  /** A booted store whose watcher events the test sends itself. */
+  async function watched() {
+    const mock = createMockBackend({ gateOpen: true });
+    let send: (p: PlayStatus) => void = () => {};
+    const backend: Backend = {
+      ...mock,
+      onPlay: async (handler) => {
+        send = handler;
+        return () => {};
+      },
+    };
+    const store = createAppStore(backend);
+    await store.actions.boot();
+    await settle(store);
+    return { store, backend, send: (p: PlayStatus) => send(p) };
+  }
+
+  it("sets and stops recording, shown at once without waiting for the watcher", async () => {
+    const { store } = await booted({ gateOpen: true });
+    await store.actions.autoRecord(SEEDED, "before");
+    expect(store.getState().proof.autoOp.status).toBe("done");
+    expect(store.getState().play?.autoRecord).toMatchObject({ sessionId: SEEDED, side: "before", gameId: "fortnite", recorded: 2, wanted: 3 });
+    await store.actions.stopAutoRecord();
+    expect(store.getState().play?.autoRecord).toBeNull();
+  });
+
+  it("a side that has its runs, or a comparison for no watched game, is refused with the engine's words", async () => {
+    const { store } = await booted({ gateOpen: true });
+    // The SAMPLE comparison has two after runs; one more fills the side.
+    await store.actions.capture(SEEDED, "after", 30, 0);
+    await store.actions.autoRecord(SEEDED, "after");
+    expect(store.getState().proof.autoOp).toMatchObject({
+      status: "failed",
+      error: { kind: "command", what: "Record while I play", detail: expect.stringContaining("already has 3 runs") },
+    });
+    const typed = await store.actions.beginSession("Typed.exe", null, null);
+    await store.actions.autoRecord(typed!.sessionId, "before");
+    expect(store.getState().proof.autoOp).toMatchObject({ status: "failed", error: { detail: expect.stringContaining("watches for") } });
+    expect(store.getState().play?.autoRecord).toBeNull();
+  });
+
+  it("a sample the watcher took reads the runs again and drops the old result", async () => {
+    const { store, backend, send } = await watched();
+    await store.actions.compare(SEEDED);
+    const status = await backend.proofAutoRecord(SEEDED, "before");
+    const base = store.getState().play!;
+    send({ ...base, autoRecord: { ...status, recordingNow: true } });
+    expect(otherLongWork(store.getState(), "cleanup")).toBe("proof");
+    await backend.proofCapture(SEEDED, "before", 30, 0);
+    send({ ...base, autoRecord: { ...status, recorded: 3 } });
+    await vi.waitFor(() => expect(store.getState().proof.runs[SEEDED]?.filter((r) => r.side === "before")).toHaveLength(3));
+    expect(store.getState().proof.comparisons[SEEDED]).toBeUndefined();
+    expect(otherLongWork(store.getState(), "cleanup")).toBeNull();
+  });
+
+  it("an after side the watcher finishes is compared at once", async () => {
+    const { store, backend, send } = await watched();
+    const base = store.getState().play!;
+    const status = await backend.proofAutoRecord(SEEDED, "after");
+    send({ ...base, autoRecord: { ...status, recordingNow: true } });
+    await backend.proofCapture(SEEDED, "after", 30, 0);
+    // The side reached its three runs, so the watcher stopped recording.
+    send({ ...base, autoRecord: null });
+    await vi.waitFor(() => expect(store.getState().proof.comparisons[SEEDED]?.status).toBe("done"));
   });
 });

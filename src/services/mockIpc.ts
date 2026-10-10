@@ -15,6 +15,7 @@ import type { ActionDone } from "../generated/ActionDone";
 import type { AppliedChange } from "../generated/AppliedChange";
 import type { AreaCleanup } from "../generated/AreaCleanup";
 import type { AreaSize } from "../generated/AreaSize";
+import type { AutoRecordStatus } from "../generated/AutoRecordStatus";
 import type { CleanupArea } from "../generated/CleanupArea";
 import type { CleanupReport } from "../generated/CleanupReport";
 import type { BlockedReason } from "../generated/BlockedReason";
@@ -28,6 +29,7 @@ import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSessionSummary } from "../generated/ProofSessionSummary";
 import type { Record as JournalRecord } from "../generated/Record";
 import type { Settings } from "../generated/Settings";
+import type { Side } from "../generated/Side";
 import type { StartupApp } from "../generated/StartupApp";
 import type { StartupList } from "../generated/StartupList";
 import type { SystemAudit } from "../generated/SystemAudit";
@@ -218,6 +220,25 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   // engine, they need a restore point.
   const playListeners = new Set<(p: PlayStatus) => void>();
   let historyForgotten = false;
+  // "Record while I play": the SAMPLE watcher shows what is set and when the
+  // next sample is due, and records nothing by itself.
+  let autoRecord: { sessionId: string; side: Side } | null = null;
+  const autoRecordStatus = (game: string | null): AutoRecordStatus | null => {
+    const summary = autoRecord && sessions.find((s) => s.session.sessionId === autoRecord!.sessionId);
+    if (!autoRecord || !summary?.session.gameId) return null;
+    const playing = game === summary.session.gameId;
+    return {
+      ...clone(fx.autoRecordStatus),
+      sessionId: autoRecord.sessionId,
+      side: autoRecord.side,
+      gameId: summary.session.gameId,
+      exe: summary.session.exe,
+      recorded: autoRecord.side === "before" ? summary.beforeRuns : summary.afterRuns,
+      recordingNow: false,
+      nextUnixMs: playing ? Date.now() + 120_000 : null,
+      problem: null,
+    };
+  };
   const playStatus = (): PlayStatus => {
     const game = options.playing ?? null;
     const wanted = game !== null && settings.gamingMode;
@@ -230,6 +251,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       problem: wanted && !gateOpen ? "Gaming Mode is not fully on: There is no verified restore point, so there is nothing to roll back to." : null,
       onWifi: game !== null && (options.onWifi ?? false),
       ...(historyForgotten ? { lastSession: null, history: [] } : {}),
+      autoRecord: autoRecordStatus(game),
     };
   };
   let shownPlay = JSON.stringify(playStatus());
@@ -515,6 +537,39 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     proofCompare: (sessionId) => reply("proofCompare", [sessionId], () => clone(fx.comparison)),
     proofSessions: () => reply("proofSessions", [], () => clone(sessions)),
     proofRuns: (sessionId) => reply("proofRuns", [sessionId], () => clone(runs.get(sessionId) ?? [])),
+    proofAutoRecord: (sessionId, side) =>
+      reply("proofAutoRecord", [sessionId, side], () => {
+        const summary = sessions.find((s) => s.session.sessionId === sessionId);
+        if (!summary) throw new EngineFault({ kind: "internal", detail: `no proof session ${sessionId}` });
+        const gameId = summary.session.gameId;
+        if (!gameId || !fx.playStatus.watched.includes(gameId)) {
+          throw new EngineFault({
+            kind: "command",
+            what: "Record while I play",
+            exitCode: null,
+            detail: `recording while you play needs a comparison made for a game PeakTweaks watches for, under that game's own program; ${summary.session.exe} is not one`,
+          });
+        }
+        const recorded = side === "before" ? summary.beforeRuns : summary.afterRuns;
+        if (recorded >= fx.autoRecordStatus.wanted) {
+          throw new EngineFault({
+            kind: "command",
+            what: "Record while I play",
+            exitCode: null,
+            detail: `the ${side} side already has ${recorded} runs; start a new comparison to record more`,
+          });
+        }
+        autoRecord = { sessionId, side };
+        const status = autoRecordStatus(options.playing ?? null)!;
+        emitPlay();
+        return status;
+      }),
+    proofStopAutoRecord: () =>
+      reply("proofStopAutoRecord", [], () => {
+        autoRecord = null;
+        emitPlay();
+        return null;
+      }),
     onProgress: async (handler): Promise<UnlistenFn> => {
       listeners.add(handler);
       return () => listeners.delete(handler);

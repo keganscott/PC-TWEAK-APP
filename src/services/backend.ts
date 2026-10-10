@@ -7,6 +7,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { engine, onPlay, onProgress, onSettings, proof } from "../ipc";
 
 import type { AreaSize } from "../generated/AreaSize";
+import type { AutoRecordStatus } from "../generated/AutoRecordStatus";
 import type { CleanupArea } from "../generated/CleanupArea";
 import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
@@ -75,6 +76,8 @@ export interface Backend {
   proofCompare(sessionId: string): Promise<Comparison>;
   proofSessions(): Promise<ProofSessionSummary[]>;
   proofRuns(sessionId: string): Promise<ProofRun[]>;
+  proofAutoRecord(sessionId: string, side: Side): Promise<AutoRecordStatus>;
+  proofStopAutoRecord(): Promise<null>;
   onProgress(handler: (p: Progress) => void): Promise<UnlistenFn>;
   /** The game watcher (catalogue step 5): which game runs and what is in effect for it. */
   playStatus(): Promise<PlayStatus>;
@@ -99,6 +102,8 @@ export function tauriBackend(): Backend {
     proofCompare: proof.compare,
     proofSessions: proof.listSessions,
     proofRuns: proof.runs,
+    proofAutoRecord: proof.autoRecord,
+    proofStopAutoRecord: proof.stopAutoRecord,
     onProgress,
     onPlay,
     onSettings,

@@ -127,6 +127,19 @@ test("a proof comparison shows the engine's headline as given", async ({ page })
   expect(copied).toMatch(/Runs before \(\d+\): \S/);
 });
 
+test("a comparison set to record while playing says so and passes an accessibility scan", async ({ page }) => {
+  await open(page);
+  await nav(page, "Proof");
+  await page.getByRole("navigation", { name: "Comparisons" }).getByRole("button").first().click();
+  const card = page.getByRole("region", { name: "Record while you play" });
+  await card.getByRole("button", { name: "Record the before side while I play" }).click();
+  await expect(card.getByText("2 of 3 runs on the before side so far.")).toBeVisible();
+  await expect(card.getByText("Waiting for Fortnite to start. Play as you normally do.")).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  await card.getByRole("button", { name: "Stop recording while I play" }).click();
+  await expect(card.getByRole("button", { name: "Record the before side while I play" })).toBeVisible();
+});
+
 test("settings switch to technical wording and show registry targets", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Settings" }).click();

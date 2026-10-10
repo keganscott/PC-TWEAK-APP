@@ -19,6 +19,10 @@
 //! programs only with `GlobalTimerResolutionRequests` set (the "Global timer
 //! requests" tool, `scheduling.timerrequests`).
 //!
+//! **Record while I play** (`proof::auto`): the watcher also records Proof
+//! samples while a comparison's game is the window in front
+//! (`foreground_image`, read from the same process list).
+//!
 //! VERIFY: the program names are each game's own as recalled (`games.rs`
 //! `GAME_FACTS`; Fortnite's is NOTES N7), and `NtQueryTimerResolution` / `NtSetTimerResolution` are
 //! undocumented; their parameters follow System Informer's `phnt` as recalled
@@ -162,6 +166,9 @@ pub struct PlayStatus {
     /// How many times "Clean memory during games" has cleaned while the game
     /// running now ran.
     pub memory_cleans: u32,
+    /// The Proof comparison side recorded while its game runs
+    /// ("Record while I play", `proof::auto`), when one is set.
+    pub auto_record: Option<crate::proof::auto::AutoRecordStatus>,
 }
 
 impl PlayStatus {
@@ -193,6 +200,35 @@ pub fn watched_ids(games: &[GameProcess]) -> Vec<String> {
 /// Every program running on this PC, by file name.
 #[cfg(windows)]
 pub fn running_images() -> crate::error::Result<Vec<String>> {
+    Ok(processes()?.into_iter().map(|(_, name)| name).collect())
+}
+
+/// The file name of the program whose window is in front, if Windows names
+/// one ("Record while I play" records only while the game is in front). The
+/// name comes from the process list, so no process is opened.
+#[cfg(windows)]
+pub fn foreground_image() -> crate::error::Result<Option<String>> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    // SAFETY: plain calls; the window handle is only passed back to Windows.
+    let pid = unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return Ok(None);
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        pid
+    };
+    if pid == 0 {
+        return Ok(None);
+    }
+    Ok(processes()?.into_iter().find(|(p, _)| *p == pid).map(|(_, name)| name))
+}
+
+/// Every process by id and file name.
+#[cfg(windows)]
+fn processes() -> crate::error::Result<Vec<(u32, String)>> {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -230,7 +266,7 @@ pub fn running_images() -> crate::error::Result<Vec<String>> {
                 .iter()
                 .position(|c| *c == 0)
                 .unwrap_or(entry.szExeFile.len());
-            out.push(String::from_utf16_lossy(&entry.szExeFile[..len]));
+            out.push((entry.th32ProcessID, String::from_utf16_lossy(&entry.szExeFile[..len])));
             if Process32NextW(snap.0, &mut entry).is_err() {
                 break;
             }
@@ -1035,6 +1071,22 @@ mod tests {
         w.look(Some("roblox"));
         assert_eq!(w.look(Some("fortnite")), None);
         assert_eq!(w.current(), Some("roblox"));
+    }
+
+    /// "Record while I play" records only while the game's window is in
+    /// front; this reads what Windows says is in front on the runner.
+    #[cfg(windows)]
+    #[test]
+    fn reads_the_program_in_front_on_this_pc() {
+        let front = foreground_image().unwrap();
+        println!("program in front on this runner: {front:?}");
+        if let Some(name) = &front {
+            assert!(name.to_ascii_lowercase().ends_with(".exe"), "{name}");
+            assert!(
+                running_images().unwrap().iter().any(|i| i == name),
+                "{name} is in the process list"
+            );
+        }
     }
 
     #[cfg(windows)]

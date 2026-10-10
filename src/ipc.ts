@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type { AreaSize } from "./generated/AreaSize";
+import type { AutoRecordStatus } from "./generated/AutoRecordStatus";
 import type { CleanupArea } from "./generated/CleanupArea";
 import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
@@ -147,6 +148,10 @@ export const proof = {
   compare: (sessionId: string) => call<Comparison>("proof_compare", { sessionId }),
   listSessions: () => call<ProofSessionSummary[]>("proof_list_sessions"),
   runs: (sessionId: string) => call<ProofRun[]>("proof_runs", { sessionId }),
+  /** Record one side by itself while the comparison's game is in front ("Record while I play"); replaces any other. Records nothing now. */
+  autoRecord: (sessionId: string, side: Side) => call<AutoRecordStatus>("proof_auto_record", { sessionId, side }),
+  /** Stop recording while playing. A sample being recorded is finished and kept. */
+  stopAutoRecord: () => call<null>("proof_stop_auto_record"),
 };
 
 /** Subscribe to the game watcher: a game started or closed, or what is in effect changed. */

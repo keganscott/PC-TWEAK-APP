@@ -11,6 +11,10 @@ export function formatDateTime(unixMs: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(unixMs));
 }
 
+export function formatTime(unixMs: number): string {
+  return new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date(unixMs));
+}
+
 export function formatDate(unixMs: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(unixMs));
 }

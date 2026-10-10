@@ -1,12 +1,12 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Check, ClipboardCopy, Play, Plus, Scale } from "lucide-react";
+import { Check, ClipboardCopy, Gamepad2, Play, Plus, Scale } from "lucide-react";
 
 import type { Comparison } from "../../generated/Comparison";
 import type { ProofRun } from "../../generated/ProofRun";
 import type { ProofSessionSummary } from "../../generated/ProofSessionSummary";
 import type { Side } from "../../generated/Side";
 import { explain } from "../../lib/errors";
-import { formatDateTime, formatNumber } from "../../lib/format";
+import { formatDateTime, formatNumber, formatTime } from "../../lib/format";
 import { comparisonText } from "../../lib/report";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { otherLongWork } from "../../store/store";
@@ -266,6 +266,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   const after = (runs ?? []).filter((r) => r.side === "after");
   const capturing = captureOp?.status === "running";
   const otherRecording = capturingSession !== null && capturingSession !== session.sessionId;
+  const autoRecording = useStore((s) => s.play?.autoRecord?.recordingNow ?? false);
 
   // The guide's next step decides which side the Record button is set to,
   // until the user picks a side themselves.
@@ -279,6 +280,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   return (
     <div className="flex flex-col gap-5">
       <ProofGuide before={before.length} after={after.length} changedNow={changedNow} />
+      <AutoRecordCard summary={summary} before={before.length} after={after.length} changedNow={changedNow} />
       <Card>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-base font-extrabold tracking-tight">{session.exe}</h2>
@@ -355,13 +357,14 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
               type="submit"
               variant="primary"
               busy={capturing}
-              disabled={otherRecording || toolsBusy !== null}
+              disabled={otherRecording || autoRecording || toolsBusy !== null}
               icon={<Play aria-hidden className="size-4" />}
             >
               Record
             </Button>
             {capturing && <Spinner label={`Recording for ${delay + seconds} s. Keep the game in front.`} />}
             {otherRecording && <span className="text-sm text-ink-muted">Another comparison is recording.</span>}
+            {autoRecording && !capturing && <span className="text-sm text-ink-muted">Recording while you play is taking a sample.</span>}
             {toolsBusy && (
               <span className="text-sm text-ink-muted">
                 Available again when the{" "}
@@ -411,6 +414,116 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * "Record while I play" (`proof/auto.rs`): the game watcher records the next
+ * side by itself while the comparison's game is the window in front. Shown
+ * for comparisons made for a game the watcher looks for. The timings in the
+ * text are the engine's (`AUTO_SECONDS`, `AUTO_FIRST_AFTER_MS`,
+ * `AUTO_GAP_MS`, `AUTO_RUNS`).
+ */
+function AutoRecordCard({
+  summary,
+  before,
+  after,
+  changedNow,
+}: {
+  summary: ProofSessionSummary;
+  before: number;
+  after: number;
+  changedNow: string[] | null;
+}) {
+  const { session } = summary;
+  const auto = useStore((s) => s.play?.autoRecord ?? null);
+  const watched = useStore((s) => s.play?.watched);
+  const games = useStore((s) => s.games);
+  const op = useStore((s) => s.proof.autoOp);
+  const technical = useTechnical();
+  const { autoRecord, stopAutoRecord } = useActions();
+  const navigate = useNavigate();
+
+  if (!session.gameId || !watched?.includes(session.gameId)) return null;
+  const gameName = (id: string) => games.find((g) => g.id === id)?.name ?? id;
+  const game = gameName(session.gameId);
+  const mine = auto?.sessionId === session.sessionId ? auto : null;
+  const side: Side | null = before < SUGGESTED_RUNS ? "before" : after < SUGGESTED_RUNS ? "after" : null;
+  const busy = op.status === "running";
+
+  return (
+    <Card aria-labelledby={`auto-${session.sessionId}`} className={cx(mine && "border-violet/60")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Gamepad2 aria-hidden className="size-4 text-violet" />
+        <h2 id={`auto-${session.sessionId}`} className="text-base font-extrabold tracking-tight">
+          Record while you play
+        </h2>
+        {mine && <span className="rounded-full bg-violet/20 px-2 py-0.5 text-xs font-bold text-ink">On</span>}
+      </div>
+      {mine ? (
+        <div className="mt-2 flex flex-col gap-2 text-sm">
+          <p className="text-ink">
+            {mine.recorded} of {mine.wanted} runs on the {mine.side} side so far.
+          </p>
+          {mine.recordingNow ? (
+            <Spinner label={`Recording sample ${mine.recorded + 1} of ${mine.wanted} now. Keep playing.`} />
+          ) : mine.nextUnixMs !== null ? (
+            <p className="text-ink-muted">
+              {game} is running. The next sample starts{" "}
+              {mine.nextUnixMs > Date.now() ? `at ${formatTime(mine.nextUnixMs)}, ` : ""}while {game} is the window in front.
+            </p>
+          ) : (
+            <p className="text-ink-muted">Waiting for {game} to start. Play as you normally do.</p>
+          )}
+          {mine.problem && <p className="text-warn">{mine.problem}</p>}
+          <div>
+            <Button busy={busy} onClick={() => void stopAutoRecord()}>
+              Stop recording while I play
+            </Button>
+          </div>
+        </div>
+      ) : side ? (
+        <div className="mt-2 flex flex-col gap-2 text-sm text-ink-muted">
+          <p>
+            PeakTweaks records the {side} side by itself the next time you play {game}: a 30-second sample 2 minutes in,
+            then one every 3 minutes while {game} is the window in front, until the side has {SUGGESTED_RUNS} runs. The
+            game can close in between; recording carries on next time.
+          </p>
+          <p className="text-xs text-ink-faint">
+            Samples land wherever you are, a menu or a match, so the runs vary more than scenes you pick yourself, and a
+            difference has to be bigger to count.
+          </p>
+          {side === "after" && !changedNow && (
+            <p className="text-ink">
+              Make your change first (a tool, a preset, or a different graphics driver), then record the after side.{" "}
+              <button type="button" className="font-bold text-violet underline" onClick={() => navigate("tools")}>
+                Open Tools
+              </button>
+            </p>
+          )}
+          {auto && (
+            <p>This replaces recording for the {gameName(auto.gameId)} comparison that is set now.</p>
+          )}
+          <div>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => void autoRecord(session.sessionId, side)}
+              icon={<Gamepad2 aria-hidden className="size-4" />}
+            >
+              Record the {side} side while I play
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-ink-muted">Both sides have their runs. Compare them below.</p>
+      )}
+      {op.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
+    </Card>
   );
 }
 

@@ -270,7 +270,7 @@ jobs:
             Start-Service WSearch -ErrorAction Continue
           }
           Write-Host "prepared WSearch: $((Get-Service WSearch -ErrorAction SilentlyContinue).Status)"
-          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 lists_running_programs_and_reads_the_timer_on_this_pc gaming_mode_starts_and_ends_on_this_pc a_look_at_the_graphics_card_answers_on_this_pc
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 lists_running_programs_and_reads_the_timer_on_this_pc gaming_mode_starts_and_ends_on_this_pc a_look_at_the_graphics_card_answers_on_this_pc reads_the_program_in_front_on_this_pc
 
       # Startup apps (catalogue H12): this runner's list read from the real
       # registry and Startup folders, and a test entry turned off and back on

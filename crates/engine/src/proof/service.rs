@@ -6,9 +6,10 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::time::Duration;
 
+use super::auto::{AutoRecord, AutoRecordStatus, AUTO_RUNS, AUTO_WHAT};
 use super::capture::{validate_exe_name, validate_timing, CaptureRequest, CaptureTool};
 use super::metrics::{compute_stats, parse_frame_times};
 use super::nvml::{NoSampler, ThrottleReason, ThrottleSampler, ThrottleSummary, ThrottleTally};
@@ -39,6 +40,8 @@ pub struct ProofService {
     sampler: Arc<dyn ThrottleSampler>,
     clock: Arc<dyn Clock>,
     busy: Mutex<()>,
+    /// The side set to record while its game runs, as kept in the store.
+    auto: Mutex<Option<AutoRecord>>,
 }
 
 /// How often the GPU is asked whether it is being held back during a capture.
@@ -89,6 +92,22 @@ impl Sampling {
     }
 }
 
+fn side_word(side: Side) -> &'static str {
+    match side {
+        Side::Before => "before",
+        Side::After => "after",
+    }
+}
+
+/// Why a comparison cannot be recorded while playing (`auto.rs`).
+fn auto_error(detail: impl Into<String>) -> EngineError {
+    EngineError::Command {
+        what: AUTO_WHAT.into(),
+        exit_code: None,
+        detail: detail.into(),
+    }
+}
+
 fn command_error(detail: impl Into<String>) -> EngineError {
     EngineError::Command {
         what: "Proof run".into(),
@@ -99,12 +118,17 @@ fn command_error(detail: impl Into<String>) -> EngineError {
 
 impl ProofService {
     pub fn new(root: PathBuf, tool: Arc<dyn CaptureTool>) -> Self {
+        let store = ProofStore::new(root);
+        // An unreadable record only means nothing records by itself; the
+        // Proof page can set it again.
+        let auto = store.auto_record().ok().flatten();
         Self {
-            store: ProofStore::new(root),
+            store,
             tool,
             sampler: Arc::new(NoSampler("GPU throttle readings are not enabled in this build".into())),
             clock: Arc::new(SystemClock),
             busy: Mutex::new(()),
+            auto: Mutex::new(auto),
         }
     }
 
@@ -262,6 +286,80 @@ impl ProofService {
         self.store.runs(session_id)
     }
 
+    /// Record `side` of a comparison while its game runs ("Record while I
+    /// play", `auto.rs`), in place of any other comparison set to. The
+    /// comparison must be for a game the watcher looks for, under one of that
+    /// game's own programs, and the side must have fewer than `AUTO_RUNS` runs.
+    pub fn start_auto_record(&self, session_id: &str, side: Side) -> Result<AutoRecordStatus> {
+        let record = AutoRecord {
+            session_id: session_id.to_owned(),
+            side,
+        };
+        let status = self.auto_status_of(&record)?;
+        if status.recorded >= status.wanted {
+            return Err(auto_error(format!(
+                "the {} side already has {} runs; start a new comparison to record more",
+                side_word(side),
+                status.recorded
+            )));
+        }
+        self.store.save_auto_record(&record)?;
+        *self.auto.lock().unwrap_or_else(PoisonError::into_inner) = Some(record);
+        Ok(status)
+    }
+
+    /// Stop recording while playing. A sample already being recorded is kept.
+    pub fn stop_auto_record(&self) -> Result<()> {
+        self.store.clear_auto_record()?;
+        *self.auto.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
+
+    /// The side set to record while its game runs, if any.
+    pub fn auto_record(&self) -> Option<AutoRecord> {
+        self.auto.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// The set side's comparison and runs so far, read from the store; the
+    /// watcher fills in what it is doing (`recording_now`, `next_unix_ms`,
+    /// `problem`).
+    pub fn auto_record_status(&self) -> Result<Option<AutoRecordStatus>> {
+        self.auto_record().map(|r| self.auto_status_of(&r)).transpose()
+    }
+
+    fn auto_status_of(&self, record: &AutoRecord) -> Result<AutoRecordStatus> {
+        let session = self.store.session(&record.session_id)?;
+        let watched = session.game_id.as_deref().filter(|id| {
+            crate::play::game_processes()
+                .iter()
+                .any(|p| p.game_id == *id && p.image.eq_ignore_ascii_case(&session.exe))
+        });
+        let Some(game_id) = watched else {
+            return Err(auto_error(format!(
+                "recording while you play needs a comparison made for a game PeakTweaks watches for, \
+                 under that game's own program; {} is not one",
+                session.exe
+            )));
+        };
+        let recorded = self
+            .store
+            .runs(&record.session_id)?
+            .iter()
+            .filter(|r| r.side == record.side)
+            .count() as u32;
+        Ok(AutoRecordStatus {
+            session_id: record.session_id.clone(),
+            side: record.side,
+            game_id: game_id.to_owned(),
+            exe: session.exe,
+            recorded,
+            wanted: AUTO_RUNS,
+            recording_now: false,
+            next_unix_ms: None,
+            problem: None,
+        })
+    }
+
     pub fn sessions(&self) -> Result<Vec<ProofSessionSummary>> {
         self.store
             .sessions()?
@@ -410,6 +508,120 @@ mod tests {
             svc.capture(&session.session_id, side, 30, 5, ids, &quiet).unwrap();
         }
         svc.compare(&session.session_id).unwrap()
+    }
+
+    fn fortnite_program() -> &'static str {
+        crate::games::facts("fortnite").expect("Fortnite has facts").programs[0]
+    }
+
+    fn begin_for(s: &ProofService, exe: &str, game_id: Option<&str>) -> ProofSession {
+        s.begin_session(
+            BeginSession {
+                exe: exe.into(),
+                game_id: game_id.map(str::to_owned),
+                game_build: None,
+            },
+            None,
+            Tier::Pro,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn recording_while_playing_is_kept_across_a_restart_and_counts_its_side() {
+        let d = tempfile::tempdir().unwrap();
+        let svc = service(d.path(), FakeCapture::new(|_, _| frames(10.0)));
+        let exe = fortnite_program().to_ascii_lowercase();
+        let session = begin_for(&svc, &exe, Some("fortnite"));
+        assert_eq!(svc.auto_record(), None);
+        assert_eq!(svc.auto_record_status().unwrap(), None);
+
+        let status = svc.start_auto_record(&session.session_id, Side::Before).unwrap();
+        assert_eq!(
+            (
+                status.game_id.as_str(),
+                status.recorded,
+                status.wanted,
+                status.recording_now
+            ),
+            ("fortnite", 0, AUTO_RUNS, false)
+        );
+        svc.capture(&session.session_id, Side::Before, 30, 0, vec![], &quiet)
+            .unwrap();
+        svc.capture(&session.session_id, Side::After, 30, 0, vec![], &quiet)
+            .unwrap();
+        assert_eq!(
+            svc.auto_record_status().unwrap().unwrap().recorded,
+            1,
+            "only its own side counts"
+        );
+
+        // A new service over the same folder (PeakTweaks restarted) still has it.
+        let again = service(d.path(), FakeCapture::new(|_, _| frames(10.0)));
+        assert_eq!(
+            again.auto_record(),
+            Some(AutoRecord {
+                session_id: session.session_id.clone(),
+                side: Side::Before
+            })
+        );
+        again.stop_auto_record().unwrap();
+        again.stop_auto_record().unwrap();
+        assert_eq!(again.auto_record(), None);
+        assert_eq!(
+            service(d.path(), FakeCapture::new(|_, _| frames(10.0))).auto_record(),
+            None
+        );
+    }
+
+    #[test]
+    fn recording_while_playing_needs_a_watched_games_own_program_and_room_on_the_side() {
+        let d = tempfile::tempdir().unwrap();
+        let svc = service(d.path(), FakeCapture::new(|_, _| frames(10.0)));
+        for (exe, game) in [("Game.exe", Some("fortnite")), (fortnite_program(), None)] {
+            let session = begin_for(&svc, exe, game);
+            let Err(EngineError::Command { what, detail, .. }) =
+                svc.start_auto_record(&session.session_id, Side::Before)
+            else {
+                panic!("{exe} {game:?} was accepted");
+            };
+            assert_eq!(what, AUTO_WHAT);
+            assert!(detail.contains("game PeakTweaks watches for"), "{detail}");
+        }
+        assert!(svc.start_auto_record("session-../../x", Side::Before).is_err());
+        assert!(svc.start_auto_record("session-1999999999999", Side::Before).is_err());
+
+        let session = begin_for(&svc, fortnite_program(), Some("fortnite"));
+        for _ in 0..AUTO_RUNS {
+            svc.capture(&session.session_id, Side::After, 30, 0, vec![], &quiet)
+                .unwrap();
+        }
+        let Err(EngineError::Command { detail, .. }) = svc.start_auto_record(&session.session_id, Side::After) else {
+            panic!("a full side was accepted");
+        };
+        assert!(detail.contains("already has 3 runs"), "{detail}");
+        assert_eq!(svc.auto_record(), None, "nothing was set by a refusal");
+        assert!(svc.start_auto_record(&session.session_id, Side::Before).is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_record_means_nothing_records_by_itself() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("proof")).unwrap();
+        std::fs::write(
+            d.path().join("proof").join("auto-record.json"),
+            b"{\"sessionId\":\"../x\",\"side\":\"before\"}",
+        )
+        .unwrap();
+        assert_eq!(
+            service(d.path(), FakeCapture::new(|_, _| frames(10.0))).auto_record(),
+            None
+        );
+        std::fs::write(d.path().join("proof").join("auto-record.json"), b"not json").unwrap();
+        assert_eq!(
+            service(d.path(), FakeCapture::new(|_, _| frames(10.0))).auto_record(),
+            None
+        );
     }
 
     #[test]

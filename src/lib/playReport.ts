@@ -6,6 +6,7 @@
 // (NVIDIA/go-nvml gen/nvml/nvml.h, checked 2026-10-10).
 
 import type { PlayReport } from "../generated/PlayReport";
+import type { PlayStatus } from "../generated/PlayStatus";
 import type { Tone } from "../components/ui/primitives";
 import { formatGiB } from "./format";
 
@@ -156,4 +157,12 @@ function gpuSummary(report: PlayReport): string {
  * holds. */
 export function sameReport(a: PlayReport, b: PlayReport): boolean {
   return a.game === b.game && a.startedUnixMs === b.startedUnixMs && a.endedUnixMs === b.endedUnixMs;
+}
+
+/** Every report the watcher has, oldest first: the kept history, plus this
+ * run's last game when it could not be saved into it. */
+export function playedReports(play: PlayStatus | null | undefined): PlayReport[] {
+  const history = play?.history ?? [];
+  const last = play?.lastSession ?? null;
+  return last && !history.some((r) => sameReport(r, last)) ? [...history, last] : history;
 }

@@ -11,6 +11,10 @@ export function formatDateTime(unixMs: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(unixMs));
 }
 
+export function formatDate(unixMs: number): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(unixMs));
+}
+
 export function formatGiB(bytes: number): string {
   return `${Math.round(bytes / 1024 ** 3)} GB`;
 }

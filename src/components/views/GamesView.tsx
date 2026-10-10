@@ -8,7 +8,7 @@ import type { SecurityFeature } from "../../generated/SecurityFeature";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatDuration } from "../../lib/format";
 import { GAME_GUIDANCE } from "../../lib/gameGuidance";
-import { reportSummary, sameReport } from "../../lib/playReport";
+import { playedReports, reportSummary } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
 import { Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
@@ -34,10 +34,8 @@ export function GamesView() {
   const sample = useStore((s) => s.sample);
   const launchOps = useStore((s) => s.launchOps);
   const gamingMode = useStore((s) => s.settings?.gamingMode ?? null);
-  const history = useStore((s) => s.play?.history);
-  const lastSession = useStore((s) => s.play?.lastSession ?? null);
-  // This run's last game, also when it could not be saved into the history.
-  const played = lastSession && !(history ?? []).some((r) => sameReport(r, lastSession)) ? [...(history ?? []), lastSession] : (history ?? []);
+  const play = useStore((s) => s.play);
+  const played = playedReports(play);
   const { selectTargetGame, launchGame } = useActions();
   const readiness = audit?.antiCheat ?? null;
   const installs = audit?.env.gameInstalls ?? null;

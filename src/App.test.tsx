@@ -258,6 +258,13 @@ describe("App", () => {
     expect(within(last).getByText("Memory was nearly full: up to 91% in use.")).toBeTruthy();
   });
 
+  it("Home's game list says when each game was last played", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const games = await screen.findByRole("region", { name: "Your games" });
+    expect(await within(games).findByText(/hard drive · last played Aug 9, 2026$/)).toBeTruthy();
+  });
+
   it("Tools lists the earlier games kept on this PC, newest first", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

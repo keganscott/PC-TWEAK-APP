@@ -21,8 +21,8 @@ import type { FixBy } from "../../generated/FixBy";
 import type { Probe } from "../../generated/Probe";
 import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
-import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
-import { reportNotes } from "../../lib/playReport";
+import { formatDate, formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
+import { playedReports, reportNotes } from "../../lib/playReport";
 import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
 import { restartCheck } from "../../lib/restartCheck";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -1323,6 +1323,8 @@ function YourGames() {
   const installs = useStore((s) => s.audit?.env.gameInstalls ?? null);
   const target = useStore((s) => s.targetGame);
   const sample = useStore((s) => s.sample);
+  const play = useStore((s) => s.play);
+  const played = playedReports(play);
   const navigate = useNavigate();
   return (
     <section aria-labelledby="your-games-title" className="print:hidden">
@@ -1341,6 +1343,7 @@ function YourGames() {
           <ul className="divide-y divide-line">
             {installs.map((g, i) => {
               const disk = probeValue(g.disk);
+              const last = played.filter((r) => r.game === g.gameId).at(-1);
               return (
                 <li key={g.gameId} className="flex items-center gap-3.5 px-5 py-3.5">
                   <span
@@ -1357,6 +1360,7 @@ function YourGames() {
                     <p className="mt-0.5 truncate text-xs text-ink-muted">
                       {g.drive}
                       {disk ? (disk.media === "hdd" ? " hard drive" : " solid-state drive") : ""}
+                      {last && ` · last played ${formatDate(last.endedUnixMs)}`}
                     </p>
                   </div>
                   {target === g.gameId && <StatusBadge tone="ok">Main game</StatusBadge>}

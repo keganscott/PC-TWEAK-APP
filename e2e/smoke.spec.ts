@@ -153,6 +153,24 @@ test("a Games card sets its game to record for Proof and opens Proof at the top"
   await expect(page.getByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeVisible();
 });
 
+test("the mouse check counts the reports a moving mouse sends to the window", async ({ page }) => {
+  await open(page);
+  await nav(page, "Tools");
+  const card = page.getByRole("region", { name: "Mouse report rate" });
+  await card.getByRole("button", { name: "Count my mouse's reports" }).click();
+  await expect(card.getByText("Move the mouse in quick circles now")).toBeVisible();
+  // Circles until the check ends: a figure, or too few if this browser hands
+  // over fewer moves than a person's mouse would. Either way it ends.
+  const box = (await card.boundingBox())!;
+  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
+  for (let i = 0; i < 400 && !(await card.getByRole("button", { name: "Count again" }).isVisible()); i++) {
+    await page.mouse.move(cx + 80 * Math.cos(i / 6), cy + 40 * Math.sin(i / 6));
+  }
+  await expect(card.getByRole("button", { name: "Count again" })).toBeVisible({ timeout: 10_000 });
+  await expect(card.getByText(/reports counted\.|Too few reports to tell\./)).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+});
+
 test("settings switch to technical wording and show registry targets", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Settings" }).click();

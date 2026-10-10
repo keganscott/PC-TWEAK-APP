@@ -218,6 +218,9 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
    your changes in Tools, click **Record the after side**, play again, and Proof
    shows the result with a chart of each run. Note whether the timings suit how
    you play.
+19. **Mouse report rate** (N122): Tools > Quick tools. Click the button and move
+   the mouse in quick circles for 4 seconds. Compare the figure with the polling
+   rate set in your mouse's own software (for example 1000 Hz), and send both.
 
 ## 6. Backups and Undo all
 

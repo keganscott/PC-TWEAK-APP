@@ -198,6 +198,50 @@ try {
     assert.ok(!found.includes("Cleared "), "a cleanup ran");
   });
 
+  await step("Presets list what each would change on this PC (N116)", async () => {
+    const presets = By.xpath("//h2[normalize-space()='Presets']/ancestor::section[1]");
+    const found = await driver.wait(until.elementLocated(presets), 15_000).then((s) => s.getText());
+    console.log(`\n===== Presets =====\n${found.slice(0, 900)}\n`);
+    const review = await (await driver.findElement(presets)).findElements(By.xpath(".//button[starts-with(normalize-space(), 'Review ')]"));
+    if (review.length === 0) {
+      console.log("(nothing left to apply in any preset here)");
+      return;
+    }
+    await review[0].click();
+    const dialog = await driver.wait(until.elementLocated(By.css("[role='dialog']")), 10_000);
+    console.log(`\n===== Preset review =====\n${(await dialog.getText()).slice(0, 1500)}\n`);
+    // Looked at only: Cancel applies nothing.
+    await dialog.findElement(By.xpath(".//button[normalize-space()='Cancel']")).click();
+    await driver.wait(async () => (await driver.findElements(By.css("[role='dialog']"))).length === 0, 10_000);
+  });
+
+  await step("Clean memory empties the standby list on this machine (N115)", async () => {
+    const section = await driver.findElement(sectionOf("Clean memory"));
+    await driver.wait(async () => !(await section.getText()).includes("Reading memory"), 30_000);
+    await section.findElement(By.xpath(".//button[normalize-space()='Clean memory']")).click();
+    const found = await settled("Clean memory", ["Cleaned "], 120_000);
+    console.log(`\n===== Clean memory =====\n${found.slice(0, 1200)}\n`);
+  });
+
+  await step("Gaming Mode turns on and off from the top bar, and the engine keeps it (N114)", async () => {
+    const toggle = By.xpath("//header//button[@aria-pressed][.//span[normalize-space()='Gaming Mode']]");
+    const before = await ipc("get_settings");
+    assert.ok(before.ok, `get_settings failed: ${JSON.stringify(before.error)}`);
+    const was = before.value.gamingMode;
+    for (const want of [!was, was]) {
+      await driver.findElement(toggle).click();
+      await driver.wait(async () => {
+        const button = await driver.findElement(toggle);
+        return (
+          (await button.getAttribute("aria-pressed")) === String(want) && (await button.getAttribute("aria-busy")) !== "true"
+        );
+      }, 15_000);
+      const now = await ipc("get_settings");
+      assert.ok(now.ok && now.value.gamingMode === want, `the engine has gamingMode ${now.value?.gamingMode}, not ${want}`);
+      console.log(`\n(Gaming Mode ${want ? "on" : "off"}: ${await driver.findElement(toggle).getAttribute("title")})`);
+    }
+  });
+
   await step("Advanced lists this PC's graphics cards and network adapters", async () => {
     const advanced = By.xpath("//label[starts-with(normalize-space(), 'Advanced')]/input");
     await driver.findElement(advanced).click();

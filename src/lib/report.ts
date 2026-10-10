@@ -15,6 +15,7 @@ export function summaryText(
   tweaks: readonly TweakView[],
   at: Date,
   sample = false,
+  build: string = __APP_BUILD__,
 ): string {
   const read = <T>(p: Probe<T> | undefined, show: (v: T) => string) =>
     !p ? "not read yet" : p.state === "yes" ? show(p.value) : "not read";
@@ -23,6 +24,7 @@ export function summaryText(
   return [
     ...(sample ? ["SAMPLE DATA: made up for testing, not a real PC"] : []),
     `PeakTweaks summary, ${at.toISOString().slice(0, 10)}`,
+    `PeakTweaks ${build}`,
     "",
     "This PC",
     `Windows: ${read(hardware?.os, (os) => `${os.caption} (build ${os.build})`)}`,

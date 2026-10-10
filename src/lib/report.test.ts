@@ -56,10 +56,13 @@ describe("summaryText", () => {
       [{ tweakId: "b", name: "Other", kind: "registry" } as never],
       tweaks,
       new Date("2026-10-09T12:00:00Z"),
+      false,
+      "0.1.0, build 1a2b3c4",
     );
     expect(text).toBe(
       [
         "PeakTweaks summary, 2026-10-09",
+        "PeakTweaks 0.1.0, build 1a2b3c4",
         "",
         "This PC",
         "Windows: Microsoft Windows 11 Pro (build 26100)",

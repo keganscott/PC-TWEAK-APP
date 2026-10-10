@@ -426,6 +426,19 @@ describe("App", () => {
     expect(within(junk).queryByText("Available again when the drive optimization finishes.")).toBeNull();
   });
 
+  it("Backups says when a change in effect was applied", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = (await screen.findAllByRole("listitem")).find((li) => li.textContent?.includes("Sample setting A"))!;
+    await userEvent.click(within(card).getByRole("button", { name: "Apply" }));
+    await within(card).findByText("Optimized");
+    await goTo("Backups");
+    const list = await screen.findByRole("region", { name: /Applied now/ });
+    const row = within(list).getByText("Sample setting A").closest("li") as HTMLElement;
+    expect(within(row).getByText(/^Applied /)).toBeTruthy();
+  });
+
   it("Backups lists each one-time action in the change record with what it did", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

@@ -122,6 +122,7 @@ export function SettingsDialog({
           </Button>
         </div>
         {settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
+        <p className="border-t border-line pt-4 text-xs text-ink-faint">PeakTweaks {__APP_BUILD__}</p>
       </div>
     </Dialog>
   );

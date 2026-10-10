@@ -112,7 +112,16 @@ test("a proof comparison shows the engine's headline as given", async ({ page })
   await expect(page.getByRole("heading", { name: "Steps" })).toBeVisible();
   await expectNoSeriousA11yIssues(page);
   await page.getByRole("button", { name: "Compare" }).click();
-  await expect(page.getByTestId("verdict-headline")).toContainText(/^(Better|Worse|No measurable change|Not enough data)/);
+  const headline = page.getByTestId("verdict-headline");
+  await expect(headline).toContainText(/^(Better|Worse|No measurable change|Not enough data)/);
+  // The copied text carries the headline word for word and the run ids.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy result" }).click();
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain(await headline.innerText());
+  expect(copied).toMatch(/^SAMPLE DATA/);
+  expect(copied).toMatch(/Runs before \(\d+\): \S/);
 });
 
 test("settings switch to technical wording and show registry targets", async ({ page }) => {

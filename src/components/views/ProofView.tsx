@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Play, Plus, Scale } from "lucide-react";
+import { Check, ClipboardCopy, Play, Plus, Scale } from "lucide-react";
 
 import type { Comparison } from "../../generated/Comparison";
 import type { ProofRun } from "../../generated/ProofRun";
@@ -7,6 +7,7 @@ import type { ProofSessionSummary } from "../../generated/ProofSessionSummary";
 import type { Side } from "../../generated/Side";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatNumber } from "../../lib/format";
+import { comparisonText } from "../../lib/report";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { otherLongWork } from "../../store/store";
 import { useNavigate } from "../shell/nav";
@@ -402,7 +403,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
           </div>
         )}
         {comparison?.status === "done" ? (
-          <ComparisonResult comparison={comparison.value} />
+          <ComparisonResult comparison={comparison.value} program={session.exe} sample={sample} />
         ) : (
           <p className="mt-2 text-sm text-ink-muted">Record at least two runs on each side, then compare.</p>
         )}
@@ -551,9 +552,22 @@ function throttleText(run: ProofRun): string {
   return limiting.length ? `Yes (${limiting.length} reason${limiting.length > 1 ? "s" : ""})` : "No";
 }
 
-/** The engine's headline, verbatim, then the numbers behind it. */
-function ComparisonResult({ comparison }: { comparison: Comparison }) {
+/** The engine's headline, verbatim, then the numbers behind it, and a way
+ * to copy them (with the run ids) to share. */
+function ComparisonResult({ comparison, program, sample }: { comparison: Comparison; program: string; sample: boolean }) {
   const rows = [comparison.average, comparison.lows];
+  const [copy, setCopy] = useState<{ copied: true } | { copied: false; text: string } | null>(null);
+  // A new comparison is new text.
+  useEffect(() => setCopy(null), [comparison]);
+  const copyResult = async () => {
+    const text = comparisonText(program, comparison, new Date(), sample);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopy({ copied: true });
+    } catch {
+      setCopy({ copied: false, text });
+    }
+  };
   return (
     <div className="mt-3 flex flex-col gap-4">
       <p className="text-base font-medium" data-testid="verdict-headline">
@@ -597,9 +611,30 @@ function ComparisonResult({ comparison }: { comparison: Comparison }) {
           ))}
         </tbody>
       </table>
-      <p className="text-xs text-ink-faint">
-        Runs compared: {comparison.beforeRunIds.length} before, {comparison.afterRunIds.length} after.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-ink-faint">
+          Runs compared: {comparison.beforeRunIds.length} before, {comparison.afterRunIds.length} after.
+        </p>
+        <Button
+          variant="ghost"
+          icon={copy?.copied ? <Check aria-hidden className="size-4" /> : <ClipboardCopy aria-hidden className="size-4" />}
+          title="This result as plain text, with the ids of the runs behind it, to paste into a message. Nothing is sent anywhere."
+          onClick={() => void copyResult()}
+        >
+          {copy?.copied ? "Copied" : "Copy result"}
+        </Button>
+      </div>
+      {copy && !copy.copied && (
+        <Callout tone="warn" title="Windows did not allow copying. Select the text below and copy it yourself.">
+          <textarea
+            readOnly
+            aria-label="This comparison as text"
+            className="mt-2 h-48 w-full rounded-lg border border-line bg-transparent p-2 font-mono text-xs"
+            value={copy.text}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        </Callout>
+      )}
     </div>
   );
 }

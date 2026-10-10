@@ -166,7 +166,7 @@ export function ConnectionSection() {
                 </tbody>
               </table>
             </div>
-            <WifiLine wifi={check.wifi} />
+            <WifiLine wifi={check.wifi} technical={technical} />
             <p className="text-xs text-ink-muted">Checked {formatDateTime(check.unixMs)}.</p>
           </div>
         )}
@@ -180,19 +180,28 @@ export function ConnectionSection() {
   );
 }
 
-/** The Wi-Fi signal as Windows rates it, when this PC is on Wi-Fi. Nothing
- * when it is not; "could not tell" rather than a guess. */
-export function WifiLine({ wifi }: { wifi: Probe<WifiSignal> }) {
+/** The Wi-Fi signal's strength, when this PC is on Wi-Fi. Nothing when it is
+ * not; "could not tell" rather than a guess, with the reason in the technical
+ * view. */
+export function WifiLine({ wifi, technical = false }: { wifi: Probe<WifiSignal>; technical?: boolean }) {
   if (wifi.state === "no") return null;
-  if (wifi.state === "unknown") return <p className="text-sm text-ink-muted">Wi-Fi signal: could not tell.</p>;
-  const { quality, rssiDbm, adapter } = wifi.value;
+  if (wifi.state === "unknown") {
+    return (
+      <p className="text-sm text-ink-muted">
+        Wi-Fi signal: could not tell.{technical && ` ${wifi.reason}`}
+      </p>
+    );
+  }
+  const { quality, rssiDbm, adapter, carriesCheck } = wifi.value;
   return (
     <p className="text-sm">
       <span className="font-semibold">Wi-Fi signal: {quality}%</span>
-      {rssiDbm !== null && <span className="text-ink-muted"> ({rssiDbm} dBm)</span>}
+      <span className="text-ink-muted"> ({rssiDbm} dBm)</span>
       <span className="text-ink-muted">
         {" "}
         on Windows' scale, where 100 is -50 dBm or stronger. Adapter: {adapter}.
+        {carriesCheck === false &&
+          " The echoes above left through another connection, so this signal was not their link, unless that connection itself runs over Wi-Fi, as a VPN can."}
       </span>
     </p>
   );

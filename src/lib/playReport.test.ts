@@ -5,12 +5,15 @@ import type { ThrottleSeen } from "../generated/ThrottleSeen";
 import { playStatus } from "../generated/fixtures";
 import { reportNotes } from "./playReport";
 
-const report = (samples: number, seen: ThrottleSeen[]): PlayReport => ({
+const report = (samples: number, seen: ThrottleSeen[], counts: { heat?: number; hardware?: number } = {}): PlayReport => ({
   game: "fortnite",
   startedUnixMs: 0,
   endedUnixMs: 60_000,
   gpuThrottle: { state: "yes", value: { samples, seen } },
+  heatReadings: counts.heat ?? 0,
+  hardwareReadings: counts.hardware ?? 0,
   gpuHottestC: { state: "yes", value: 70 },
+  temperatureMissed: null,
 });
 
 describe("reportNotes", () => {
@@ -21,15 +24,20 @@ describe("reportNotes", () => {
     expect(notes[1]!.title).toBe("The driver kept the card within its power limit in 760 of 800 readings.");
   });
 
-  it("counts a reading with both heat reasons once", () => {
+  it("takes the heat count per reading from the engine, not from the reasons", () => {
+    // Software heat in 3 readings and hardware heat in 2 others: 5 readings.
     const notes = reportNotes(
-      report(10, [
-        { reason: "software_thermal_slowdown", samples: 3 },
-        { reason: "hardware_thermal_slowdown", samples: 2 },
-      ]),
+      report(
+        10,
+        [
+          { reason: "software_thermal_slowdown", samples: 3 },
+          { reason: "hardware_thermal_slowdown", samples: 2 },
+        ],
+        { heat: 5 },
+      ),
     );
     expect(notes).toHaveLength(1);
-    expect(notes[0]!.title).toContain("in 3 of 10 readings");
+    expect(notes[0]!.title).toContain("in 5 of 10 readings");
   });
 
   it("says nothing was seen when only harmless reasons were", () => {
@@ -38,7 +46,7 @@ describe("reportNotes", () => {
   });
 
   it("flags the card's own hardware slowdown", () => {
-    const notes = reportNotes(report(100, [{ reason: "hardware_power_brake", samples: 5 }]));
+    const notes = reportNotes(report(100, [{ reason: "hardware_power_brake", samples: 5 }], { hardware: 5 }));
     expect(notes[0]).toEqual(expect.objectContaining({ tone: "warn" }));
     expect(notes[0]!.title).toContain("hardware slowed itself down in 5 of 100 readings");
   });

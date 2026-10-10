@@ -17,8 +17,8 @@
 //!
 //! Windows: `IcmpSendEcho` (IP Helper, no networking library) and the router
 //! from `GetBestRoute` towards the first public server. IPv4 only. When this
-//! PC is connected over Wi-Fi, the signal as Windows rates it (WLAN API,
-//! read only: it sends nothing).
+//! PC is connected over Wi-Fi, its signal strength (WLAN API, read only: it
+//! sends nothing, and reads neither the network's name nor its address).
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -124,21 +124,37 @@ pub struct NetworkCheck {
     pub wifi: Probe<WifiSignal>,
 }
 
-/// A Wi-Fi connection's signal, as Windows reports it. Nothing that names the
-/// network (no SSID, no address) is read.
+/// A Wi-Fi connection's signal, as Windows reports it. Read with the WLAN
+/// API's signal-strength query only: the connection query, which also
+/// returns the network's name and address, needs location permission from
+/// Windows 11 24H2 and shows a location prompt (Microsoft, "Changes to API
+/// behavior for Wi-Fi access and location"), so it is not made.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct WifiSignal {
     /// The adapter, as Windows describes it ("Intel(R) Wi-Fi 6 AX201").
     pub adapter: String,
-    /// Windows' signal quality from 0 to 100 (`wlanSignalQuality`, Microsoft's
-    /// WLAN_ASSOCIATION_ATTRIBUTES documentation): 0 is
-    /// -100 dBm or weaker, 100 is -50 dBm or stronger, linear between.
+    /// Received signal strength in dBm (`wlan_intf_opcode_rssi`).
+    pub rssi_dbm: i32,
+    /// The same on Windows' 0 to 100 scale (`signal_quality`).
     pub quality: u32,
-    /// Received signal strength in dBm, when the driver reports it.
-    pub rssi_dbm: Option<i32>,
+    /// Whether the check's echoes left through this Wi-Fi connection. None
+    /// when Windows did not say which connection they used.
+    pub carries_check: Option<bool>,
 }
+
+/// Windows' signal quality for a strength in dBm: 0 at -100 dBm or weaker,
+/// 100 at -50 dBm or stronger, linear between (`wlanSignalQuality`,
+/// Microsoft's WLAN_ASSOCIATION_ATTRIBUTES documentation, checked
+/// 2026-10-10).
+pub fn signal_quality(rssi_dbm: i32) -> u32 {
+    ((rssi_dbm + 100) * 2).clamp(0, 100) as u32
+}
+
+/// Strengths a working driver can report; anything else (0, or junk) is not
+/// a reading.
+pub const RSSI_RANGE: std::ops::RangeInclusive<i32> = -120..=-1;
 
 /// How this PC sends traffic towards an address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,7 +480,12 @@ mod imp {
         }
 
         fn wifi(&self) -> Probe<WifiSignal> {
-            wifi::read()
+            // The connection the echoes to the public servers leave through.
+            let towards = super::PingTarget::Cloudflare.address().expect("a fixed address");
+            let mut row = MIB_IPFORWARDROW::default();
+            let index =
+                (unsafe { GetBestRoute(raw(towards), 0, &mut row) } == NO_ERROR.0).then_some(row.dwForwardIfIndex);
+            wifi::read(index)
         }
     }
 
@@ -473,13 +494,22 @@ mod imp {
     mod wifi {
         use windows::core::GUID;
         use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Foundation::NO_ERROR;
+        use windows::Win32::NetworkManagement::IpHelper::{ConvertInterfaceGuidToLuid, ConvertInterfaceLuidToIndex};
+        use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
         use windows::Win32::NetworkManagement::WiFi::{
-            wlan_interface_state_connected, wlan_intf_opcode_current_connection, wlan_intf_opcode_rssi,
-            WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle, WlanQueryInterface,
-            WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST, WLAN_INTF_OPCODE,
+            wlan_interface_state_connected, wlan_intf_opcode_rssi, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory,
+            WlanOpenHandle, WlanQueryInterface, WLAN_INTERFACE_INFO, WLAN_INTERFACE_INFO_LIST, WLAN_INTF_OPCODE,
         };
 
+        use super::super::{signal_quality, RSSI_RANGE};
         use super::{Probe, WifiSignal};
+
+        /// `ERROR_ACCESS_DENIED`, Windows' answer when its location setting
+        /// blocks a Wi-Fi query.
+        const ACCESS_DENIED: u32 = 5;
+        /// `ERROR_INVALID_DATA`: an answer too short for what was asked.
+        const ERROR_INVALID_DATA: u32 = 13;
 
         /// The client version for Windows Vista and later (`WlanOpenHandle`).
         const CLIENT_VERSION: u32 = 2;
@@ -509,19 +539,33 @@ mod imp {
             String::from_utf16_lossy(&chars[..end]).trim().to_owned()
         }
 
-        /// One fixed-size value for an interface, or `None`.
-        fn query<T: Copy>(client: &Client, guid: &GUID, opcode: WLAN_INTF_OPCODE) -> Option<T> {
+        /// One fixed-size value for an interface, or the Windows error code.
+        fn query<T: Copy>(client: &Client, guid: &GUID, opcode: WLAN_INTF_OPCODE) -> Result<T, u32> {
             let mut size = 0u32;
             let mut data: *mut core::ffi::c_void = std::ptr::null_mut();
             let rc = unsafe { WlanQueryInterface(client.0, guid, opcode, None, &mut size, &mut data, None) };
             let data = Owned(data.cast::<T>());
-            if rc != 0 || data.0.is_null() || (size as usize) < std::mem::size_of::<T>() {
-                return None;
+            if rc != 0 {
+                return Err(rc);
             }
-            Some(unsafe { std::ptr::read_unaligned(data.0) })
+            if data.0.is_null() || (size as usize) < std::mem::size_of::<T>() {
+                return Err(ERROR_INVALID_DATA);
+            }
+            Ok(unsafe { std::ptr::read_unaligned(data.0) })
         }
 
-        pub fn read() -> Probe<WifiSignal> {
+        /// The interface index Windows' routing table uses for this adapter.
+        fn index_of(guid: &GUID) -> Option<u32> {
+            let mut luid = NET_LUID_LH::default();
+            if unsafe { ConvertInterfaceGuidToLuid(guid, &mut luid) } != NO_ERROR {
+                return None;
+            }
+            let mut index = 0u32;
+            (unsafe { ConvertInterfaceLuidToIndex(&luid, &mut index) } == NO_ERROR).then_some(index)
+        }
+
+        /// `route_index`: the interface the check's echoes leave through.
+        pub fn read(route_index: Option<u32>) -> Probe<WifiSignal> {
             let mut negotiated = 0u32;
             let mut handle = HANDLE::default();
             let rc = unsafe { WlanOpenHandle(CLIENT_VERSION, None, &mut negotiated, &mut handle) };
@@ -547,18 +591,41 @@ mod imp {
             if interfaces.is_empty() {
                 return Probe::no("this PC has no Wi-Fi adapter");
             }
-            let Some(on) = interfaces.iter().find(|i| i.isState == wlan_interface_state_connected) else {
+            let connected: Vec<&WLAN_INTERFACE_INFO> = interfaces
+                .iter()
+                .filter(|i| i.isState == wlan_interface_state_connected)
+                .collect();
+            // The one the echoes used, when it is a Wi-Fi one; else the first.
+            let carrying = route_index.and_then(|r| {
+                connected
+                    .iter()
+                    .copied()
+                    .find(|i| index_of(&i.InterfaceGuid) == Some(r))
+            });
+            let Some(on) = carrying.or_else(|| connected.first().copied()) else {
                 return Probe::no("no Wi-Fi adapter is connected");
             };
-            let Some(attributes) =
-                query::<WLAN_CONNECTION_ATTRIBUTES>(&client, &on.InterfaceGuid, wlan_intf_opcode_current_connection)
-            else {
-                return Probe::unknown("Windows did not say how strong the Wi-Fi signal is");
+            let rssi = match query::<i32>(&client, &on.InterfaceGuid, wlan_intf_opcode_rssi) {
+                Ok(v) if RSSI_RANGE.contains(&v) => v,
+                Ok(v) => {
+                    return Probe::unknown(format!(
+                        "the Wi-Fi driver reported a signal strength of {v} dBm, which is not a reading"
+                    ))
+                }
+                Err(ACCESS_DENIED) => {
+                    return Probe::unknown("Windows' location setting keeps apps from reading Wi-Fi details")
+                }
+                Err(rc) => {
+                    return Probe::unknown(format!(
+                        "Windows did not say how strong the Wi-Fi signal is (error {rc})"
+                    ))
+                }
             };
             Probe::yes(WifiSignal {
                 adapter: utf16(&on.strInterfaceDescription),
-                quality: attributes.wlanAssociationAttributes.wlanSignalQuality.min(100),
-                rssi_dbm: query::<i32>(&client, &on.InterfaceGuid, wlan_intf_opcode_rssi),
+                rssi_dbm: rssi,
+                quality: signal_quality(rssi),
+                carries_check: route_index.map(|_| carrying.is_some()),
             })
         }
     }
@@ -648,6 +715,17 @@ mod tests {
         fn wifi(&self) -> Probe<WifiSignal> {
             Probe::no("not on Wi-Fi")
         }
+    }
+
+    #[test]
+    fn signal_quality_follows_windows_scale() {
+        assert_eq!(signal_quality(-100), 0);
+        assert_eq!(signal_quality(-110), 0);
+        assert_eq!(signal_quality(-75), 50);
+        assert_eq!(signal_quality(-69), 62);
+        assert_eq!(signal_quality(-50), 100);
+        assert_eq!(signal_quality(-30), 100);
+        assert!(!RSSI_RANGE.contains(&0) && RSSI_RANGE.contains(&-1) && RSSI_RANGE.contains(&-120));
     }
 
     const ROUTER: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 1);

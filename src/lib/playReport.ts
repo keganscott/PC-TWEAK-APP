@@ -6,7 +6,6 @@
 // (NVIDIA/go-nvml gen/nvml/nvml.h, checked 2026-10-10).
 
 import type { PlayReport } from "../generated/PlayReport";
-import type { ThrottleReason } from "../generated/ThrottleReason";
 import type { Tone } from "../components/ui/primitives";
 
 export interface ReportNote {
@@ -14,9 +13,6 @@ export interface ReportNote {
   title: string;
   text: string;
 }
-
-const HEAT: readonly ThrottleReason[] = ["software_thermal_slowdown", "hardware_thermal_slowdown"];
-const HARDWARE: readonly ThrottleReason[] = ["hardware_slowdown", "hardware_power_brake"];
 
 /** "48 of 800 readings". */
 function of(n: number, total: number): string {
@@ -40,22 +36,20 @@ export function reportNotes(report: PlayReport): ReportNote[] {
     return [{ tone: "neutral", title: "The graphics card could not be read.", text: t.reason }];
   }
   const { samples, seen } = t.value;
-  const count = (reasons: readonly ThrottleReason[]) =>
-    // A reading can carry both reasons of a pair: count the larger, not the sum.
-    Math.max(0, ...seen.filter((s) => reasons.includes(s.reason)).map((s) => s.samples));
   const notes: ReportNote[] = [];
-  const heat = count(HEAT);
+  // Counted per reading by the engine: one with both heat reasons is one.
+  const heat = report.heatReadings;
   if (heat > 0) {
     notes.push({
       tone: "warn",
       title: `The graphics card held its clocks down because of heat in ${of(heat, samples)}.`,
       text:
-        "The driver does this to keep the card under its maximum operating temperature. Dust in the card's fans and " +
-        "heatsink, or too little air moving through the case, are common causes, so cleaning them and checking the " +
-        "case fans is worth doing.",
+        "The card or its driver does this to keep it under its maximum operating temperature. Dust in the card's " +
+        "fans and heatsink, or too little air moving through the case, are common causes, so cleaning them and " +
+        "checking the case fans is worth doing.",
     });
   }
-  const hardware = count(HARDWARE);
+  const hardware = report.hardwareReadings;
   if (hardware > 0) {
     notes.push({
       tone: "warn",
@@ -67,7 +61,7 @@ export function reportNotes(report: PlayReport): ReportNote[] {
         "power supply.",
     });
   }
-  const power = count(["software_power_cap"]);
+  const power = seen.find((s) => s.reason === "software_power_cap")?.samples ?? 0;
   if (power > 0) {
     notes.push({
       tone: "info",

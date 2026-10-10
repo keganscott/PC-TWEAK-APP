@@ -11,7 +11,12 @@ export type PlayReport = {
 /**
  * Id from `env::KNOWN_GAMES`.
  */
-game: string, startedUnixMs: number, 
+game: string, 
+/**
+ * The first look that saw the game: when PeakTweaks started watching
+ * it, which is later than the game's start when PeakTweaks opened after.
+ */
+startedUnixMs: number, 
 /**
  * The last look that saw the game running.
  */
@@ -22,6 +27,21 @@ endedUnixMs: number,
  */
 gpuThrottle: Probe<ThrottleSummary>, 
 /**
+ * Of `gpu_throttle`'s readings, how many had either heat reason
+ * (software or hardware thermal slowdown), each reading counted once.
+ */
+heatReadings: number, 
+/**
+ * The same for the card's own slowdowns that are not only heat:
+ * hardware slowdown or the power brake.
+ */
+hardwareReadings: number, 
+/**
  * The highest GPU temperature read, in degrees Celsius.
  */
-gpuHottestC: Probe<number>, };
+gpuHottestC: Probe<number>, 
+/**
+ * Why a temperature was not read in some looks or on some card, when
+ * `gpu_hottest_c` is yes from the others.
+ */
+temperatureMissed: string | null, };

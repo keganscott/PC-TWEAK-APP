@@ -1179,8 +1179,9 @@ export const networkCheck = {
     "state": "yes",
     "value": {
       "adapter": "Sample Wi-Fi 6 adapter",
+      "rssiDbm": -69,
       "quality": 62,
-      "rssiDbm": -69
+      "carriesCheck": true
     }
   }
 } satisfies NetworkCheck;
@@ -1308,10 +1309,13 @@ export const playStatus = {
         ]
       }
     },
+    "heatReadings": 48,
+    "hardwareReadings": 0,
     "gpuHottestC": {
       "state": "yes",
       "value": 84
-    }
+    },
+    "temperatureMissed": null
   }
 } satisfies PlayStatus;
 

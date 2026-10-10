@@ -341,6 +341,8 @@ impl Drop for TimerRequest {
 pub struct PlayReport {
     /// Id from `env::KNOWN_GAMES`.
     pub game: String,
+    /// The first look that saw the game: when PeakTweaks started watching
+    /// it, which is later than the game's start when PeakTweaks opened after.
     #[ts(type = "number")]
     pub started_unix_ms: u64,
     /// The last look that saw the game running.
@@ -349,8 +351,17 @@ pub struct PlayReport {
     /// The reasons NVIDIA's driver gave for holding clocks down, and in how
     /// many of the readings each was active.
     pub gpu_throttle: Probe<ThrottleSummary>,
+    /// Of `gpu_throttle`'s readings, how many had either heat reason
+    /// (software or hardware thermal slowdown), each reading counted once.
+    pub heat_readings: u32,
+    /// The same for the card's own slowdowns that are not only heat:
+    /// hardware slowdown or the power brake.
+    pub hardware_readings: u32,
     /// The highest GPU temperature read, in degrees Celsius.
     pub gpu_hottest_c: Probe<u32>,
+    /// Why a temperature was not read in some looks or on some card, when
+    /// `gpu_hottest_c` is yes from the others.
+    pub temperature_missed: Option<String>,
 }
 
 /// Builds a `PlayReport` from one reading per look while a game runs.
@@ -360,6 +371,8 @@ pub struct PlayTally {
     started_unix_ms: u64,
     last_seen_unix_ms: u64,
     throttle: ThrottleTally,
+    heat_readings: u32,
+    hardware_readings: u32,
     hottest: Option<u32>,
     /// NVML answered and listed no NVIDIA GPU.
     no_gpu: Option<String>,
@@ -377,9 +390,25 @@ impl PlayTally {
         }
     }
 
+    pub fn game(&self) -> &str {
+        &self.game
+    }
+
     /// One look's readings, taken while the game was running.
     pub fn add(&mut self, now_unix_ms: u64, reasons: Probe<Vec<ThrottleReason>>, gpus: Probe<Vec<GpuLive>>) {
+        use ThrottleReason::*;
         self.last_seen_unix_ms = now_unix_ms.max(self.last_seen_unix_ms);
+        if let Probe::Yes { value } = &reasons {
+            if value
+                .iter()
+                .any(|r| matches!(r, SoftwareThermalSlowdown | HardwareThermalSlowdown))
+            {
+                self.heat_readings += 1;
+            }
+            if value.iter().any(|r| matches!(r, HardwareSlowdown | HardwarePowerBrake)) {
+                self.hardware_readings += 1;
+            }
+        }
         self.throttle.add(reasons);
         match gpus {
             Probe::Yes { value } => {
@@ -407,19 +436,61 @@ impl PlayTally {
             (Probe::Unknown { .. }, Some(reason)) => Probe::no(reason.clone()),
             _ => throttle,
         };
-        let gpu_hottest_c = match (self.hottest, self.no_gpu, self.temperature_problem) {
-            (Some(t), _, _) => Probe::yes(t),
-            (None, Some(reason), _) => Probe::no(reason),
-            (None, None, Some(reason)) => Probe::unknown(reason),
-            (None, None, None) => Probe::unknown("no GPU readings were taken while the game ran"),
+        let (gpu_hottest_c, temperature_missed) = match (self.hottest, self.no_gpu, self.temperature_problem) {
+            (Some(t), _, missed) => (Probe::yes(t), missed),
+            (None, Some(reason), _) => (Probe::no(reason), None),
+            (None, None, Some(reason)) => (Probe::unknown(reason), None),
+            (None, None, None) => (Probe::unknown("no GPU readings were taken while the game ran"), None),
         };
         PlayReport {
             game: self.game,
             started_unix_ms: self.started_unix_ms,
             ended_unix_ms: self.last_seen_unix_ms,
             gpu_throttle,
+            heat_readings: self.heat_readings,
+            hardware_readings: self.hardware_readings,
             gpu_hottest_c,
+            temperature_missed,
         }
+    }
+}
+
+/// The watcher's game reports: a tally for the game being watched and the
+/// report of the last one that closed.
+#[derive(Default)]
+pub struct PlayReports {
+    tally: Option<PlayTally>,
+    last: Option<PlayReport>,
+}
+
+impl PlayReports {
+    /// After each look: `event` and `running` as `Watch::look` and
+    /// `game_running` gave them. `read` is called only while the watched game
+    /// itself is running, so a second game that keeps the session open (see
+    /// `Watch`) adds nothing to the first one's report.
+    pub fn look<F>(&mut self, event: Option<WatchEvent>, running: Option<&str>, now_unix_ms: u64, read: F)
+    where
+        F: FnOnce() -> (Probe<Vec<ThrottleReason>>, Probe<Vec<GpuLive>>),
+    {
+        match event {
+            Some(WatchEvent::Started(game)) => self.tally = Some(PlayTally::new(game, now_unix_ms)),
+            Some(WatchEvent::Stopped(_)) => {
+                if let Some(t) = self.tally.take() {
+                    self.last = Some(t.finish());
+                }
+            }
+            None => {}
+        }
+        if let (Some(t), Some(game)) = (self.tally.as_mut(), running) {
+            if t.game() == game {
+                let (reasons, gpus) = read();
+                t.add(now_unix_ms, reasons, gpus);
+            }
+        }
+    }
+
+    pub fn last(&self) -> Option<&PlayReport> {
+        self.last.as_ref()
     }
 }
 
@@ -486,6 +557,90 @@ mod tests {
         assert_eq!(count(SoftwarePowerCap), Some(2));
         assert_eq!(count(SoftwareThermalSlowdown), Some(1));
         assert_eq!(count(HardwareThermalSlowdown), None);
+        assert_eq!((report.heat_readings, report.hardware_readings), (1, 0));
+        assert_eq!(report.temperature_missed.as_deref(), Some("no sensor"));
+    }
+
+    #[test]
+    fn heat_counts_each_reading_once_whichever_reason_it_carried() {
+        use ThrottleReason::*;
+        let mut tally = PlayTally::new("fortnite", 0);
+        let none = || Probe::yes(vec![gpu(Probe::yes(60))]);
+        tally.add(1, Probe::yes(vec![SoftwareThermalSlowdown]), none());
+        tally.add(2, Probe::yes(vec![HardwareThermalSlowdown]), none());
+        tally.add(
+            3,
+            Probe::yes(vec![SoftwareThermalSlowdown, HardwareThermalSlowdown, HardwareSlowdown]),
+            none(),
+        );
+        tally.add(4, Probe::yes(vec![]), none());
+        let report = tally.finish();
+        assert_eq!((report.heat_readings, report.hardware_readings), (3, 1));
+        assert_eq!(report.temperature_missed, None);
+    }
+
+    #[test]
+    fn a_report_is_made_when_the_game_closes_and_only_from_its_own_looks() {
+        use ThrottleReason::*;
+        let mut reports = PlayReports::default();
+        let mut reads = 0;
+        let mut look = |reports: &mut PlayReports, event, running, now| {
+            reports.look(event, running, now, || {
+                reads += 1;
+                (
+                    Probe::yes(vec![SoftwarePowerCap]),
+                    Probe::yes(vec![gpu(Probe::yes(70))]),
+                )
+            })
+        };
+        look(&mut reports, None, None, 0);
+        look(
+            &mut reports,
+            Some(WatchEvent::Started("fortnite")),
+            Some("fortnite"),
+            3_000,
+        );
+        look(&mut reports, None, Some("fortnite"), 6_000);
+        // Fortnite closed while Roblox runs: the watcher keeps the session,
+        // but Roblox's readings are not Fortnite's.
+        look(&mut reports, None, Some("roblox"), 9_000);
+        look(&mut reports, None, None, 12_000);
+        assert!(reports.last().is_none(), "no report before the game counts as closed");
+        look(&mut reports, Some(WatchEvent::Stopped("fortnite")), None, 15_000);
+        let report = reports.last().expect("a report").clone();
+        assert_eq!(report.game, "fortnite");
+        assert_eq!((report.started_unix_ms, report.ended_unix_ms), (3_000, 6_000));
+        let Probe::Yes { value } = &report.gpu_throttle else {
+            panic!("{:?}", report.gpu_throttle)
+        };
+        assert_eq!(value.samples, 2);
+        // The next game's report replaces it only when that game closes.
+        look(
+            &mut reports,
+            Some(WatchEvent::Started("roblox")),
+            Some("roblox"),
+            18_000,
+        );
+        assert_eq!(reports.last().map(|r| r.game.as_str()), Some("fortnite"));
+        look(&mut reports, Some(WatchEvent::Stopped("roblox")), None, 24_000);
+        assert_eq!(reports.last().map(|r| r.game.as_str()), Some("roblox"));
+        assert_eq!(reads, 3);
+    }
+
+    #[test]
+    fn a_session_with_some_failed_looks_keeps_the_ones_that_answered() {
+        use ThrottleReason::*;
+        let mut tally = PlayTally::new("fortnite", 0);
+        tally.add(1, Probe::unknown("NVML busy"), Probe::unknown("NVML busy"));
+        tally.add(
+            2,
+            Probe::yes(vec![SoftwarePowerCap]),
+            Probe::yes(vec![gpu(Probe::yes(66))]),
+        );
+        let report = tally.finish();
+        assert!(matches!(&report.gpu_throttle, Probe::Yes { value } if value.samples == 1));
+        assert_eq!(report.gpu_hottest_c, Probe::yes(66));
+        assert_eq!(report.temperature_missed.as_deref(), Some("NVML busy"));
     }
 
     /// On Windows CI: a look at the graphics card answers (the runners have

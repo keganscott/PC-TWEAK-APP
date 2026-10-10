@@ -12,8 +12,8 @@ use tauri::{AppHandle, Emitter};
 
 use peaktweaks_engine::journal::now_ms;
 use peaktweaks_engine::play::{
-    game_processes, game_running, gpu_look, running_images, watched_ids, PlayReport, PlayStatus, PlayTally,
-    TimerRequest, Watch, WatchEvent,
+    game_processes, game_running, gpu_look, running_images, watched_ids, PlayReports, PlayStatus, TimerRequest, Watch,
+    WatchEvent,
 };
 
 use crate::commands::SharedEngine;
@@ -69,29 +69,14 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
     let games = game_processes();
     let mut watch = Watch::new();
     let mut session = Session::default();
-    let mut tally: Option<PlayTally> = None;
-    let mut last_session: Option<PlayReport> = None;
+    let mut reports = PlayReports::default();
     let mut first = true;
     loop {
         let running = running_images().ok().and_then(|images| game_running(&images, &games));
         let event = watch.look(running);
         // The graphics card's readings, outside the engine lock: they read
         // NVML only and change nothing.
-        match event {
-            Some(WatchEvent::Started(game)) => tally = Some(PlayTally::new(game, now_ms())),
-            Some(WatchEvent::Stopped(_)) => {
-                if let Some(t) = tally.take() {
-                    last_session = Some(t.finish());
-                }
-            }
-            None => {}
-        }
-        if running.is_some() {
-            if let Some(t) = tally.as_mut() {
-                let (reasons, gpus) = gpu_look();
-                t.add(now_ms(), reasons, gpus);
-            }
-        }
+        reports.look(event.clone(), running, now_ms(), gpu_look);
         // Engine work only while the lock is free of an earlier panic; the
         // next look tries again.
         if let Ok(mut e) = engine.lock() {
@@ -164,7 +149,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 problem: session.problem(),
                 on_wifi: watch.current().is_some() && session.on_wifi,
                 watched: watched_ids(&games),
-                last_session: last_session.clone(),
+                last_session: reports.last().cloned(),
             };
             drop(e);
             let changed = {

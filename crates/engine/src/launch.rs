@@ -107,8 +107,11 @@ mod shell {
         let view: IShellView = browser
             .QueryActiveShellView()
             .map_err(|e| failed("the Windows desktop did not answer (shell view)", e))?;
+        // Asked for as IDispatch first, as in Raymond Chen's sample: the view
+        // hands its background object out as an automation object.
         let background: IShellFolderViewDual = view
-            .GetItemObject(SVGIO_BACKGROUND)
+            .GetItemObject::<IDispatch>(SVGIO_BACKGROUND)
+            .and_then(|d| d.cast())
             .map_err(|e| failed("the Windows desktop did not answer (folder view)", e))?;
         let app = background
             .Application()

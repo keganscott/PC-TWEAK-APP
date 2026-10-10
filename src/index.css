@@ -33,6 +33,53 @@
   --font-sans: "Plus Jakarta Sans Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --font-display: "Exo 2", "Plus Jakarta Sans Variable", "Segoe UI", sans-serif;
   --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  /* Gaming Mode's button (GamingModeButton.tsx): a ring that turns and a
+     glow that breathes while it is on, a burst when it comes on, and a sheen
+     while a game runs. Reduced motion stops them (below); the on look is the
+     lime fill and border, not the movement. */
+  --animate-gm-spin: gm-spin 2.8s linear infinite;
+  --animate-gm-glow: gm-glow 2.2s ease-in-out infinite;
+  --animate-gm-burst: gm-burst 0.8s ease-out forwards;
+  --animate-gm-sheen: gm-sheen 2.6s ease-in-out infinite;
+
+  @keyframes gm-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes gm-glow {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 0 rgb(198 255 52 / 0.45),
+        0 0 16px 2px rgb(126 59 237 / 0.35);
+    }
+    50% {
+      box-shadow:
+        0 0 0 5px rgb(198 255 52 / 0),
+        0 0 30px 8px rgb(126 59 237 / 0.6);
+    }
+  }
+  @keyframes gm-burst {
+    from {
+      transform: scale(0.7);
+      opacity: 0.9;
+    }
+    to {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+  @keyframes gm-sheen {
+    0% {
+      transform: translateX(-120%) skewX(-20deg);
+    }
+    60%,
+    100% {
+      transform: translateX(320%) skewX(-20deg);
+    }
+  }
 }
 
 @layer base {

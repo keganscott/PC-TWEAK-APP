@@ -2,6 +2,7 @@ import { PanelBottomOpen } from "lucide-react";
 
 import { useStore } from "../../store/hooks";
 import { SampleBadge, StatusBadge } from "../ui/primitives";
+import { GamingModeToggle } from "./GamingModeButton";
 
 export function TopBar({ busOpen, onToggleBus }: { busOpen: boolean; onToggleBus: () => void }) {
   const sample = useStore((s) => s.sample);
@@ -27,6 +28,7 @@ export function TopBar({ busOpen, onToggleBus }: { busOpen: boolean; onToggleBus
       </div>
       <div className="flex items-center gap-2">
         {context && !context.elevated && <StatusBadge tone="bad">Not running as administrator</StatusBadge>}
+        <GamingModeToggle />
         <button
           type="button"
           onClick={onToggleBus}

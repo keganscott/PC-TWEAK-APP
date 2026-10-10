@@ -354,6 +354,40 @@ describe("App", () => {
     expect(within(section).getAllByText("On now")).toHaveLength(2);
   });
 
+  it("Home and the top bar turn Gaming Mode on and off in one click, and say when it is in effect", async () => {
+    const backend = createMockBackend({ playing: "fortnite", gateOpen: true });
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const card = await screen.findByRole("region", { name: "Gaming Mode" });
+    const big = within(card).getByRole("button", { name: "Gaming Mode" });
+    const bar = screen.getAllByRole("button", { name: /^Gaming Mode/ }).find((b) => !card.contains(b))!;
+    expect(big.getAttribute("aria-pressed")).toBe("false");
+    expect(bar.getAttribute("aria-pressed")).toBe("false");
+
+    await userEvent.click(big);
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true }), expect.anything());
+    expect(await within(card).findByText(/^On now for Fortnite\./)).toBeTruthy();
+    expect(within(card).getByText("On now")).toBeTruthy();
+    await waitFor(() => expect(bar.getAttribute("aria-pressed")).toBe("true"));
+
+    await userEvent.click(bar);
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: false }), expect.anything());
+    await waitFor(() => expect(big.getAttribute("aria-pressed")).toBe("false"));
+    expect(within(card).getByText(/^Off\./)).toBeTruthy();
+  });
+
+  it("Home's Gaming Mode button offers the restore point it waits for", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const card = await screen.findByRole("region", { name: "Gaming Mode" });
+    expect(within(card).queryByRole("button", { name: "Make a restore point" })).toBeNull();
+    await userEvent.click(within(card).getByRole("button", { name: "Gaming Mode" }));
+    expect(await within(card).findByText(/waiting for a restore point/)).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Make a restore point" }));
+    expect(await within(card).findByText(/^On\. It waits for a game/)).toBeTruthy();
+  });
+
   it("Tools says when the running game is on Wi-Fi only", async () => {
     renderApp(createMockBackend({ playing: "roblox", onWifi: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

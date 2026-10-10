@@ -28,6 +28,7 @@ import { restartCheck } from "../../lib/restartCheck";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
+import { GamingModeCard } from "../shell/GamingModeButton";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
 import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, Spinner, StatusBadge, type Tone } from "../ui/primitives";
@@ -59,6 +60,7 @@ export function HomeView() {
         }
       />
       {auditOp.status === "failed" && <ErrorCallout text={explain(auditOp.error)} technical={technical} />}
+      <GamingModeCard />
       <LastChange />
       <DriftCheck />
       <AfterRestart />

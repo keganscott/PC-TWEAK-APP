@@ -918,6 +918,36 @@ impl Engine {
         })
     }
 
+    /// Refuse unless there is a verified restore point, read fresh from
+    /// Windows. For changes that are not catalogue tweaks (a driver install).
+    pub fn require_restore_point(&mut self) -> Result<()> {
+        self.probe.invalidate();
+        if !self.probe.restore_gate_open() {
+            return Err(EngineError::Blocked {
+                reason: BlockedReason::new(
+                    BlockedCode::NoRestorePoint,
+                    "There is no verified restore point, so there is nothing to roll back to.",
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Just before NVIDIA's installer runs (`gpu_install.rs`): a verified
+    /// restore point, which is what puts the old driver back, then a journal
+    /// line saying the install started, so the history shows it even if the PC
+    /// stops part-way. Either failing stops the install before it starts.
+    pub fn begin_gpu_driver_install(&mut self, file: &str, version: Option<&str>) -> Result<()> {
+        self.require_restore_point()?;
+        self.record_action(
+            OneTimeAction::InstallGpuDriver,
+            Ok(ActionDone::GpuDriverStarted {
+                file: file.to_owned(),
+                version: version.map(str::to_owned),
+            }),
+        )
+    }
+
     pub fn journal_view(&self) -> JournalView {
         let applied = self
             .journal

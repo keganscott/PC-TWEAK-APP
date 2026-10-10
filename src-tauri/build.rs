@@ -31,6 +31,8 @@ const COMMANDS: &[&str] = &[
     "live_readings",
     "check_connection",
     "launch_game",
+    "open_driver_page",
+    "install_gpu_driver",
 ];
 
 fn main() {

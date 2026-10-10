@@ -35,6 +35,8 @@
     "allow-list-msi-devices",
     "allow-live-readings",
     "allow-check-connection",
-    "allow-launch-game"
+    "allow-launch-game",
+    "allow-open-driver-page",
+    "allow-install-gpu-driver"
   ]
 }

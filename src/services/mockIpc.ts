@@ -151,7 +151,8 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   // (failures too there; here a failure is thrown before anything runs).
   const recordAction = (done: ActionDone) => {
     seq += 1;
-    records.push({ record: "action", seq, unixMs: Date.now(), action: done.action, done, error: null });
+    const action = done.action === "gpu_driver_started" || done.action === "gpu_driver_installed" ? "install_gpu_driver" : done.action;
+    records.push({ record: "action", seq, unixMs: Date.now(), action, done, error: null });
   };
 
   const emit = (stage: string, message: string, tweakId: string | null = null) => {
@@ -169,8 +170,14 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     return produce();
   }
 
+  // The NVIDIA number a SAMPLE driver install leaves on the card.
+  let installedDriver: string | null = null;
+
   const audit = (): SystemAudit => {
     const a = clone(fx.systemAudit) as SystemAudit;
+    if (installedDriver && a.env.hardware?.gpuDrivers.state === "yes") {
+      for (const d of a.env.hardware.gpuDrivers.value) if (d.vendorId === 0x10de) d.nvidiaVersion = installedDriver;
+    }
     a.env.restoreGateOpen = gateOpen;
     a.env.targetGame = targetGame;
     if (a.env.restore) a.env.restore.gateOpen = gateOpen;
@@ -441,6 +448,28 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         }
         // SAMPLE: nothing is started.
         return null;
+      }),
+    openDriverPage: (vendor) =>
+      reply("openDriverPage", [vendor], () => {
+        // SAMPLE: no browser is opened.
+        return null;
+      }),
+    installGpuDriver: () =>
+      reply("installGpuDriver", [], () => {
+        if (!gateOpen) {
+          throw blocked({
+            code: "no_restore_point",
+            trigger: null,
+            message: "There is no verified restore point, so there is nothing to roll back to.",
+          });
+        }
+        // SAMPLE: no dialog, no file, nothing installed.
+        const result = { ...clone(fx.gpuDriverInstall), unixMs: Date.now() };
+        recordAction({ action: "gpu_driver_started", file: result.file, version: result.version });
+        emit("driver", "Installing the NVIDIA driver");
+        recordAction({ action: "gpu_driver_installed", file: result.file, version: result.version, restart: result.restart });
+        installedDriver = result.version;
+        return result;
       }),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {

@@ -223,6 +223,8 @@ pub enum OneTimeAction {
     Cleanup,
     /// Optimize the Windows drive (catalogue H29).
     OptimizeDrive,
+    /// A clean install of an NVIDIA driver the user downloaded (`gpu_install.rs`).
+    InstallGpuDriver,
 }
 
 /// What a one-time action did, as numbers the screen words itself.
@@ -242,6 +244,15 @@ pub enum ActionDone {
     },
     /// The drive, and how long Windows took.
     OptimizeDrive { drive: String, seconds: u64 },
+    /// Written before NVIDIA's installer starts, so the history shows the
+    /// install even if the PC stops part-way.
+    GpuDriverStarted { file: String, version: Option<String> },
+    /// NVIDIA's installer finished and reported the driver installed.
+    GpuDriverInstalled {
+        file: String,
+        version: Option<String>,
+        restart: bool,
+    },
 }
 
 /// A one-time action that ran: it changes no setting, so there is nothing to

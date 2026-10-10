@@ -18,8 +18,10 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
 import type { DriveOptimization } from "../generated/DriveOptimization";
+import type { DriverVendor } from "../generated/DriverVendor";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
+import type { GpuDriverInstall } from "../generated/GpuDriverInstall";
 import type { JournalView } from "../generated/JournalView";
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { NetworkCheck } from "../generated/NetworkCheck";
@@ -109,6 +111,10 @@ export interface State {
   netcheckOp: Op<NetworkCheck>;
   /** "Play" on a game found in a Steam library, per game id. */
   launchOps: Readonly<Record<string, Op>>;
+  /** The driver tool's "Open ... driver page" buttons. */
+  driverPageOp: Op;
+  /** The driver tool's clean install; `null` when the file dialog was cancelled. */
+  driverInstallOp: Op<GpuDriverInstall | null>;
   lastChange: ChangeResult | null;
   proof: ProofState;
   /** The game watcher (catalogue step 5); null until it first answers. */
@@ -156,6 +162,8 @@ export function initialState(sample: boolean): State {
     driveOp: IDLE,
     netcheckOp: IDLE,
     launchOps: {},
+    driverPageOp: IDLE,
+    driverInstallOp: IDLE,
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     play: null,
@@ -228,7 +236,7 @@ export function driftedTweaks(tweaks: readonly TweakView[]): { all: TweakView[];
 export const APPEARANCE = "appearance";
 
 /** Long work the engine runs one at a time (`Activity` in commands.rs). */
-export type LongWork = "proof" | "cleanup" | "drive";
+export type LongWork = "proof" | "cleanup" | "drive" | "driver";
 
 /** The long work running now other than `own`, which would make the engine
  * refuse `own`. */
@@ -236,6 +244,7 @@ export function otherLongWork(s: State, own: LongWork): LongWork | null {
   if (own !== "proof" && s.proof.capturingSession !== null) return "proof";
   if (own !== "cleanup" && s.cleanupOp.status === "running") return "cleanup";
   if (own !== "drive" && s.driveOp.status === "running") return "drive";
+  if (own !== "driver" && s.driverInstallOp.status === "running") return "driver";
   return null;
 }
 
@@ -597,6 +606,34 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       } catch (e) {
         put(failed(e));
       }
+    },
+
+    /** Open the card maker's driver page in the user's browser. Changes nothing. */
+    async openDriverPage(vendor: DriverVendor) {
+      set((s) => ({ ...s, driverPageOp: RUNNING }));
+      try {
+        await backend.openDriverPage(vendor);
+        set((s) => ({ ...s, driverPageOp: { status: "done", value: null } }));
+      } catch (e) {
+        set((s) => ({ ...s, driverPageOp: failed(e) }));
+      }
+    },
+
+    /** Clean install of an NVIDIA driver file the user picks in Windows'
+     * dialog. The engine needs a restore point and journals it; the drivers,
+     * the changes (a clean install puts NVIDIA's settings back) and the record
+     * are read again after. */
+    async installGpuDriver() {
+      if (state.driverInstallOp.status === "running") return;
+      set((s) => ({ ...s, driverInstallOp: RUNNING }));
+      try {
+        const result = await backend.installGpuDriver();
+        set((s) => ({ ...s, driverInstallOp: { status: "done", value: result } }));
+        if (result === null) return;
+      } catch (e) {
+        set((s) => ({ ...s, driverInstallOp: failed(e) }));
+      }
+      await refreshAfterChange();
     },
 
     /** Run Windows' own drive optimisation. Changes no setting, so nothing to undo. */

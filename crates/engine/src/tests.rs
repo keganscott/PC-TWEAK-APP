@@ -684,6 +684,56 @@ fn apply_is_refused_without_a_verified_restore_point() {
     assert!(h.fake.snapshot().is_empty());
 }
 
+/// The driver install (`gpu_install.rs`) starts only with a verified restore
+/// point, and only after its journal line is written.
+#[test]
+fn a_driver_install_needs_a_restore_point_and_is_journalled_before_it_starts() {
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut closed = Harness::with(vec![], fake.clone(), dir, false);
+    let err = closed
+        .engine
+        .begin_gpu_driver_install("581.80-desktop.exe", Some("581.80"))
+        .unwrap_err();
+    assert!(
+        matches!(&err, EngineError::Blocked { reason } if reason.code == BlockedCode::NoRestorePoint),
+        "{err:?}"
+    );
+    assert!(closed.engine.require_restore_point().is_err());
+    assert!(
+        !closed
+            .engine
+            .journal_view()
+            .records
+            .iter()
+            .any(|r| matches!(r, Record::Action(_))),
+        "nothing journalled when refused"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut open = Harness::with(vec![], fake, dir, true);
+    open.engine.require_restore_point().unwrap();
+    open.engine
+        .begin_gpu_driver_install("581.80-desktop.exe", Some("581.80"))
+        .unwrap();
+    let view = open.engine.journal_view();
+    let Some(Record::Action(started)) = view.records.last() else {
+        panic!("no action record: {:?}", view.records);
+    };
+    assert_eq!(started.action, OneTimeAction::InstallGpuDriver);
+    assert_eq!(
+        started.done,
+        Some(ActionDone::GpuDriverStarted {
+            file: "581.80-desktop.exe".into(),
+            version: Some("581.80".into())
+        })
+    );
+    assert!(
+        view.applied.is_empty(),
+        "nothing for Undo all: System Restore puts a driver back"
+    );
+}
+
 #[test]
 fn revert_is_never_gated() {
     let fake = Arc::new(FakeRegistry::new());

@@ -11,12 +11,13 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use peaktweaks_engine::cleanup::{self, AreaSize, CleanupArea, CleanupReport};
 use peaktweaks_engine::drive_optimize::{self, DriveOptimization};
 use peaktweaks_engine::env::{GameInfo, KNOWN_GAMES};
 use peaktweaks_engine::error::{EngineError, Result};
+use peaktweaks_engine::gpu_install::{self, DriverVendor, GpuDriverInstall};
 use peaktweaks_engine::journal::{now_ms, ActionDone, JournalEntry, OneTimeAction};
 use peaktweaks_engine::launch;
 use peaktweaks_engine::memory::{self, StandbyPurge};
@@ -675,6 +676,93 @@ pub async fn optimize_drive(app: AppHandle, engine: State<'_, EngineHandle>) -> 
         detail: format!("drive worker failed: {e}"),
     })?;
     progress(&app, if out.is_ok() { "drive_done" } else { "drive_failed" }, None, "");
+    out
+}
+
+/// Open the card maker's own driver page in the user's browser, as the
+/// signed-in user without PeakTweaks' administrator rights (plan section 1:
+/// link to vendor pages only). The address is the engine's fixed one for that
+/// maker (`gpu_install.rs`), never text from the UI; PeakTweaks itself opens
+/// no connection. Changes nothing.
+#[tauri::command]
+pub async fn open_driver_page(vendor: DriverVendor) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || gpu_install::open_page(vendor))
+        .await
+        .map_err(|e| EngineError::Internal {
+            detail: format!("driver page worker failed: {e}"),
+        })?
+}
+
+/// The app window's handle, so Windows' Open dialog belongs to it.
+#[cfg(windows)]
+fn owner_window(window: &WebviewWindow) -> isize {
+    window.hwnd().map(|h| h.0 as isize).unwrap_or(0)
+}
+
+#[cfg(not(windows))]
+fn owner_window(_window: &WebviewWindow) -> isize {
+    0
+}
+
+/// Install an NVIDIA driver the user downloaded, as a clean install
+/// (`gpu_install.rs`). The file is picked in Windows' own Open dialog, copied
+/// into the protected folder and run only when NVIDIA signed it, after a
+/// verified restore point and a journal line; the journal keeps how it ended.
+/// `None` when the dialog is cancelled. Refused while a Proof capture records.
+#[tauri::command]
+pub async fn install_gpu_driver(
+    app: AppHandle,
+    window: WebviewWindow,
+    engine: State<'_, EngineHandle>,
+) -> Result<Option<GpuDriverInstall>> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "install a driver")?;
+    // Before the dialog, so no one picks a file only to be refused.
+    blocking(&engine, |e| e.require_restore_point()).await?;
+    let activity = Activity::start("a driver install")?;
+    let owner = owner_window(&window);
+    let worker_app = app.clone();
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let _activity = activity;
+        let Some(file) = gpu_install::choose_file(owner)? else {
+            return Ok(None);
+        };
+        progress(&worker_app, "driver", None, "Checking the driver file");
+        let dir = peaktweaks_engine::secure_dir::TrustedDir::ensure_program_data()?;
+        let sys = gpu_install::system();
+        let staged = gpu_install::prepare(sys.as_ref(), &file, dir.path())?;
+        // Checked again after the dialog: the restore point must still be
+        // there, and the journal line must be written, before it runs.
+        let begun = match shared.lock() {
+            Ok(mut e) => e.begin_gpu_driver_install(&staged.file, staged.version.as_deref()),
+            Err(_) => Err(EngineError::Internal {
+                detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
+            }),
+        };
+        if let Err(e) = begun {
+            staged.discard();
+            return Err(e);
+        }
+        progress(&worker_app, "driver", None, "Installing the NVIDIA driver");
+        let out = gpu_install::install(sys.as_ref(), staged, now_ms());
+        let outcome = out.as_ref().map(GpuDriverInstall::done).map_err(ToString::to_string);
+        record_action(&shared, OneTimeAction::InstallGpuDriver, outcome);
+        // Read the drivers again, so the screen shows the one now installed.
+        if let Ok(mut e) = shared.lock() {
+            e.rescan_fresh();
+        }
+        out.map(Some)
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("driver install worker failed: {e}"),
+    })?;
+    progress(
+        &app,
+        if out.is_ok() { "driver_done" } else { "driver_failed" },
+        None,
+        "",
+    );
     out
 }
 

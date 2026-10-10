@@ -146,6 +146,8 @@ fn main() {
             commands::list_msi_devices,
             commands::launch_game,
             commands::check_connection,
+            commands::open_driver_page,
+            commands::install_gpu_driver,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PeakTweaks");

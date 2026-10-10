@@ -364,7 +364,9 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
             {otherRecording && <span className="text-sm text-ink-muted">Another comparison is recording.</span>}
             {toolsBusy && (
               <span className="text-sm text-ink-muted">
-                Available again when the {toolsBusy === "drive" ? "drive optimization" : "junk cleanup"} in Tools finishes.
+                Available again when the{" "}
+                {toolsBusy === "drive" ? "drive optimization" : toolsBusy === "driver" ? "driver install" : "junk cleanup"} in Tools
+                finishes.
               </span>
             )}
           </div>

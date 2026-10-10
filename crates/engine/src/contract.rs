@@ -689,6 +689,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { DriveOptimization } from \"./DriveOptimization\";\n\
          import type { EngineError } from \"./EngineError\";\n\
          import type { GameInfo } from \"./GameInfo\";\n\
+         import type { GpuDriverInstall } from \"./GpuDriverInstall\";\n\
          import type { JournalView } from \"./JournalView\";\n\
          import type { MsiDeviceList } from \"./MsiDeviceList\";\n\
          import type { NetworkCheck } from \"./NetworkCheck\";\n\
@@ -796,6 +797,20 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         },
     );
     ts_const(&mut out, "cleanupReport", "CleanupReport", &cleanup_report());
+    // The shape of a finished clean install; the file name is made up (SAMPLE
+    // in the UI), not a real NVIDIA release.
+    ts_const(
+        &mut out,
+        "gpuDriverInstall",
+        "GpuDriverInstall",
+        &crate::gpu_install::GpuDriverInstall {
+            file: "123.45-sample-driver.exe".into(),
+            version: Some("123.45".into()),
+            restart: true,
+            unix_ms: 1_791_332_400_000,
+            seconds: 184,
+        },
+    );
     ts_const(
         &mut out,
         "progressEvent",

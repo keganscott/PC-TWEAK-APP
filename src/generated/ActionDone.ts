@@ -4,4 +4,4 @@ import type { CleanupArea } from "./CleanupArea";
 /**
  * What a one-time action did, as numbers the screen words itself.
  */
-export type ActionDone = { "action": "purge_standby", cachedBefore: number, cachedAfter: number, } | { "action": "cleanup", areas: Array<CleanupArea>, removedBytes: number, removedFiles: number, leftFiles: number, } | { "action": "optimize_drive", drive: string, seconds: number, };
+export type ActionDone = { "action": "purge_standby", cachedBefore: number, cachedAfter: number, } | { "action": "cleanup", areas: Array<CleanupArea>, removedBytes: number, removedFiles: number, leftFiles: number, } | { "action": "optimize_drive", drive: string, seconds: number, } | { "action": "gpu_driver_started", file: string, version: string | null, } | { "action": "gpu_driver_installed", file: string, version: string | null, restart: boolean, };

@@ -220,6 +220,59 @@ describe("App", () => {
     expect(await within(tile).findByText(/Cleaned: 5\.0 GB of files let go/)).toBeTruthy();
   });
 
+  it("Tools' driver tool opens NVIDIA's page and waits for a restore point before a clean install", async () => {
+    const backend = createMockBackend();
+    const page = vi.spyOn(backend, "openDriverPage");
+    const install = vi.spyOn(backend, "installGpuDriver");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const tool = await screen.findByRole("region", { name: "Graphics driver" });
+    expect(within(tool).getByText("SAMPLE")).toBeTruthy();
+    expect(within(tool).getByText("Example GPU")).toBeTruthy();
+    expect(within(tool).getByText("Driver 581.80, dated 2025-08-20")).toBeTruthy();
+    await userEvent.click(within(tool).getByRole("button", { name: "Open NVIDIA's driver page" }));
+    expect(page).toHaveBeenCalledWith("nvidia");
+    expect((within(tool).getByRole("button", { name: "Choose the file and install" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(tool).getByRole("button", { name: "Make a restore point" })).toBeTruthy();
+    expect(install).not.toHaveBeenCalled();
+  });
+
+  it("Tools' driver tool does a clean install, shows the new driver and keeps both lines in Backups", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const tool = await screen.findByRole("region", { name: "Graphics driver" });
+    await userEvent.click(within(tool).getByRole("button", { name: "Choose the file and install" }));
+    expect(await within(tool).findByText("Driver 123.45 installed. Restart Windows to finish.")).toBeTruthy();
+    expect(await within(tool).findByText("Driver 123.45, dated 2025-08-20")).toBeTruthy();
+    await goTo("Backups");
+    expect(await screen.findByText(/NVIDIA driver clean install: started driver 123\.45/)).toBeTruthy();
+    expect(screen.getByText(/NVIDIA driver clean install: driver 123\.45 installed, restart Windows to finish/)).toBeTruthy();
+  });
+
+  it("Tools' driver tool says why a file was not installed", async () => {
+    const backend = createMockBackend({
+      gateOpen: true,
+      failures: {
+        installGpuDriver: {
+          kind: "command",
+          what: "NVIDIA driver install",
+          exitCode: null,
+          detail: "the file is signed by SAMPLE Ltd, not NVIDIA Corporation; PeakTweaks only installs NVIDIA's own driver packages",
+        },
+      },
+    });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const tool = await screen.findByRole("region", { name: "Graphics driver" });
+    await userEvent.click(within(tool).getByRole("button", { name: "Choose the file and install" }));
+    expect(await within(tool).findByText("PeakTweaks did not install that file.")).toBeTruthy();
+    expect(within(tool).queryByText(/installed\./)).toBeNull();
+  });
+
   it("Tools shows presets and applies one after its review lists every change", async () => {
     const backend = createMockBackend({ gateOpen: true });
     const apply = vi.spyOn(backend, "applyTweak");
@@ -1165,7 +1218,7 @@ describe("review regressions", () => {
     const reminders = await screen.findByRole("region", { name: "Reminders" });
     expect(within(reminders).getByText(/^Junk files were last cleared \d+ days ago\.$/)).toBeTruthy();
     expect(within(reminders).getByText("The Example GPU driver is dated 2025-08-20.")).toBeTruthy();
-    expect(within(reminders).getByText(/PeakTweaks does not install drivers/)).toBeTruthy();
+    expect(within(reminders).getByText(/Graphics driver in Tools opens NVIDIA's driver page and does a clean install/)).toBeTruthy();
 
     await userEvent.click(within(reminders).getAllByRole("button", { name: "Not now" })[0]!);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ cleanupReminderSnoozedUntil: expect.any(Number) }), expect.anything()));

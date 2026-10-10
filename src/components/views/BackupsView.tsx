@@ -401,12 +401,14 @@ const ACTION_DONE: Record<OneTimeAction, string> = {
   purge_standby: "Emptied the standby list",
   cleanup: "Cleared junk files",
   optimize_drive: "Optimized the Windows drive",
+  install_gpu_driver: "NVIDIA driver clean install",
 };
 
 const ACTION_FAILED: Record<OneTimeAction, string> = {
   purge_standby: "Could not empty the standby list",
   cleanup: "Could not clear junk files",
   optimize_drive: "The drive optimization did not finish",
+  install_gpu_driver: "The NVIDIA driver install did not finish",
 };
 
 function describeDone(done: ActionDone): string {
@@ -420,6 +422,10 @@ function describeDone(done: ActionDone): string {
     }
     case "optimize_drive":
       return `drive ${done.drive}, Windows took ${formatDuration(done.seconds)}`;
+    case "gpu_driver_started":
+      return `started ${done.version ? `driver ${done.version}` : done.file} (a restore point puts the old driver back)`;
+    case "gpu_driver_installed":
+      return `driver ${done.version ?? done.file} installed${done.restart ? ", restart Windows to finish" : ""}`;
   }
 }
 

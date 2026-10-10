@@ -18,6 +18,7 @@ pub mod game_installs;
 pub mod games;
 pub mod gpu_choice;
 pub mod gpu_driver;
+pub mod gpu_install;
 pub mod hardware;
 pub mod held;
 pub mod ini;

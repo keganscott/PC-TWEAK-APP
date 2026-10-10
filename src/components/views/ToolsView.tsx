@@ -14,6 +14,7 @@ import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePoin
 import { categoryIcon, categoryName } from "./categories";
 import { ConnectionSection } from "./ConnectionSection";
 import { LastChange } from "./LastChange";
+import { DriverTool } from "./DriverTool";
 import { MemoryCleaner } from "./MemoryCleaner";
 import { PlaySection } from "./PlaySection";
 import { PresetsSection } from "./Presets";
@@ -114,7 +115,10 @@ export function ToolsView() {
           <h2 id="quick-tools-title" className="mb-3 font-display text-xl font-extrabold tracking-tight">
             Quick tools
           </h2>
-          <MemoryCleaner />
+          <div className="grid items-start gap-4 2xl:grid-cols-2">
+            <MemoryCleaner />
+            <DriverTool />
+          </div>
         </section>
         <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface-0 px-1 py-2.5">
           <CategoryNav groups={groups} />
@@ -398,6 +402,7 @@ const WAIT_FOR: Record<LongWork, string> = {
   proof: "Available again when the Proof recording finishes.",
   cleanup: "Available again when the junk cleanup finishes.",
   drive: "Available again when the drive optimization finishes.",
+  driver: "Available again when the driver install finishes.",
 };
 
 /** Catalogue H28, in the engine's order. */

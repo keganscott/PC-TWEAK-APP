@@ -15,8 +15,10 @@ import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
 import type { DriveOptimization } from "./generated/DriveOptimization";
+import type { DriverVendor } from "./generated/DriverVendor";
 import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
+import type { GpuDriverInstall } from "./generated/GpuDriverInstall";
 import type { JournalEntry } from "./generated/JournalEntry";
 import type { JournalView } from "./generated/JournalView";
 import type { LiveReadings } from "./generated/LiveReadings";
@@ -127,6 +129,10 @@ export const engine = {
   checkConnection: () => call<NetworkCheck>("check_connection"),
   /** Ask Steam to start a game found in a Steam library. The engine builds the link and opens it as the signed-in user, without PeakTweaks' administrator rights. */
   launchGame: (gameId: string) => call<null>("launch_game", { gameId }),
+  /** Open the card maker's own driver page in the user's browser. The engine holds the address; PeakTweaks opens no connection itself. */
+  openDriverPage: (vendor: DriverVendor) => call<null>("open_driver_page", { vendor }),
+  /** Clean install of an NVIDIA driver the user downloaded: the engine shows Windows' Open dialog, checks NVIDIA signed the file, needs a restore point. `null` when the dialog is cancelled. */
+  installGpuDriver: () => call<GpuDriverInstall | null>("install_gpu_driver"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */

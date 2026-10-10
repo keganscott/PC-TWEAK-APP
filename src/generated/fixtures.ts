@@ -7,6 +7,7 @@ import type { ContextInfo } from "./ContextInfo";
 import type { DriveOptimization } from "./DriveOptimization";
 import type { EngineError } from "./EngineError";
 import type { GameInfo } from "./GameInfo";
+import type { GpuDriverInstall } from "./GpuDriverInstall";
 import type { JournalView } from "./JournalView";
 import type { MsiDeviceList } from "./MsiDeviceList";
 import type { NetworkCheck } from "./NetworkCheck";
@@ -1277,6 +1278,14 @@ export const cleanupReport = {
   ],
   "unixMs": 1791331500000
 } satisfies CleanupReport;
+
+export const gpuDriverInstall = {
+  "file": "123.45-sample-driver.exe",
+  "version": "123.45",
+  "restart": true,
+  "unixMs": 1791332400000,
+  "seconds": 184
+} satisfies GpuDriverInstall;
 
 export const progressEvent = {
   "stage": "apply",

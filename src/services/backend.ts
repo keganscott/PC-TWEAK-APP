@@ -12,7 +12,9 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
 import type { DriveOptimization } from "../generated/DriveOptimization";
+import type { DriverVendor } from "../generated/DriverVendor";
 import type { GameInfo } from "../generated/GameInfo";
+import type { GpuDriverInstall } from "../generated/GpuDriverInstall";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
 import type { LiveReadings } from "../generated/LiveReadings";
@@ -64,6 +66,10 @@ export interface Backend {
   checkConnection(): Promise<NetworkCheck>;
   /** Ask Steam to start a game found in a Steam library, without PeakTweaks' administrator rights. */
   launchGame(gameId: string): Promise<null>;
+  /** The card maker's driver page in the user's browser. Changes nothing. */
+  openDriverPage(vendor: DriverVendor): Promise<null>;
+  /** Clean install of an NVIDIA driver file the user picks; `null` when they cancel. Needs a restore point. */
+  installGpuDriver(): Promise<GpuDriverInstall | null>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;

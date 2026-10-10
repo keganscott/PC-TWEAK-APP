@@ -1030,10 +1030,21 @@ function Reminders() {
             </p>
           </Callout>
         ) : (
-          <Callout key={`driver-${r.card}`} tone="info" title={`The ${r.card} driver is dated ${r.date}.`} action={notNow("driver")}>
+          <Callout
+            key={`driver-${r.card}`}
+            tone="info"
+            title={`The ${r.card} driver is dated ${r.date}.`}
+            action={
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => navigate("tools")}>Open Tools</Button>
+                {notNow("driver")}
+              </div>
+            }
+          >
             <p>
-              That is more than six months ago. {r.maker}'s own app or website shows whether a newer driver is out.
-              PeakTweaks does not install drivers.
+              That is more than six months ago. {r.maker}'s own app or website shows whether a newer driver is out. Graphics
+              driver in Tools opens {r.maker}'s driver page
+              {r.maker === "NVIDIA" ? " and does a clean install of the file you download." : "."}
             </p>
           </Callout>
         ),

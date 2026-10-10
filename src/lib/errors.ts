@@ -134,6 +134,30 @@ function commandText(what: string, detail: string): Omit<ErrorText, "detail"> {
       hint: "Start it from Steam instead. PeakTweaks only starts games through Steam, never with its own administrator rights.",
     };
   }
+  if (what === "Driver page") {
+    return {
+      title: "PeakTweaks could not open the driver page.",
+      hint: "Open your browser and go to the card maker's website instead.",
+    };
+  }
+  if (what === "NVIDIA driver install") {
+    if (/signed|signature/.test(d) || d.includes("not a program") || d.includes("not a file")) {
+      return {
+        title: "PeakTweaks did not install that file.",
+        hint: "Choose a driver downloaded from NVIDIA's own website. PeakTweaks only installs files NVIDIA signed.",
+      };
+    }
+    if (timedOut) {
+      return {
+        title: "NVIDIA's installer ran for an hour and was stopped.",
+        hint: "Restart Windows. If the driver is not right afterwards, System Restore puts the old one back.",
+      };
+    }
+    return {
+      title: "NVIDIA's installer did not finish.",
+      hint: "Restart Windows, then try again. You can also run the file yourself and choose Custom, then Perform a clean installation.",
+    };
+  }
   if (what === "PowerShell") return { title: "A Windows tool did not finish.", hint: timedOut ? busy : null };
   return { title: `${what} did not finish.`, hint: timedOut ? busy : null };
 }

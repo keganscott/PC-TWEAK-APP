@@ -59,4 +59,13 @@ cpuBusyAverage: Probe<number>,
 /**
  * The reading with the least memory available while the game ran.
  */
-memoryPeak: Probe<MemoryUse>, };
+memoryPeak: Probe<MemoryUse>, 
+/**
+ * How many times "Clean memory during games" emptied the standby list
+ * while the game ran (0 in reports from before the switch existed).
+ */
+memoryCleans: number, 
+/**
+ * What those cleans let go in all: files kept in memory before less after.
+ */
+memoryCleanedBytes: number, };

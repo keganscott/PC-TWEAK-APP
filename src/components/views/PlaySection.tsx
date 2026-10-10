@@ -4,7 +4,7 @@ import type { PlayReport } from "../../generated/PlayReport";
 import type { Settings } from "../../generated/Settings";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatDuration } from "../../lib/format";
-import { loadLine, reportNotes, reportSummary, sameReport } from "../../lib/playReport";
+import { cleanLine, loadLine, reportNotes, reportSummary, sameReport } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
 
@@ -80,6 +80,8 @@ export function PlaySection() {
                 <span className="font-bold">{name(play.game)} is running.</span>
                 {play.gamingModeActive && " Gaming Mode is on."}
                 {play.timerHeld !== null && ` The game timer is held at ${ms(play.timerHeld)}.`}
+                {play.memoryCleans > 0 &&
+                  ` Memory cleaned ${play.memoryCleans === 1 ? "once" : `${play.memoryCleans.toLocaleString()} times`} so far.`}
               </>
             ) : (
               <>Watching for {listWords(play.watched.map((id) => EDITION[id] ?? name(id)))}.</>
@@ -207,6 +209,7 @@ function LastSession({ report, name }: { report: PlayReport; name: string }) {
   const seconds = (report.endedUnixMs - report.startedUnixMs) / 1000;
   const hottest = report.gpuHottestC;
   const load = loadLine(report);
+  const cleaned = cleanLine(report);
   return (
     <div className="border-t border-line pt-4" role="group" aria-labelledby={headingId}>
       <h3 id={headingId} className="font-bold">
@@ -219,6 +222,7 @@ function LastSession({ report, name }: { report: PlayReport; name: string }) {
         {hottest.state === "yes" && report.temperatureMissed && " Some readings had no temperature, so a hotter moment may be missing."}
       </p>
       {load && <p className="mt-1 text-sm text-ink-muted">{load}</p>}
+      {cleaned && <p className="mt-1 text-sm text-ink-muted">{cleaned}</p>}
       <div className="mt-3 flex flex-col gap-2">
         {reportNotes(report).map((n) => (
           <Callout key={n.title} tone={n.tone} title={n.title}>
@@ -230,7 +234,7 @@ function LastSession({ report, name }: { report: PlayReport; name: string }) {
   );
 }
 
-function SwitchRow({
+export function SwitchRow({
   label,
   checked,
   disabled,

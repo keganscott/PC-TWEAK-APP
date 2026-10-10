@@ -2,6 +2,8 @@
 //! of the running programs every few seconds (`peaktweaks_engine::play`); while
 //! a known game runs it keeps Gaming Mode's changes and the timer request in
 //! effect, as the user's settings say, and puts them back when the game closes.
+//! With "Clean memory during games" on, it also empties the standby list when
+//! free memory runs short (`memory::auto_clean_due`).
 //! What it sees goes to the UI as the `engine://play` event and the
 //! `play_status` command.
 
@@ -11,6 +13,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use peaktweaks_engine::journal::now_ms;
+use peaktweaks_engine::memory;
 use peaktweaks_engine::play::{
     game_processes, game_running, play_look, running_images, watched_ids, PlayReports, PlayStatus, TimerRequest, Watch,
     WatchEvent,
@@ -45,15 +48,25 @@ struct Session {
     timer_problem: Option<String>,
     /// On Wi-Fi only when the game started.
     on_wifi: bool,
+    /// When "Clean memory during games" last cleaned (Unix ms), how many
+    /// times it has for this game, and why the last try failed.
+    last_clean_ms: Option<u64>,
+    cleans: u32,
+    clean_problem: Option<String>,
 }
 
 impl Session {
     fn problem(&self) -> Option<String> {
-        let parts: Vec<&str> = [&self.not_put_back, &self.not_made, &self.timer_problem]
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-            .collect();
+        let parts: Vec<&str> = [
+            &self.not_put_back,
+            &self.not_made,
+            &self.timer_problem,
+            &self.clean_problem,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
         (!parts.is_empty()).then(|| parts.join(" "))
     }
 }
@@ -74,6 +87,8 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
     let mut ended = None;
     let mut first = true;
     loop {
+        // The game to clean memory for after this look, decided under the lock.
+        let mut clean_for = None;
         let running = running_images().ok().and_then(|images| game_running(&images, &games));
         let event = watch.look(running);
         // The graphics card's readings, outside the engine lock: they read
@@ -98,6 +113,9 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
             let settings = e.settings();
             match event {
                 Some(WatchEvent::Started(_)) => {
+                    session.last_clean_ms = None;
+                    session.cleans = 0;
+                    session.clean_problem = None;
                     session.tried = false;
                     session.not_made = None;
                     session.not_put_back = None;
@@ -105,6 +123,8 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                     session.on_wifi = e.on_wifi_only();
                 }
                 Some(WatchEvent::Stopped(_)) => {
+                    session.cleans = 0;
+                    session.clean_problem = None;
                     session.timer = None;
                     session.timer_problem = None;
                     session.not_made = None;
@@ -145,6 +165,14 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 session.timer = None;
                 session.timer_problem = None;
             }
+            // Not while a Proof recording measures: it would disturb it, as
+            // the Clean memory button is refused then.
+            let recording = e.proof_service().is_some_and(|p| p.is_capturing());
+            if settings.memory_auto_clean && !recording {
+                clean_for = watch.current();
+            } else {
+                session.clean_problem = None;
+            }
             if !e.play_session_open() {
                 session.not_put_back = None;
             }
@@ -160,6 +188,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 last_session: e.last_play(),
                 history: e.play_history(),
                 history_problem: e.play_history_problem(),
+                memory_cleans: if watch.current().is_some() { session.cleans } else { 0 },
             };
             drop(e);
             let changed = {
@@ -178,8 +207,39 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 let _ = app.emit("engine://play", now);
             }
         }
+        if let Some(game) = clean_for {
+            clean_memory(game, &mut session, &mut reports);
+        }
         first = false;
         std::thread::sleep(LOOK_EVERY);
+    }
+}
+
+/// "Clean memory during games": empty the standby list when the game is short
+/// of free memory, at most once a minute (`memory::auto_clean_due`), outside
+/// the engine lock. The game's report counts each clean; nothing is journalled,
+/// as no setting changes. The count and any failure show on the next look.
+fn clean_memory(game: &str, session: &mut Session, reports: &mut PlayReports) {
+    let lists = memory::system();
+    let now = now_ms();
+    let due = match lists.usage() {
+        Ok(m) => memory::auto_clean_due(&m, session.last_clean_ms, now),
+        Err(err) => {
+            session.clean_problem = Some(format!("Memory could not be read for cleaning: {err}"));
+            return;
+        }
+    };
+    if !due {
+        return;
+    }
+    session.last_clean_ms = Some(now);
+    match memory::purge_standby(lists.as_ref(), now) {
+        Ok(p) => {
+            let freed = p.before.cached_bytes.saturating_sub(p.after.cached_bytes);
+            session.cleans = reports.note_clean(game, freed);
+            session.clean_problem = None;
+        }
+        Err(err) => session.clean_problem = Some(format!("Memory could not be cleaned: {err}")),
     }
 }
 

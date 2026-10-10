@@ -1021,6 +1021,7 @@ export const systemAudit = {
     "welcomeSeen": false,
     "gamingMode": false,
     "gameTimer": false,
+    "memoryAutoClean": false,
     "remindersOff": false,
     "cleanupReminderSnoozedUntil": null,
     "driverReminderSnoozedUntil": null,
@@ -1349,7 +1350,9 @@ export const playStatus = {
         "availableBytes": 1610612736,
         "cachedBytes": 1073741824
       }
-    }
+    },
+    "memoryCleans": 2,
+    "memoryCleanedBytes": 6442450944
   },
   "history": [
     {
@@ -1381,7 +1384,9 @@ export const playStatus = {
       "memoryPeak": {
         "state": "unknown",
         "reason": "this reading was not taken by the PeakTweaks version that watched the game"
-      }
+      },
+      "memoryCleans": 0,
+      "memoryCleanedBytes": 0
     },
     {
       "game": "valorant",
@@ -1421,7 +1426,9 @@ export const playStatus = {
           "availableBytes": 6442450944,
           "cachedBytes": 3221225472
         }
-      }
+      },
+      "memoryCleans": 0,
+      "memoryCleanedBytes": 0
     },
     {
       "game": "fortnite",
@@ -1465,10 +1472,13 @@ export const playStatus = {
           "availableBytes": 1610612736,
           "cachedBytes": 1073741824
         }
-      }
+      },
+      "memoryCleans": 2,
+      "memoryCleanedBytes": 6442450944
     }
   ],
-  "historyProblem": null
+  "historyProblem": null,
+  "memoryCleans": 1
 } satisfies PlayStatus;
 
 export const games = [

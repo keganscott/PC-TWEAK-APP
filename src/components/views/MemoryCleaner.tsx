@@ -1,11 +1,12 @@
 import { MemoryStick, Sparkles } from "lucide-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import type { MemoryUse } from "../../generated/MemoryUse";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatNumber } from "../../lib/format";
 import { useActions, useLiveReadings, useStore, useTechnical } from "../../store/hooks";
-import { Button, cx, ErrorCallout, SampleBadge } from "../ui/primitives";
+import { Button, cx, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
+import { SwitchRow } from "./PlaySection";
 
 /** Bytes as "4.2 GB". */
 export const gb = (bytes: number) => `${formatNumber(bytes / 1024 ** 3)} GB`;
@@ -152,6 +153,54 @@ export function MemoryCleaner() {
           <ErrorCallout text={explain(op.error)} technical={technical} />
         </div>
       )}
+      <AutoClean />
     </section>
+  );
+}
+
+/** "Clean memory during games" (Kegan, 2026-10-10: Mem Reduct's automatic
+ * cleaning). The game watcher cleans by itself while a known game runs, on
+ * the engine's limits (`memory::auto_clean_due`); each game's report counts
+ * the cleans. A preference, saved like the other while-you-play switches. */
+function AutoClean() {
+  const settings = useStore((s) => s.settings);
+  const settingsOp = useStore((s) => s.settingsOp);
+  const play = useStore((s) => s.play);
+  const technical = useTechnical();
+  const { saveSettings } = useActions();
+  const [saving, setSaving] = useState(false);
+  const [failedHere, setFailedHere] = useState(false);
+  if (!settings) return null;
+  const on = settings.memoryAutoClean;
+  const flip = async (next: boolean) => {
+    setSaving(true);
+    setFailedHere(false);
+    setFailedHere(!(await saveSettings({ ...settings, memoryAutoClean: next }, settings)));
+    setSaving(false);
+  };
+  const cleans = play?.memoryCleans ?? 0;
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <SwitchRow
+        label="Clean memory during games"
+        checked={on}
+        disabled={settingsOp.status === "running"}
+        busy={saving}
+        onChange={(next) => void flip(next)}
+        badge={on && play?.game ? <StatusBadge tone="ok">On now</StatusBadge> : null}
+      >
+        While a game runs, empties the standby list as the button does, whenever less than 1 GB is free (Available less
+        Files kept in memory) and Windows keeps more than 1 GB of files in memory: at most once a minute, and not while
+        Proof records. Files the game read recently
+        are let go too, so it may read some of them from the drive again. Each game's report in While you play says how
+        often it cleaned.
+        {on && play?.game && cleans > 0 && ` Cleaned ${cleans === 1 ? "once" : `${cleans.toLocaleString()} times`} so far in this game.`}
+      </SwitchRow>
+      {failedHere && settingsOp.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(settingsOp.error)} technical={technical} />
+        </div>
+      )}
+    </div>
   );
 }

@@ -71,6 +71,32 @@ pub fn purge_standby(lists: &dyn MemoryLists, unix_ms: u64) -> Result<StandbyPur
     Ok(StandbyPurge { before, after, unix_ms })
 }
 
+/// Cleaning on its own while a game runs (Kegan, 2026-10-10: Mem Reduct's
+/// automatic cleaning), the switch "Clean memory during games": only when
+/// Windows is short of free memory and the standby list holds a lot, and not
+/// more often than `AUTO_GAP_MS`. PeakTweaks' own limits, not taken from
+/// another tool (NOTES N120).
+pub const AUTO_FREE_BELOW: u64 = 1 << 30;
+/// See `AUTO_FREE_BELOW`.
+pub const AUTO_CACHED_AT_LEAST: u64 = 1 << 30;
+/// See `AUTO_FREE_BELOW`.
+pub const AUTO_GAP_MS: u64 = 60_000;
+
+/// Memory no one is using at all, not even for files: what is available less
+/// the files kept in memory. An estimate: `cached_bytes` also counts the
+/// system's own working set, so it can read low, never high.
+pub fn free_estimate(m: &MemoryUse) -> u64 {
+    m.available_bytes.saturating_sub(m.cached_bytes)
+}
+
+/// Whether to clean now: free memory under `AUTO_FREE_BELOW`, files kept in
+/// memory at least `AUTO_CACHED_AT_LEAST`, and the last clean (Unix ms) at
+/// least `AUTO_GAP_MS` ago.
+pub fn auto_clean_due(m: &MemoryUse, last_clean_ms: Option<u64>, now_ms: u64) -> bool {
+    let rested = last_clean_ms.is_none_or(|last| now_ms.saturating_sub(last) >= AUTO_GAP_MS);
+    rested && free_estimate(m) < AUTO_FREE_BELOW && m.cached_bytes >= AUTO_CACHED_AT_LEAST
+}
+
 /// The real thing on Windows; elsewhere, a refusal.
 pub fn system() -> Box<dyn MemoryLists> {
     #[cfg(windows)]
@@ -286,6 +312,44 @@ mod tests {
         assert_eq!(*f.calls.lock().unwrap(), ["usage", "purge", "usage"]);
         assert_eq!((out.before.cached_bytes, out.after.cached_bytes), (6 << 30, 1 << 30));
         assert_eq!(out.unix_ms, 7);
+    }
+
+    #[test]
+    fn cleaning_during_a_game_waits_for_short_free_memory_a_big_list_and_a_minute() {
+        const GIB: u64 = 1 << 30;
+        let short = MemoryUse {
+            total_bytes: 16 * GIB,
+            available_bytes: 6 * GIB + GIB / 2,
+            cached_bytes: 6 * GIB,
+        };
+        assert_eq!(free_estimate(&short), GIB / 2);
+        assert!(auto_clean_due(&short, None, 1_000_000));
+        assert!(
+            !auto_clean_due(&short, Some(1_000_000 - AUTO_GAP_MS + 1), 1_000_000),
+            "within a minute"
+        );
+        assert!(auto_clean_due(&short, Some(1_000_000 - AUTO_GAP_MS), 1_000_000));
+        let plenty_free = MemoryUse {
+            available_bytes: 8 * GIB,
+            ..short
+        };
+        assert!(!auto_clean_due(&plenty_free, None, 0), "2 GB free");
+        let small_list = MemoryUse {
+            available_bytes: GIB,
+            cached_bytes: GIB / 2,
+            ..short
+        };
+        assert!(!auto_clean_due(&small_list, None, 0), "little to let go");
+        let odd = MemoryUse {
+            available_bytes: GIB,
+            cached_bytes: 3 * GIB,
+            ..short
+        };
+        assert_eq!(free_estimate(&odd), 0, "never below zero");
+        assert!(
+            !auto_clean_due(&odd, Some(5), 0),
+            "a clock that went back is not a minute"
+        );
     }
 
     #[test]

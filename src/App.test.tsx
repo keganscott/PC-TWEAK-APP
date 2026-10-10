@@ -438,6 +438,25 @@ describe("App", () => {
     expect(within(section).getAllByText("On now")).toHaveLength(2);
   });
 
+  it("Tools turns on Clean memory during games, which needs no restore point, and counts its cleans", async () => {
+    const backend = createMockBackend({ playing: "fortnite" });
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const panel = await screen.findByRole("region", { name: "Clean memory" });
+    const toggle = within(panel).getByRole("switch", { name: "Clean memory during games" }) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await userEvent.click(toggle);
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ memoryAutoClean: true, gamingMode: false }), expect.anything());
+    expect(await within(panel).findByText(/Cleaned once so far in this game\./)).toBeTruthy();
+    expect(within(panel).getByText("On now")).toBeTruthy();
+    const section = screen.getByRole("region", { name: /While you play/ });
+    expect(within(section).getByText(/Memory cleaned once so far\./)).toBeTruthy();
+    // The SAMPLE last game cleaned twice.
+    expect(within(section).getByText(/emptied the standby list 2 times, letting go of 6\.0 GB/)).toBeTruthy();
+  });
+
   it("Home and the top bar turn Gaming Mode on and off in one click, and say when it is in effect", async () => {
     const backend = createMockBackend({ playing: "fortnite", gateOpen: true });
     const save = vi.spyOn(backend, "setSettings");

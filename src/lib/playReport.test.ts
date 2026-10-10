@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PlayReport } from "../generated/PlayReport";
 import type { ThrottleSeen } from "../generated/ThrottleSeen";
 import { playStatus } from "../generated/fixtures";
-import { loadLine, reportNotes, reportSummary, sameReport } from "./playReport";
+import { cleanLine, loadLine, reportNotes, reportSummary, sameReport } from "./playReport";
 
 const report = (samples: number, seen: ThrottleSeen[], counts: { heat?: number; hardware?: number } = {}): PlayReport => ({
   game: "fortnite",
@@ -17,6 +17,8 @@ const report = (samples: number, seen: ThrottleSeen[], counts: { heat?: number; 
   gpuBusyAverage: { state: "unknown", reason: "not read" },
   cpuBusyAverage: { state: "unknown", reason: "not read" },
   memoryPeak: { state: "unknown", reason: "not read" },
+  memoryCleans: 0,
+  memoryCleanedBytes: 0,
 });
 
 describe("reportNotes", () => {
@@ -101,5 +103,13 @@ describe("loadLine", () => {
     expect(reportNotes(roomy).some((n) => n.title.startsWith("Memory"))).toBe(false);
     const full = { ...roomy, memoryPeak: { state: "yes" as const, value: { totalBytes: 100, availableBytes: 10, cachedBytes: 0 } } };
     expect(reportNotes(full).at(-1)!.title).toBe("Memory was nearly full: up to 90% in use.");
+  });
+
+  it("says what Clean memory during games did, and nothing when it did not clean", () => {
+    expect(cleanLine(report(10, []))).toBeNull();
+    expect(cleanLine({ ...report(10, []), memoryCleans: 1, memoryCleanedBytes: 3 * 1024 ** 3 })).toBe(
+      "Clean memory during games emptied the standby list once, letting go of 3.0 GB of files kept in memory.",
+    );
+    expect(cleanLine({ ...report(10, []), memoryCleans: 2, memoryCleanedBytes: 6 * 1024 ** 3 })).toMatch(/list 2 times, letting go of 6\.0 GB/);
   });
 });

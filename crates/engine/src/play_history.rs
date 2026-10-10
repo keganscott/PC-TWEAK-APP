@@ -102,6 +102,8 @@ mod tests {
             gpu_busy_average: Probe::unknown("no NVIDIA card"),
             cpu_busy_average: Probe::unknown("not read in tests"),
             memory_peak: Probe::unknown("not read in tests"),
+            memory_cleans: 0,
+            memory_cleaned_bytes: 0,
         }
     }
 

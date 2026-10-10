@@ -1,7 +1,8 @@
 //! The few choices a user makes that are not tweaks: a rig-class override
 //! (plan 6.1: "User can override"), the plain/technical wording (plan
-//! section 7), whether the first-run welcome was seen, the two "while you
-//! play" switches (Gaming Mode, game timer) and the gentle reminders on Home
+//! section 7), whether the first-run welcome was seen, the three "while you
+//! play" switches (Gaming Mode, game timer, memory cleaning) and the gentle
+//! reminders on Home
 //! (on or off, and how long each "Not now" lasts), and which restart's check
 //! was already seen. Stored as `settings.json`
 //! in the protected data directory.
@@ -51,6 +52,9 @@ pub struct Settings {
     /// Ask Windows for its finest timer while a known game runs (`play.rs`).
     /// Off unless the user turns it on.
     pub game_timer: bool,
+    /// Empty the standby list while a known game runs, when free memory is
+    /// short (`memory::auto_clean_due`). Off unless the user turns it on.
+    pub memory_auto_clean: bool,
     /// The gentle reminders on Home (junk cleanup due, an old graphics
     /// driver) are turned off. On unless the user turns them off.
     pub reminders_off: bool,
@@ -194,7 +198,7 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.language, Language::Plain);
         assert_eq!(s.rig_class_override, None);
-        assert!(!s.gaming_mode && !s.game_timer);
+        assert!(!s.gaming_mode && !s.game_timer && !s.memory_auto_clean);
     }
 
     #[test]
@@ -206,6 +210,7 @@ mod tests {
             welcome_seen: true,
             gaming_mode: true,
             game_timer: true,
+            memory_auto_clean: true,
             reminders_off: true,
             cleanup_reminder_snoozed_until: Some(1_760_000_000_000),
             driver_reminder_snoozed_until: None,
@@ -245,7 +250,10 @@ mod tests {
         assert_eq!(s.language, Language::Technical);
         assert_eq!(s.rig_class_override, None);
         assert!(!s.welcome_seen, "a file from before the welcome existed shows it once");
-        assert!(!s.gaming_mode && !s.game_timer, "the while-you-play switches start off");
+        assert!(
+            !s.gaming_mode && !s.game_timer && !s.memory_auto_clean,
+            "the while-you-play switches start off"
+        );
         assert!(!s.reminders_off, "the reminders start on");
         assert_eq!(
             (s.cleanup_reminder_snoozed_until, s.driver_reminder_snoozed_until),

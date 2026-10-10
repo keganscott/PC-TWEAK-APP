@@ -8,7 +8,7 @@
 import type { PlayReport } from "../generated/PlayReport";
 import type { PlayStatus } from "../generated/PlayStatus";
 import type { Tone } from "../components/ui/primitives";
-import { formatGiB } from "./format";
+import { formatBytes, formatGiB } from "./format";
 
 export interface ReportNote {
   tone: Tone;
@@ -52,6 +52,13 @@ export function loadLine(report: PlayReport): string | null {
   if (parts.length === 0) return null;
   const line = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
   return `${line.charAt(0).toUpperCase()}${line.slice(1)}.`;
+}
+
+/** What "Clean memory during games" did while the game ran, if it cleaned. */
+export function cleanLine(report: PlayReport): string | null {
+  const n = report.memoryCleans;
+  if (n === 0) return null;
+  return `Clean memory during games emptied the standby list ${n === 1 ? "once" : `${n.toLocaleString()} times`}, letting go of ${formatBytes(report.memoryCleanedBytes)} of files kept in memory.`;
 }
 
 /** The note for memory, when it was nearly full. */

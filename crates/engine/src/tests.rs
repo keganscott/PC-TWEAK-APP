@@ -4905,6 +4905,8 @@ fn the_game_history_is_kept_across_restarts_and_capped() {
         gpu_busy_average: Probe::unknown("not read in tests"),
         cpu_busy_average: Probe::unknown("not read in tests"),
         memory_peak: Probe::unknown("not read in tests"),
+        memory_cleans: 0,
+        memory_cleaned_bytes: 0,
     };
     let fake = Arc::new(FakeRegistry::new());
     let dir = tempfile::tempdir().unwrap();

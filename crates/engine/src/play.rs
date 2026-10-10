@@ -159,6 +159,9 @@ pub struct PlayStatus {
     /// not be saved). Not a Gaming Mode problem: nothing the user turned on
     /// depends on it.
     pub history_problem: Option<String>,
+    /// How many times "Clean memory during games" has cleaned while the game
+    /// running now ran.
+    pub memory_cleans: u32,
 }
 
 impl PlayStatus {
@@ -383,6 +386,14 @@ pub struct PlayReport {
     /// The reading with the least memory available while the game ran.
     #[serde(default = "not_recorded")]
     pub memory_peak: Probe<MemoryUse>,
+    /// How many times "Clean memory during games" emptied the standby list
+    /// while the game ran (0 in reports from before the switch existed).
+    #[serde(default)]
+    pub memory_cleans: u32,
+    /// What those cleans let go in all: files kept in memory before less after.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub memory_cleaned_bytes: u64,
 }
 
 /// A reading a report kept before this version did not take.
@@ -449,6 +460,8 @@ pub struct PlayTally {
     cpu_before: Option<CpuTimes>,
     memory_peak: Option<MemoryUse>,
     memory_problem: Option<String>,
+    memory_cleans: u32,
+    memory_cleaned_bytes: u64,
 }
 
 impl PlayTally {
@@ -547,6 +560,12 @@ impl PlayTally {
         }
     }
 
+    /// One clean by "Clean memory during games", and what it let go.
+    pub fn add_clean(&mut self, freed_bytes: u64) {
+        self.memory_cleans += 1;
+        self.memory_cleaned_bytes += freed_bytes;
+    }
+
     pub fn finish(self) -> PlayReport {
         let throttle = self.throttle.finish();
         let gpu_throttle = match (&throttle, &self.no_gpu) {
@@ -581,6 +600,8 @@ impl PlayTally {
             gpu_busy_average,
             cpu_busy_average: self.cpu_busy.finish("the processor was read in fewer than two looks"),
             memory_peak,
+            memory_cleans: self.memory_cleans,
+            memory_cleaned_bytes: self.memory_cleaned_bytes,
         }
     }
 }
@@ -635,6 +656,18 @@ impl PlayReports {
 
     pub fn last(&self) -> Option<&PlayReport> {
         self.last.as_ref()
+    }
+
+    /// A clean while `game` ran, for its report. Returns how many cleans its
+    /// report holds so far (0 when no report is open for that game).
+    pub fn note_clean(&mut self, game: &str, freed_bytes: u64) -> u32 {
+        match self.tally.as_mut() {
+            Some(t) if t.game() == game => {
+                t.add_clean(freed_bytes);
+                t.memory_cleans
+            }
+            _ => 0,
+        }
     }
 }
 
@@ -742,6 +775,38 @@ mod tests {
         let report = tally.finish();
         assert_eq!((report.heat_readings, report.hardware_readings), (3, 1));
         assert_eq!(report.temperature_missed, None);
+    }
+
+    #[test]
+    fn cleans_count_toward_the_running_games_report_only() {
+        let mut reports = PlayReports::default();
+        let quiet = || PlayLook {
+            reasons: Probe::unknown("not read"),
+            gpus: Probe::unknown("not read"),
+            cpu_times: Probe::unknown("not read"),
+            memory: Probe::unknown("not read"),
+        };
+        assert_eq!(reports.note_clean("fortnite", 5), 0, "no game, no report");
+        reports.look(Some(WatchEvent::Started("fortnite")), Some("fortnite"), 0, quiet);
+        assert_eq!(reports.note_clean("fortnite", 3 << 30), 1);
+        assert_eq!(
+            reports.note_clean("roblox", 1 << 30),
+            0,
+            "another game's clean is not Fortnite's"
+        );
+        assert_eq!(reports.note_clean("fortnite", 1 << 30), 2);
+        let report = reports
+            .look(Some(WatchEvent::Stopped("fortnite")), None, 9_000, quiet)
+            .unwrap();
+        assert_eq!((report.memory_cleans, report.memory_cleaned_bytes), (2, 4 << 30));
+
+        // A report kept before the switch existed reads as no cleans.
+        let mut old = serde_json::to_value(&report).unwrap();
+        let obj = old.as_object_mut().unwrap();
+        obj.remove("memoryCleans");
+        obj.remove("memoryCleanedBytes");
+        let old: PlayReport = serde_json::from_value(old).unwrap();
+        assert_eq!((old.memory_cleans, old.memory_cleaned_bytes), (0, 0));
     }
 
     #[test]

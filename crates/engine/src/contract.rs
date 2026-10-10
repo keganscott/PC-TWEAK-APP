@@ -854,6 +854,9 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             available_bytes: 1_610_612_736,
             cached_bytes: 1_073_741_824,
         }),
+        // "Clean memory during games" was on and cleaned twice.
+        memory_cleans: 2,
+        memory_cleaned_bytes: 6_442_450_944,
     };
     let valorant = PlayReport {
         game: "valorant".into(),
@@ -877,6 +880,8 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             available_bytes: 6_442_450_944,
             cached_bytes: 3_221_225_472,
         }),
+        memory_cleans: 0,
+        memory_cleaned_bytes: 0,
     };
     let earlier_fortnite = PlayReport {
         game: "fortnite".into(),
@@ -894,6 +899,8 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         gpu_busy_average: crate::play::not_recorded(),
         cpu_busy_average: crate::play::not_recorded(),
         memory_peak: crate::play::not_recorded(),
+        memory_cleans: 0,
+        memory_cleaned_bytes: 0,
     };
     ts_const(
         &mut out,
@@ -906,6 +913,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             problem: None,
             last_session: Some(last.clone()),
             history: vec![earlier_fortnite, valorant, last],
+            memory_cleans: 1,
             ..PlayStatus::watching()
         },
     );

@@ -48,4 +48,9 @@ history: Array<PlayReport>,
  * not be saved). Not a Gaming Mode problem: nothing the user turned on
  * depends on it.
  */
-historyProblem: string | null, };
+historyProblem: string | null, 
+/**
+ * How many times "Clean memory during games" has cleaned while the game
+ * running now ran.
+ */
+memoryCleans: number, };

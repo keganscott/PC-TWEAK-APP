@@ -23,6 +23,11 @@ gamingMode: boolean,
  */
 gameTimer: boolean, 
 /**
+ * Empty the standby list while a known game runs, when free memory is
+ * short (`memory::auto_clean_due`). Off unless the user turns it on.
+ */
+memoryAutoClean: boolean, 
+/**
  * The gentle reminders on Home (junk cleanup due, an old graphics
  * driver) are turned off. On unless the user turns them off.
  */

@@ -87,6 +87,16 @@ pub enum EngineError {
     /// Another PeakTweaks engine (the app or the field-check tool) is already
     /// running on this PC (`instance.rs`). Only one may write the journal.
     AlreadyRunning,
+
+    /// A change failed part way, and putting back what it had already changed
+    /// failed too. Those changes stay in the record as made, so Undo can put
+    /// them back (`detail` is why the change failed, `undo_detail` why putting
+    /// back failed).
+    PartlyApplied {
+        tweak_id: String,
+        detail: String,
+        undo_detail: String,
+    },
 }
 
 impl fmt::Display for EngineError {
@@ -138,6 +148,14 @@ impl fmt::Display for EngineError {
             },
             Self::Wmi { namespace, detail, .. } => write!(f, "WMI {namespace}: {detail}"),
             Self::Internal { detail } => write!(f, "internal error: {detail}"),
+            Self::PartlyApplied {
+                tweak_id,
+                detail,
+                undo_detail,
+            } => write!(
+                f,
+                "{tweak_id} failed part way ({detail}) and what it had changed could not be put back ({undo_detail}); Undo can put it back"
+            ),
         }
     }
 }

@@ -19,6 +19,8 @@ struct Inner {
     mutations: usize,
     /// Fail the mutation whose 1-based ordinal equals this.
     fail_at: Option<usize>,
+    /// With `fail_at`: keep failing every mutation after it too.
+    fail_on: bool,
 }
 
 #[derive(Default)]
@@ -45,11 +47,22 @@ impl FakeRegistry {
     pub fn fail_mutation_number(&self, n: usize) {
         let mut g = self.inner.lock().unwrap();
         g.fail_at = Some(g.mutations + n);
+        g.fail_on = false;
+    }
+
+    /// Make the `n`th mutating call from now fail, and every one after it,
+    /// until `clear_faults`.
+    pub fn fail_mutations_from(&self, n: usize) {
+        let mut g = self.inner.lock().unwrap();
+        g.fail_at = Some(g.mutations + n);
+        g.fail_on = true;
     }
 
     /// Disarm any pending injected failure.
     pub fn clear_faults(&self) {
-        self.inner.lock().unwrap().fail_at = None;
+        let mut g = self.inner.lock().unwrap();
+        g.fail_at = None;
+        g.fail_on = false;
     }
 
     pub fn mutation_count(&self) -> usize {
@@ -117,8 +130,13 @@ impl FakeRegistry {
 impl Inner {
     fn tick(&mut self, hive: Hive, path: &str, name: Option<&str>) -> Result<()> {
         self.mutations += 1;
-        if self.fail_at == Some(self.mutations) {
-            self.fail_at = None;
+        if self
+            .fail_at
+            .is_some_and(|at| at == self.mutations || (self.fail_on && at < self.mutations))
+        {
+            if !self.fail_on {
+                self.fail_at = None;
+            }
             return Err(EngineError::registry_msg(
                 format!("{}\\{}", hive.name(), path),
                 name,

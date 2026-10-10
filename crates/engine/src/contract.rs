@@ -574,6 +574,11 @@ fn errors() -> Vec<EngineError> {
         },
         EngineError::Internal { detail: "d".into() },
         EngineError::AlreadyRunning,
+        EngineError::PartlyApplied {
+            tweak_id: "t".into(),
+            detail: "d".into(),
+            undo_detail: "u".into(),
+        },
     ]
 }
 
@@ -967,7 +972,8 @@ fn every_engine_error_variant_has_a_fixture() {
             | EngineError::Command { .. }
             | EngineError::Wmi { .. }
             | EngineError::Internal { .. }
-            | EngineError::AlreadyRunning => {}
+            | EngineError::AlreadyRunning
+            | EngineError::PartlyApplied { .. } => {}
         }
     }
 }

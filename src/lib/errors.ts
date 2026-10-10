@@ -41,7 +41,13 @@ export function explain(error: EngineError): ErrorText {
         detail: error.sid,
       };
     case "registry":
-      return { title: "Windows refused a settings change.", hint: "Nothing was left half-done.", detail: `${error.path}: ${error.detail}` };
+      // Also a failed Undo, which may have put back some values: those still
+      // changed stay on the record, so pressing Undo again finishes it.
+      return {
+        title: "Windows refused a settings change.",
+        hint: "Anything it had changed was put back, or is still on PeakTweaks' record so Undo can put it back.",
+        detail: `${error.path}: ${error.detail}`,
+      };
     case "unsupported_value_type":
       return {
         title: "A setting is stored in a form PeakTweaks does not change.",
@@ -82,6 +88,12 @@ export function explain(error: EngineError): ErrorText {
       };
     case "internal":
       return { title: "Something went wrong inside PeakTweaks.", hint: "Try again. If it keeps happening, restart PeakTweaks.", detail: error.detail };
+    case "partly_applied":
+      return {
+        title: "This change was made only in part, and PeakTweaks could not put that part back.",
+        hint: "Press Undo on it, here or in Backups: PeakTweaks' record kept each part it changed.",
+        detail: `${error.tweakId}: ${error.detail}; putting it back: ${error.undoDetail}`,
+      };
     case "already_running":
       return {
         title: "PeakTweaks is already open.",

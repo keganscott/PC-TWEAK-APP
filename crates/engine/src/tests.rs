@@ -357,6 +357,36 @@ fn a_failed_apply_rolls_back_its_own_writes_and_returns_the_original_error() {
 }
 
 #[test]
+fn an_apply_that_cannot_be_put_back_says_so_and_undo_finishes_the_job() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1), ("B", 2), ("C", 3)])));
+    h.fake.set_external(Hive::LocalMachine, KEY, "A", dword(7));
+    let before = h.fake.snapshot();
+
+    // The second write fails, and so does putting the first one back.
+    h.fake.fail_mutations_from(2);
+    let err = h.engine.apply("t").unwrap_err();
+    let EngineError::PartlyApplied {
+        tweak_id,
+        detail,
+        undo_detail,
+    } = &err
+    else {
+        panic!("a partial apply is reported as one: {err:?}");
+    };
+    assert_eq!(tweak_id, "t");
+    assert!(detail.contains("injected failure"), "{detail}");
+    assert!(undo_detail.contains("injected failure"), "{undo_detail}");
+    assert!(err.to_string().contains("Undo can put it back"), "{err}");
+    assert_eq!(dw(&h, "A"), Some(1), "the first write is still in place");
+
+    // The record still has it as made, so Undo puts it back once Windows lets it.
+    h.fake.clear_faults();
+    assert_ne!(h.engine.list().unwrap()[0].state, TweakState::Default);
+    h.engine.revert("t").unwrap();
+    assert_eq!(h.fake.snapshot(), before, "registry back to how it was");
+}
+
+#[test]
 fn a_one_time_action_is_kept_in_the_history_and_undo_all_leaves_it_there() {
     let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
     h.engine.apply("t").unwrap();

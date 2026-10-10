@@ -442,6 +442,22 @@ impl<'a> Transaction<'a> {
         Ok(self.written)
     }
 
+    /// Roll back after the tweak's apply failed with `err`, and return the
+    /// error the caller should see: `err` itself, or `PartlyApplied` when
+    /// putting back failed too, so nobody is told nothing was left half-done
+    /// while its writes stay outstanding for Undo (audit I5).
+    pub fn abandon(self, err: EngineError) -> EngineError {
+        let tweak_id = self.tweak_id.clone();
+        match self.rollback() {
+            Ok(()) => err,
+            Err(undo) => EngineError::PartlyApplied {
+                tweak_id,
+                detail: err.to_string(),
+                undo_detail: undo.to_string(),
+            },
+        }
+    }
+
     /// Undo this transaction's own writes, newest first, straight from their
     /// journal records, then cancel them in the journal. If any undo fails the
     /// cancel is not written: the writes stay outstanding so a revert can retry.

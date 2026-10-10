@@ -41,4 +41,13 @@ describe("engine errors in plain words", () => {
     expect(win32(112).hint).toContain("disk space");
     expect(win32(87)).toMatchObject({ title: "A Windows call failed.", hint: null, detail: "RegSetValueExW (87): d" });
   });
+
+  it("says a change made only in part is on the record and Undo puts it back (audit I5)", () => {
+    const t = explain({ kind: "partly_applied", tweakId: "power.plan", detail: "registry HKLM\\X: denied", undoDetail: "registry HKLM\\X: denied" });
+    expect(t.title).toBe("This change was made only in part, and PeakTweaks could not put that part back.");
+    expect(t.hint).toContain("Press Undo");
+    expect(t.detail).toBe("power.plan: registry HKLM\\X: denied; putting it back: registry HKLM\\X: denied");
+    // A refused change never claims more than the record shows.
+    expect(explain({ kind: "registry", path: "HKLM\\X", value: null, detail: "d" }).hint).toContain("Undo");
+  });
 });

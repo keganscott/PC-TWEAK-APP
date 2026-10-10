@@ -358,6 +358,12 @@ export const engineErrors = [
   },
   {
     "kind": "already_running"
+  },
+  {
+    "kind": "partly_applied",
+    "tweakId": "t",
+    "detail": "d",
+    "undoDetail": "u"
   }
 ] satisfies EngineError[];
 

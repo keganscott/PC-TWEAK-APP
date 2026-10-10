@@ -640,13 +640,10 @@ impl Engine {
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
         let result = match tweak.apply(&mut tx) {
             Ok(()) => tx.commit(),
-            Err(e) => {
-                // Undo what this transaction already wrote. The original error
-                // is what the caller needs; if the undo itself fails the writes
-                // stay outstanding in the journal and Revert can retry.
-                let _ = tx.rollback();
-                Err(e)
-            }
+            // Undo what this transaction already wrote. The original error is
+            // what the caller needs; if the undo itself fails the writes stay
+            // outstanding in the journal, Revert can retry, and the error says so.
+            Err(e) => Err(tx.abandon(e)),
         };
         self.probe.invalidate();
         if result.is_ok() {
@@ -754,10 +751,7 @@ impl Engine {
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
         match tweak.apply(&mut tx) {
             Ok(()) => tx.commit().map(|_| ()),
-            Err(e) => {
-                let _ = tx.rollback();
-                Err(e)
-            }
+            Err(e) => Err(tx.abandon(e)),
         }
     }
 
@@ -825,10 +819,7 @@ impl Engine {
         let mut tx = Transaction::begin(tweak, resolver, journal, JournalAction::Apply)?;
         let result = match tweak.apply(&mut tx) {
             Ok(()) => tx.commit().map(|_| true),
-            Err(e) => {
-                let _ = tx.rollback();
-                Err(e)
-            }
+            Err(e) => Err(tx.abandon(e)),
         };
         self.probe.invalidate();
         result

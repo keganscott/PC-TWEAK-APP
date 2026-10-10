@@ -4,7 +4,7 @@
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import { engine, onPlay, onProgress, proof } from "../ipc";
+import { engine, onPlay, onProgress, onSettings, proof } from "../ipc";
 
 import type { AreaSize } from "../generated/AreaSize";
 import type { CleanupArea } from "../generated/CleanupArea";
@@ -71,6 +71,8 @@ export interface Backend {
   /** The game watcher (catalogue step 5): which game runs and what is in effect for it. */
   playStatus(): Promise<PlayStatus>;
   onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn>;
+  /** Settings saved from outside the window (the tray icon's Gaming Mode). */
+  onSettings(handler: (s: Settings) => void): Promise<UnlistenFn>;
 }
 
 export function isTauri(): boolean {
@@ -89,6 +91,7 @@ export function tauriBackend(): Backend {
     proofRuns: proof.runs,
     onProgress,
     onPlay,
+    onSettings,
   };
 }
 

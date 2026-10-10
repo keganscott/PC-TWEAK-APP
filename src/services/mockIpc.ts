@@ -469,5 +469,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       playListeners.add(handler);
       return () => playListeners.delete(handler);
     },
+    // The SAMPLE app has no tray icon, so nothing changes settings from outside.
+    onSettings: async (): Promise<UnlistenFn> => () => {},
   };
 }

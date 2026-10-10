@@ -393,7 +393,7 @@ function Recommended() {
             {all ? "Show fewer" : `Show all ${basic.length}`}
           </Button>
         )}
-        <LinkButton onClick={() => navigate("tools")}>Choose one by one in Tools</LinkButton>
+        <LinkButton onClick={() => navigate("tools")}>Competitive and Privacy presets, or one by one, in Tools</LinkButton>
       </div>
       {todo.length > 0 && !gateOpen && !checking && (
         <p className="mt-2 text-xs text-ink-muted">

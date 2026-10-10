@@ -1319,6 +1319,7 @@ export const playStatus = {
     "valorant",
     "cs2",
     "apex",
+    "arcraiders",
     "minecraft"
   ],
   "lastSession": {

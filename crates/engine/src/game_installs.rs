@@ -127,8 +127,8 @@ pub const STEAM_GAMES: &[(&str, &[u32])] = &[
     ("deltaforce", &[2_507_950]),
     ("battlefield6", &[2_807_960]),
     ("naraka", &[1_203_220]),
-    // From memory, not checked against the store API like the others: the
-    // proxy here refuses Steam (VERIFY, NOTES N113).
+    // Checked against its Steam store page (store.steampowered.com/app/1808500,
+    // 2026-10-10); the store API the others were checked against is refused here.
     ("arcraiders", &[1_808_500]),
 ];
 
@@ -325,7 +325,10 @@ fn newest_roblox_player(versions: &Path) -> Option<PathBuf> {
 
 /// True for the games whose program file is looked for (`program_file`).
 pub fn program_file_is_looked_for(game_id: &str) -> bool {
-    matches!(game_id, "fortnite" | "roblox" | "valorant" | "cs2" | "apex")
+    matches!(
+        game_id,
+        "fortnite" | "roblox" | "valorant" | "cs2" | "apex" | "arcraiders"
+    )
 }
 
 /// Why a looked-for program file is missing, for an unknown reading.
@@ -343,7 +346,9 @@ pub fn program_file_missing(install: &GameInstall) -> String {
 /// `FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe` under its
 /// install; Roblox's `RobloxPlayerBeta.exe` in the newest `Versions` folder;
 /// Valorant's `ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe`; CS2's
-/// `game\bin\win64\cs2.exe`; Apex's `r5apex.exe`, else `r5apex_dx12.exe`.
+/// `game\bin\win64\cs2.exe`; Apex's `r5apex.exe`, else `r5apex_dx12.exe`;
+/// ARC Raiders' `PioneerGame\Binaries\Win64\PioneerGame.exe` (Embark's
+/// support pages name the folder and "PioneerGame"; the extension is mine).
 pub fn program_file(game_id: &str, install_path: &str) -> Option<String> {
     let base = Path::new(install_path.trim());
     let under = |parts: &[&str]| {
@@ -355,6 +360,7 @@ pub fn program_file(game_id: &str, install_path: &str) -> Option<String> {
         "valorant" => under(&["ShooterGame", "Binaries", "Win64", "VALORANT-Win64-Shipping.exe"]),
         "cs2" => under(&["game", "bin", "win64", "cs2.exe"]),
         "apex" => under(&["r5apex.exe"]).or_else(|| under(&["r5apex_dx12.exe"])),
+        "arcraiders" => under(&["PioneerGame", "Binaries", "Win64", "PioneerGame.exe"]),
         _ => None,
     };
     found.map(|exe| windows_path(&exe.to_string_lossy()))
@@ -622,7 +628,12 @@ mod tests {
         assert!(program_file("valorant", &base)
             .unwrap()
             .ends_with(r"ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe"));
-        for g in ["valorant", "cs2", "apex"] {
+        assert_eq!(program_file("arcraiders", &base), None);
+        make(&["PioneerGame", "Binaries", "Win64", "PioneerGame.exe"]);
+        assert!(program_file("arcraiders", &base)
+            .unwrap()
+            .ends_with(r"PioneerGame\Binaries\Win64\PioneerGame.exe"));
+        for g in ["valorant", "cs2", "apex", "arcraiders"] {
             assert!(program_file_is_looked_for(g), "{g}");
         }
     }

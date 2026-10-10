@@ -516,7 +516,7 @@ describe("while you play (catalogue step 5)", () => {
   it("loads what the watcher sees after boot", async () => {
     const { store } = await play();
     expect(store.getState().play).toMatchObject({ game: null, gamingModeActive: false, timerHeld: null });
-    expect(store.getState().play?.watched).toEqual(["fortnite", "roblox", "valorant", "cs2", "apex", "minecraft"]);
+    expect(store.getState().play?.watched).toEqual(["fortnite", "roblox", "valorant", "cs2", "apex", "arcraiders", "minecraft"]);
   });
 
   it("follows the watcher's events: Gaming Mode on while a game runs, then the change record is read again", async () => {

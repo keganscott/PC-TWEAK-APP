@@ -316,7 +316,7 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
     const section = await screen.findByRole("region", { name: /While you play/ });
-    expect(await within(section).findByText("Watching for Fortnite, Roblox, Valorant, Counter-Strike 2, Apex Legends and Minecraft (Bedrock Edition).")).toBeTruthy();
+    expect(await within(section).findByText("Watching for Fortnite, Roblox, Valorant, Counter-Strike 2, Apex Legends, ARC Raiders and Minecraft (Bedrock Edition).")).toBeTruthy();
     expect((within(section).getByRole("switch", { name: "Gaming Mode" }) as HTMLInputElement).checked).toBe(false);
   });
 

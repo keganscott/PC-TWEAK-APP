@@ -256,11 +256,17 @@ pub const GAME_FACTS: &[GameFacts] = &[
         programs: &[],
         stable_path: false,
     },
+    // From Embark's own support pages (2026-10-10): "Easy Anti-Cheat (EAC)"
+    // (FAQ 160, updated 2026-02-04), and the application "PioneerGame" in
+    // `ArcRaiders\PioneerGame\Binaries\Win64` of the Steam library (FAQ 153,
+    // updated 2026-09-30). The page names it without its extension; `.exe` is
+    // mine (VERIFY on a PC, NOTES N113). Embark said in May 2026 it was testing
+    // another kernel-level anti-cheat; either way it has one.
     GameFacts {
         id: "arcraiders",
-        anti_cheat: &[AntiCheat::NotIdentified],
-        programs: &[],
-        stable_path: false,
+        anti_cheat: &[AntiCheat::EasyAntiCheat],
+        programs: &["PioneerGame.exe"],
+        stable_path: true,
     },
 ];
 

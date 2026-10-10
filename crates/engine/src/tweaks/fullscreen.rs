@@ -228,7 +228,7 @@ mod tests {
             .filter_map(|f| FullscreenOptimizations::for_game(f.id))
             .map(|t| t.game_id)
             .collect();
-        assert_eq!(ids, ["fortnite", "valorant", "cs2", "apex"]);
+        assert_eq!(ids, ["fortnite", "valorant", "cs2", "apex", "arcraiders"]);
         assert!(FullscreenOptimizations::for_game("roblox").is_none());
         assert!(FullscreenOptimizations::for_game("unknown").is_none());
     }

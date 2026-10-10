@@ -9,6 +9,7 @@ import type { Record as JournalRecord } from "../../generated/Record";
 import { explain } from "../../lib/errors";
 import { formatBytes, formatDateTime, formatDuration } from "../../lib/format";
 import { summaryText } from "../../lib/report";
+import { planSetup, readSetupCode, setupCode } from "../../lib/setupCode";
 import { describeEffect, describeItem, describeState } from "../../lib/systemItems";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge } from "../ui/primitives";
@@ -112,6 +113,8 @@ export function BackupsView() {
             </ul>
           )}
         </Card>
+
+        <CopySetup />
 
         <Card aria-labelledby="points-title">
           <div className="flex items-center gap-2">
@@ -232,6 +235,125 @@ const KIND_NOTE: Record<ChangeKind, string | null> = {
   internal: "Made by PeakTweaks so it can create a restore point when you ask, even if Windows made one in the last day.",
   retired: "This version of PeakTweaks no longer includes this change, so Undo may not be able to put it back.",
 };
+
+/** Game plan new idea 7: this PC's applied changes as a text to paste into
+ * PeakTweaks on another PC, and the other way round (`lib/setupCode.ts`). */
+function CopySetup() {
+  const tweaks = useStore((s) => s.tweaks);
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
+  const applying = useStore((s) => s.applyManyOp.status === "running");
+  const { applyMany } = useActions();
+  const [copied, setCopied] = useState<boolean | string | null>(null);
+  const [pasted, setPasted] = useState("");
+  const [read, setRead] = useState<ReturnType<typeof readSetupCode> | null>(null);
+  const mine = tweaks.filter((t) => t.state.status === "applied").length;
+  const plan = read && "ids" in read ? planSetup(read.ids, tweaks) : null;
+
+  const copy = async () => {
+    const text = setupCode(tweaks);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      setCopied(text);
+    }
+  };
+  const names = (list: { name: string }[]) => list.map((t) => t.name).join(", ");
+
+  return (
+    <Card aria-labelledby="setup-title">
+      <h2 id="setup-title" className="font-extrabold tracking-tight">
+        Copy this setup to another PC
+      </h2>
+      <p className="mt-2 text-sm text-ink-muted">
+        Copy a short text that lists the changes PeakTweaks applied here, then paste it into PeakTweaks on the other PC.
+        Nothing is sent anywhere, and the other PC checks each change against its own list before offering it.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button
+          icon={copied === true ? <Check aria-hidden className="size-4" /> : <ClipboardCopy aria-hidden className="size-4" />}
+          disabled={mine === 0}
+          onClick={() => void copy()}
+        >
+          {copied === true ? "Copied" : `Copy setup (${mine})`}
+        </Button>
+        {mine === 0 && <p className="text-sm text-ink-faint">No change PeakTweaks applied is in effect here yet.</p>}
+      </div>
+      {typeof copied === "string" && (
+        <textarea
+          readOnly
+          aria-label="This PC's setup"
+          className="mt-3 h-20 w-full rounded-lg border border-line bg-transparent p-2 font-mono text-xs"
+          value={copied}
+          onFocus={(e) => e.currentTarget.select()}
+        />
+      )}
+
+      <label htmlFor="setup-paste" className="mt-5 block text-sm font-medium">
+        Paste a setup from another PC
+      </label>
+      <textarea
+        id="setup-paste"
+        value={pasted}
+        onChange={(e) => {
+          setPasted(e.target.value);
+          setRead(null);
+        }}
+        className="mt-2 h-20 w-full rounded-lg border border-line bg-surface-0 p-2 font-mono text-xs"
+      />
+      <div className="mt-2">
+        <Button variant="ghost" disabled={!pasted.trim()} onClick={() => setRead(readSetupCode(pasted))}>
+          Check it
+        </Button>
+      </div>
+      {read && "problem" in read && (
+        <div className="mt-3">
+          <Callout tone="warn" title={read.problem} />
+        </div>
+      )}
+      {plan && (
+        <div className="mt-3 flex flex-col gap-2 text-sm" role="status">
+          {plan.apply.length > 0 ? (
+            <div>
+              <p>
+                <span className="font-bold">Can be applied here ({plan.apply.length}):</span> {names(plan.apply)}.
+              </p>
+              <div className="mt-2">
+                <Button
+                  variant="primary"
+                  busy={applying}
+                  disabled={gateOpen === false}
+                  onClick={() => void applyMany(plan.apply.map((t) => t.id))}
+                >
+                  {plan.apply.length === 1 ? "Apply 1 change" : `Apply ${plan.apply.length} changes`}
+                </Button>
+                {gateOpen === false && <p className="mt-1 text-ink-muted">Make a restore point first, on Home.</p>}
+              </div>
+            </div>
+          ) : (
+            <p>Nothing in it is left to apply here.</p>
+          )}
+          {plan.yourself.length > 0 && (
+            <p>
+              <span className="font-bold">Apply these yourself in Tools ({plan.yourself.length}):</span>{" "}
+              {names(plan.yourself)}. Each has something to read first, or a reason Tools explains.
+            </p>
+          )}
+          {plan.already.length > 0 && (
+            <p className="text-ink-muted">
+              Already in place here ({plan.already.length}): {names(plan.already)}.
+            </p>
+          )}
+          {plan.notHere.length > 0 && (
+            <p className="text-ink-muted">
+              Not available on this PC ({plan.notHere.length}): {plan.notHere.join(", ")}.
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function AppliedRow({ change, technical }: { change: AppliedChange; technical: boolean }) {
   const id = change.tweakId;

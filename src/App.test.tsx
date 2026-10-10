@@ -926,6 +926,35 @@ describe("review regressions", () => {
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ restartCheckSeenBoot: fx.contextInfo.bootedUnixMs }));
   });
 
+  it("Backups copies this PC's setup as text and applies a pasted one after checking it against this PC", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const backend = createMockBackend({ gateOpen: true });
+    const apply = vi.spyOn(backend, "applyTweak");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    const card = screen.getByRole("heading", { name: "Copy this setup to another PC" }).closest("section, div") as HTMLElement;
+    await userEvent.click(within(card).getByRole("button", { name: /^Copy setup/ }));
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({ "peaktweaks-setup": 1, changes: ["fixture.applied"] });
+
+    const paste = within(card).getByLabelText("Paste a setup from another PC");
+    await userEvent.type(paste, "not a setup");
+    await userEvent.click(within(card).getByRole("button", { name: "Check it" }));
+    expect(within(card).getByText("That is not a setup copied from PeakTweaks.")).toBeTruthy();
+
+    await userEvent.clear(paste);
+    await userEvent.click(paste);
+    await userEvent.paste('{"peaktweaks-setup":1,"changes":["fixture.default","fixture.applied","only.elsewhere"]}');
+    await userEvent.click(within(card).getByRole("button", { name: "Check it" }));
+    expect(within(card).getByText(/^Already in place here \(1\)/)).toBeTruthy();
+    expect(within(card).getByText("Not available on this PC (1): only.elsewhere.")).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Apply 1 change" }));
+    expect(apply).toHaveBeenCalledWith("fixture.default");
+    expect(await within(card).findByText("Nothing in it is left to apply here.")).toBeTruthy();
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  });
+
   it("Backups lists the change PeakTweaks makes for a restore point, and Undo all covers it", async () => {
     renderApp(createMockBackend({ gateOpen: false }));
     await userEvent.click(await screen.findByRole("button", { name: "Make a restore point" }));

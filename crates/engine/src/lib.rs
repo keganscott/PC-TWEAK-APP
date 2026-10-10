@@ -6,6 +6,7 @@
 
 pub mod adlx;
 pub mod background;
+pub mod boot;
 pub mod cleanup;
 pub mod context;
 pub mod drive_optimize;

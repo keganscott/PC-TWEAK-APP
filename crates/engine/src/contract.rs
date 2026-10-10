@@ -708,6 +708,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             is_self: false,
             elevated: true,
             tester_build: false,
+            booted_unix_ms: Some(1_700_000_100_000),
         },
     );
     ts_const(

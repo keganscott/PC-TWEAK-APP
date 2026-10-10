@@ -41,6 +41,9 @@ pub struct ContextInfo {
     /// A tester build (`License::tester`): every plan is unlocked for testing,
     /// nothing else differs. The UI says so on every screen.
     pub tester_build: bool,
+    /// When Windows last started (Unix ms; `boot.rs`), for the check after a
+    /// restart on Home. Moves by a few milliseconds between reads.
+    pub booted_unix_ms: Option<u64>,
 }
 
 /// One Gaming Mode change when a game started (`Engine::start_play_session`).
@@ -282,6 +285,7 @@ impl Engine {
             is_self: u.is_self,
             elevated: self.resolver.elevated(),
             tester_build: self.license.is_tester(),
+            booted_unix_ms: crate::boot::booted_unix_ms(),
         }
     }
 

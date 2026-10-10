@@ -900,6 +900,32 @@ describe("review regressions", () => {
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ remindersOff: true }));
   });
 
+  it("after a restart, Home says whether the changes are still in place and names those that waited for it", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    const save = vi.spyOn(base, "setSettings");
+    // Sample setting B waits for a restart and was applied before the sample PC's last start.
+    const waits = (list: Awaited<ReturnType<Backend["listTweaks"]>>) =>
+      list.map((t) => (t.id === "fixture.applied" ? { ...t, requiresReboot: true } : t));
+    const appliedBefore = async () => {
+      const j = await base.listJournal();
+      const write = j.records.find((r) => r.record === "write")!;
+      return { ...j, records: [...j.records, { ...write, tweakId: "fixture.applied", unixMs: fx.contextInfo.bootedUnixMs! - 60_000 }] };
+    };
+    renderApp({
+      ...base,
+      listTweaks: async () => waits(await base.listTweaks()),
+      rescan: async () => waits(await base.rescan()),
+      listJournal: appliedBefore,
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const check = await screen.findByRole("region", { name: "After the restart" });
+    expect(within(check).getByText(/^Windows restarted, and/)).toBeTruthy();
+    expect(within(check).getByText("This change waited for the restart: Sample setting B.")).toBeTruthy();
+    await userEvent.click(within(check).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "After the restart" })).toBeNull());
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ restartCheckSeenBoot: fx.contextInfo.bootedUnixMs }));
+  });
+
   it("Backups lists the change PeakTweaks makes for a restore point, and Undo all covers it", async () => {
     renderApp(createMockBackend({ gateOpen: false }));
     await userEvent.click(await screen.findByRole("button", { name: "Make a restore point" }));

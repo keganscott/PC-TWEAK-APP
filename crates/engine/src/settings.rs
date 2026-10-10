@@ -2,7 +2,8 @@
 //! (plan 6.1: "User can override"), the plain/technical wording (plan
 //! section 7), whether the first-run welcome was seen, the two "while you
 //! play" switches (Gaming Mode, game timer) and the gentle reminders on Home
-//! (on or off, and how long each "Not now" lasts). Stored as `settings.json`
+//! (on or off, and how long each "Not now" lasts), and which restart's check
+//! was already seen. Stored as `settings.json`
 //! in the protected data directory.
 //!
 //! Settings are preferences only. They change defaults, copy and what happens
@@ -59,6 +60,9 @@ pub struct Settings {
     /// "Not now" on the graphics driver reminder: not shown again before
     /// this time (Unix ms).
     pub driver_reminder_snoozed_until: Option<u64>,
+    /// The Windows start (Unix ms, `boot.rs`) whose check after a restart
+    /// was closed on Home, so it is shown once per restart.
+    pub restart_check_seen_boot: Option<u64>,
 }
 
 /// Where settings live. `None` (tests, dev) keeps them in memory only.
@@ -134,6 +138,7 @@ mod tests {
             reminders_off: true,
             cleanup_reminder_snoozed_until: Some(1_760_000_000_000),
             driver_reminder_snoozed_until: None,
+            restart_check_seen_boot: Some(1_760_000_000_500),
         };
         store(dir.path()).save(&s).unwrap();
         assert_eq!(store(dir.path()).load(), s);

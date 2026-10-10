@@ -141,7 +141,8 @@ export const contextInfo = {
   "resolution": "interactive_shell",
   "isSelf": false,
   "elevated": true,
-  "testerBuild": false
+  "testerBuild": false,
+  "bootedUnixMs": 1700000100000
 } satisfies ContextInfo;
 
 export const revertResults = [
@@ -1012,7 +1013,8 @@ export const systemAudit = {
     "gameTimer": false,
     "remindersOff": false,
     "cleanupReminderSnoozedUntil": null,
-    "driverReminderSnoozedUntil": null
+    "driverReminderSnoozedUntil": null,
+    "restartCheckSeenBoot": null
   },
   "effectiveRigClass": "mid"
 } satisfies SystemAudit;

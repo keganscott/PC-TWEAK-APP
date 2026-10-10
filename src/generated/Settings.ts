@@ -36,4 +36,9 @@ cleanupReminderSnoozedUntil: number | null,
  * "Not now" on the graphics driver reminder: not shown again before
  * this time (Unix ms).
  */
-driverReminderSnoozedUntil: number | null, };
+driverReminderSnoozedUntil: number | null, 
+/**
+ * The Windows start (Unix ms, `boot.rs`) whose check after a restart
+ * was closed on Home, so it is shown once per restart.
+ */
+restartCheckSeenBoot: number | null, };

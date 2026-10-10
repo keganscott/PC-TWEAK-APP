@@ -6,4 +6,9 @@ export type ContextInfo = { sid: string, resolution: UserResolution, isSelf: boo
  * A tester build (`License::tester`): every plan is unlocked for testing,
  * nothing else differs. The UI says so on every screen.
  */
-testerBuild: boolean, };
+testerBuild: boolean, 
+/**
+ * When Windows last started (Unix ms; `boot.rs`), for the check after a
+ * restart on Home. Moves by a few milliseconds between reads.
+ */
+bootedUnixMs: number | null, };

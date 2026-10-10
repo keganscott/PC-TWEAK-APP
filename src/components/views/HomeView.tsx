@@ -23,6 +23,7 @@ import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
 import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
+import { restartCheck } from "../../lib/restartCheck";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
@@ -56,6 +57,7 @@ export function HomeView() {
       {auditOp.status === "failed" && <ErrorCallout text={explain(auditOp.error)} technical={technical} />}
       <LastChange />
       <DriftCheck />
+      <AfterRestart />
       <Reminders />
       <section aria-label="Safety and next step" className="grid gap-3.5 lg:grid-cols-[1.5fr_1fr] print:hidden">
         <NextStep />
@@ -920,6 +922,58 @@ function DriftCheck() {
         {again.length > 0 && !gateOpen && (
           <p className="mt-1.5 text-ink-muted">Make a restore point first, in the step below.</p>
         )}
+      </Callout>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The check after a restart
+// ---------------------------------------------------------------------------
+
+const names = (list: { name: string }[]) => list.map((c) => c.name).join(", ");
+
+function AfterRestart() {
+  const context = useStore((s) => s.context);
+  const settings = useStore((s) => s.settings);
+  const tweaks = useStore((s) => s.tweaks);
+  const journal = useStore((s) => s.journal);
+  const saving = useStore((s) => s.settingsOp.status === "running");
+  const { saveSettings } = useActions();
+  const navigate = useNavigate();
+  const check = restartCheck(context, settings, tweaks, journal);
+  if (!check || !settings) return null;
+
+  const fine = check.setBack.length === 0 && check.unreadable.length === 0;
+  const one = check.waited.length === 1;
+  return (
+    <section aria-label="After the restart" className="print:hidden">
+      <Callout
+        tone={fine ? "ok" : "warn"}
+        title={
+          fine
+            ? "Windows restarted, and every change PeakTweaks made is still in place."
+            : "Windows restarted, and not every change PeakTweaks made is as it left it."
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button busy={saving} onClick={() => void saveSettings({ ...settings, restartCheckSeenBoot: check.booted })}>
+              Got it
+            </Button>
+            <Button variant="ghost" onClick={() => navigate("backups")}>
+              Open Backups
+            </Button>
+          </div>
+        }
+      >
+        <p>
+          {one ? "This change" : "These changes"} waited for the restart: {names(check.waited)}.
+        </p>
+        {check.setBack.length > 0 && <p className="mt-1.5">Set back since: {names(check.setBack)}.</p>}
+        {check.unreadable.length > 0 && <p className="mt-1.5">Could not be read now: {names(check.unreadable)}.</p>}
+        <p className="mt-1.5 text-ink-muted">
+          If something does not work as it did before, undo {one ? "it" : "these"} first, in Backups, then restart again.
+        </p>
       </Callout>
     </section>
   );

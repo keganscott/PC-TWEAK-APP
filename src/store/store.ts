@@ -75,6 +75,8 @@ export interface ProofState {
   capturingSession: string | null;
   /** Setting or stopping "Record while I play"; what is set shows in `play.autoRecord`. */
   autoOp: Op<AutoRecordStatus | null>;
+  /** The comparison Proof should open on (set from a Games card), until it does. */
+  focus: string | null;
   /** The last failure to load sessions or runs, until a load succeeds. */
   loadError: EngineError | null;
 }
@@ -114,6 +116,8 @@ export interface State {
   netcheckOp: Op<NetworkCheck>;
   /** "Play" on a game found in a Steam library, per game id. */
   launchOps: Readonly<Record<string, Op>>;
+  /** "Record my next games" per game: the comparison set to record. */
+  measureOps: Readonly<Record<string, Op<string>>>;
   /** The driver tool's "Open ... driver page" buttons. */
   driverPageOp: Op;
   /** The driver tool's clean install; `null` when the file dialog was cancelled. */
@@ -165,10 +169,11 @@ export function initialState(sample: boolean): State {
     driveOp: IDLE,
     netcheckOp: IDLE,
     launchOps: {},
+    measureOps: {},
     driverPageOp: IDLE,
     driverInstallOp: IDLE,
     lastChange: null,
-    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, autoOp: IDLE, loadError: null },
+    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, autoOp: IDLE, focus: null, loadError: null },
     play: null,
     forgetHistoryOp: IDLE,
     startup: null,
@@ -237,6 +242,9 @@ export function driftedTweaks(tweaks: readonly TweakView[]): { all: TweakView[];
 /** Look-and-feel changes: one click each in Tools, never part of a one-click
  * set, so the safe set never changes how someone's desktop looks. */
 export const APPEARANCE = "appearance";
+
+/** Runs a side gets from "Record while I play" (`proof/auto.rs` `AUTO_RUNS`). */
+export const AUTO_RUNS = 3;
 
 /** Long work the engine runs one at a time (`Activity` in commands.rs). */
 export type LongWork = "proof" | "cleanup" | "drive" | "driver";
@@ -629,6 +637,48 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       } catch (e) {
         put(failed(e));
       }
+    },
+
+    /** "Record my next games" from a Games card: the newest comparison for
+     * the game found here with a side still short of runs (else a new one) is
+     * set to record while playing, and Proof opens on it. Returns its id, or
+     * null when that failed (the op keeps why). */
+    async measureGame(gameId: string): Promise<string | null> {
+      const path = state.audit?.env.gameInstalls?.find((i) => i.gameId === gameId)?.exe;
+      if (!path || state.measureOps[gameId]?.status === "running") return null;
+      const exe = path.slice(path.lastIndexOf("\\") + 1);
+      const put = (op: Op<string>) => set((s) => ({ ...s, measureOps: { ...s.measureOps, [gameId]: op } }));
+      put(RUNNING);
+      try {
+        const room = (await backend.proofSessions())
+          .filter((c) => c.session.gameId === gameId && c.session.exe.toLowerCase() === exe.toLowerCase())
+          .filter((c) => c.beforeRuns < AUTO_RUNS || c.afterRuns < AUTO_RUNS)
+          .sort((a, b) => b.session.createdUnixMs - a.session.createdUnixMs)[0];
+        const sessionId = room?.session.sessionId ?? (await backend.proofBegin(exe, gameId, null)).sessionId;
+        const side: Side = room && room.beforeRuns >= AUTO_RUNS ? "after" : "before";
+        const current = tag("play");
+        const status = await backend.proofAutoRecord(sessionId, side);
+        if (current()) set((s) => (s.play ? { ...s, play: { ...s.play, autoRecord: status } } : s));
+        // Proof opens with the comparison already in its list.
+        await actions.loadSessions();
+        setProof({ focus: sessionId });
+        put({ status: "done", value: sessionId });
+        return sessionId;
+      } catch (e) {
+        put(failed(e));
+        void actions.loadSessions();
+        return null;
+      }
+    },
+
+    /** Ask Proof to open on this comparison (the next time it shows). */
+    showComparison(sessionId: string) {
+      setProof({ focus: sessionId });
+    },
+
+    /** Proof opened the comparison it was asked to. */
+    clearProofFocus() {
+      if (state.proof.focus !== null) setProof({ focus: null });
     },
 
     /** Open the card maker's driver page in the user's browser. Changes nothing. */

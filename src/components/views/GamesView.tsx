@@ -1,4 +1,4 @@
-import { Check, Cpu, Layers, Play, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Check, Cpu, Gamepad2, Layers, Play, ShieldCheck, type LucideIcon } from "lucide-react";
 
 import type { GameGpuChoice } from "../../generated/GameGpuChoice";
 import type { GameInstall } from "../../generated/GameInstall";
@@ -13,6 +13,7 @@ import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { playedReports, reportSummary } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
+import { useNavigate } from "../shell/nav";
 import { GameArt } from "./GameArt";
 import { GameSearch } from "./GameSearch";
 import { Button, Card, cx, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
@@ -339,6 +340,7 @@ function GameCard({
               {install ? installText(install) : "Not found in the places PeakTweaks looks."}
             </p>
           )}
+          {install?.exe && <MeasureRow gameId={readiness.gameId} name={name} technical={technical} />}
           {steam && (
             <p className="mt-2 text-xs text-ink-faint" role="status">
               {launchOp?.status === "running"
@@ -391,6 +393,58 @@ function GameCard({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * "Record my next games" (`proof/auto.rs`): one click sets a Proof
+ * comparison for this game to record by itself while it is played, and opens
+ * Proof on it. Shown for a game found here that the game watcher looks for.
+ */
+function MeasureRow({ gameId, name, technical }: { gameId: string; name: string; technical: boolean }) {
+  const auto = useStore((s) => s.play?.autoRecord ?? null);
+  const watched = useStore((s) => s.play?.watched);
+  const op = useStore((s) => s.measureOps[gameId]);
+  const { measureGame, showComparison } = useActions();
+  const navigate = useNavigate();
+  if (!watched?.includes(gameId)) return null;
+  const mine = auto?.gameId === gameId ? auto : null;
+  return (
+    <div className="mt-3 rounded-xl border border-violet/30 bg-violet/5 p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Gamepad2 aria-hidden className="size-4 shrink-0 text-violet" />
+        <p className="min-w-0 flex-1 text-sm" role="status">
+          {mine
+            ? mine.recordingNow
+              ? `Proof is recording sample ${mine.recorded + 1} of ${mine.wanted} of ${name} now, for the ${mine.side} side.`
+              : `Proof records ${name} while you play: ${mine.recorded} of ${mine.wanted} runs on the ${mine.side} side so far.`
+            : `Proof can record ${name} by itself while you play, for a before and after on this PC.`}
+        </p>
+        {mine ? (
+          <Button
+            onClick={() => {
+              showComparison(mine.sessionId);
+              navigate("proof");
+            }}
+          >
+            Open Proof
+          </Button>
+        ) : (
+          <Button
+            busy={op?.status === "running"}
+            onClick={() => void measureGame(gameId).then((id) => id && navigate("proof"))}
+            icon={<Gamepad2 aria-hidden className="size-4" />}
+          >
+            Record my next games
+          </Button>
+        )}
+      </div>
+      {op?.status === "failed" && (
+        <div className="mt-2">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
+    </div>
   );
 }
 

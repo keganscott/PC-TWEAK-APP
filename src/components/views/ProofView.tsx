@@ -9,7 +9,7 @@ import { explain } from "../../lib/errors";
 import { formatDateTime, formatNumber, formatTime } from "../../lib/format";
 import { comparisonText } from "../../lib/report";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { otherLongWork } from "../../store/store";
+import { AUTO_RUNS, otherLongWork } from "../../store/store";
 import { useNavigate } from "../shell/nav";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, Spinner, cx } from "../ui/primitives";
 
@@ -24,13 +24,22 @@ export function ProofView() {
   const sessions = useStore((s) => s.proof.sessions);
   const loadError = useStore((s) => s.proof.loadError);
   const technical = useTechnical();
-  const [selected, setSelected] = useState<string | null>(null);
+  const focus = useStore((s) => s.proof.focus);
+  const [selected, setSelected] = useState<string | null>(focus);
   const [creating, setCreating] = useState(false);
-  const { loadSessions } = useActions();
+  const { loadSessions, clearProofFocus } = useActions();
 
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  // Opened from a Games card on the comparison it set to record.
+  useEffect(() => {
+    if (focus === null) return;
+    setSelected(focus);
+    setCreating(false);
+    clearProofFocus();
+  }, [focus, clearProofFocus]);
 
   const current = sessions.find((s) => s.session.sessionId === selected) ?? null;
 
@@ -448,7 +457,7 @@ function AutoRecordCard({
   const gameName = (id: string) => games.find((g) => g.id === id)?.name ?? id;
   const game = gameName(session.gameId);
   const mine = auto?.sessionId === session.sessionId ? auto : null;
-  const side: Side | null = before < SUGGESTED_RUNS ? "before" : after < SUGGESTED_RUNS ? "after" : null;
+  const side: Side | null = before < AUTO_RUNS ? "before" : after < AUTO_RUNS ? "after" : null;
   const busy = op.status === "running";
 
   return (
@@ -486,7 +495,7 @@ function AutoRecordCard({
         <div className="mt-2 flex flex-col gap-2 text-sm text-ink-muted">
           <p>
             PeakTweaks records the {side} side by itself the next time you play {game}: a 30-second sample 2 minutes in,
-            then one every 3 minutes while {game} is the window in front, until the side has {SUGGESTED_RUNS} runs. The
+            then one every 3 minutes while {game} is the window in front, until the side has {AUTO_RUNS} runs. The
             game can close in between; recording carries on next time.
           </p>
           <p className="text-xs text-ink-faint">

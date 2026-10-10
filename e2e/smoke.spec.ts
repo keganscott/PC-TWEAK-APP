@@ -140,6 +140,17 @@ test("a comparison set to record while playing says so and passes an accessibili
   await expect(card.getByRole("button", { name: "Record the before side while I play" })).toBeVisible();
 });
 
+test("a Games card sets its game to record for Proof and opens Proof at the top", async ({ page }) => {
+  await open(page);
+  await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /^Games/ }).click();
+  const fortnite = page.locator("li").filter({ has: page.getByRole("heading", { name: "Fortnite", level: 3 }) });
+  await fortnite.getByRole("button", { name: "Record my next games" }).click();
+  await expect(page.getByRole("heading", { name: "Proof", level: 1 })).toBeInViewport();
+  const card = page.getByRole("region", { name: "Record while you play" });
+  await expect(card.getByText("0 of 3 runs on the before side so far.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeVisible();
+});
+
 test("settings switch to technical wording and show registry targets", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Settings" }).click();

@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChartColumn, Gamepad2, History, LayoutGrid, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 
 import { explain } from "../../lib/errors";
@@ -42,6 +42,13 @@ export function AppShell({
 }) {
   const [busOpen, setBusOpen] = useState(false);
   const toggleBus = useCallback(() => setBusOpen((o) => !o), []);
+  // Each view opens at its top: the scrolling box is shared, so without this
+  // a view opened from far down another (a Games card's "Record my next
+  // games") would open part way down.
+  const main = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0;
+  }, [view]);
   return (
     <NavContext.Provider value={onNavigate}>
       <div className="flex h-full print:block print:h-auto">
@@ -80,7 +87,7 @@ export function AppShell({
               label far down a long view made the whole page taller than the
               window and the page itself scrolled, cutting off the top bar
               and leaving black space at the bottom of a maximised window. */}
-          <main className="scrollbar-quiet relative min-h-0 flex-1 overflow-y-auto px-9 pt-2 pb-10 print:overflow-visible print:p-0">
+          <main ref={main} className="scrollbar-quiet relative min-h-0 flex-1 overflow-y-auto px-9 pt-2 pb-10 print:overflow-visible print:p-0">
             {/* Centred, and wide enough to use a maximised window on a large
                 screen; each view widens at 2xl rather than staying a narrow
                 column with black beside it. */}

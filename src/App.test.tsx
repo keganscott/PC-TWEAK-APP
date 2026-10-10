@@ -1155,6 +1155,28 @@ describe("review regressions", () => {
     expect(await within(card).findByRole("button", { name: "Record the before side while I play" })).toBeTruthy();
   });
 
+  it("a Games card sets its game to record for Proof in one click and opens Proof on it", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const heading = (await screen.findAllByRole("heading", { level: 3 })).find((h) => h.textContent === "Fortnite")!;
+    const fortnite = () => heading.closest("li") as HTMLElement;
+    expect(within(fortnite()).getByText("Proof can record Fortnite by itself while you play, for a before and after on this PC.")).toBeTruthy();
+    await userEvent.click(within(fortnite()).getByRole("button", { name: "Record my next games" }));
+
+    await screen.findByRole("heading", { name: "Proof", level: 1 });
+    const card = await screen.findByRole("region", { name: "Record while you play" });
+    expect(await within(card).findByText("0 of 3 runs on the before side so far.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeTruthy();
+
+    await goTo("Games");
+    const again = (await screen.findAllByRole("heading", { level: 3 })).find((h) => h.textContent === "Fortnite")!;
+    const row = again.closest("li") as HTMLElement;
+    expect(within(row).getByText("Proof records Fortnite while you play: 0 of 3 runs on the before side so far.")).toBeTruthy();
+    await userEvent.click(within(row).getByRole("button", { name: "Open Proof" }));
+    expect(await screen.findByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeTruthy();
+  });
+
   it("recording while playing is offered only for a game PeakTweaks watches for", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

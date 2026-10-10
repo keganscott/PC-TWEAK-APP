@@ -723,6 +723,27 @@ describe("record while I play (proof/auto.rs)", () => {
     expect(store.getState().play?.autoRecord).toBeNull();
   });
 
+  it("a Games card reuses the game's comparison while a side has room, then starts a new one", async () => {
+    const { store } = await booted({ gateOpen: true });
+    const first = await store.actions.measureGame("fortnite");
+    expect(store.getState().proof.focus).toBe(first);
+    expect(store.getState().play?.autoRecord).toMatchObject({ sessionId: first, side: "before", recorded: 0 });
+    expect(await store.actions.measureGame("fortnite")).toBe(first);
+
+    for (let i = 0; i < 3; i += 1) await store.actions.capture(first!, "before", 30, 0);
+    expect(await store.actions.measureGame("fortnite")).toBe(first);
+    expect(store.getState().play?.autoRecord).toMatchObject({ sessionId: first, side: "after" });
+
+    for (let i = 0; i < 3; i += 1) await store.actions.capture(first!, "after", 30, 0);
+    const second = await store.actions.measureGame("fortnite");
+    expect(second).not.toBe(first);
+    expect(store.getState().play?.autoRecord).toMatchObject({ sessionId: second, side: "before" });
+    store.actions.clearProofFocus();
+    expect(store.getState().proof.focus).toBeNull();
+    // A game not found on this PC has no program to record.
+    expect(await store.actions.measureGame("minecraft")).toBeNull();
+  });
+
   it("a sample the watcher took reads the runs again and drops the old result", async () => {
     const { store, backend, send } = await watched();
     await store.actions.compare(SEEDED);

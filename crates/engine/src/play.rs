@@ -27,6 +27,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::live::CpuTimes;
+use crate::memory::MemoryUse;
 use crate::probe::Probe;
 use crate::proof::nvml::{GpuLive, ThrottleReason, ThrottleSummary, ThrottleTally};
 
@@ -370,6 +372,60 @@ pub struct PlayReport {
     /// Why a temperature was not read in some looks or on some card, when
     /// `gpu_hottest_c` is yes from the others.
     pub temperature_missed: Option<String>,
+    /// How busy the graphics card was, on average over the readings: the
+    /// busiest card's share of each sample period with work running, 0-100.
+    #[serde(default = "not_recorded")]
+    pub gpu_busy_average: Probe<u32>,
+    /// How busy the processor was, on average between readings, across all
+    /// cores, 0-100 (the same measure as Home's live reading).
+    #[serde(default = "not_recorded")]
+    pub cpu_busy_average: Probe<u32>,
+    /// The reading with the least memory available while the game ran.
+    #[serde(default = "not_recorded")]
+    pub memory_peak: Probe<MemoryUse>,
+}
+
+/// A reading a report kept before this version did not take.
+pub(crate) fn not_recorded<T>() -> Probe<T> {
+    Probe::unknown("this reading was not taken by the PeakTweaks version that watched the game")
+}
+
+/// One look's readings while a game runs, for `PlayReports::look`.
+pub struct PlayLook {
+    pub reasons: Probe<Vec<ThrottleReason>>,
+    pub gpus: Probe<Vec<GpuLive>>,
+    pub cpu_times: Probe<CpuTimes>,
+    pub memory: Probe<MemoryUse>,
+}
+
+/// A mean of whole percentages, with the first reason one could not be read.
+#[derive(Default)]
+struct Mean {
+    sum: u64,
+    count: u64,
+    problem: Option<String>,
+}
+
+impl Mean {
+    fn add(&mut self, value: Probe<u32>) {
+        match value {
+            Probe::Yes { value } => {
+                self.sum += u64::from(value);
+                self.count += 1;
+            }
+            Probe::No { reason } | Probe::Unknown { reason } => {
+                self.problem.get_or_insert(reason);
+            }
+        }
+    }
+
+    fn finish(self, none: &str) -> Probe<u32> {
+        match (self.count, self.problem) {
+            (0, Some(reason)) => Probe::unknown(reason),
+            (0, None) => Probe::unknown(none),
+            (n, _) => Probe::yes(((self.sum + n / 2) / n) as u32),
+        }
+    }
 }
 
 /// Builds a `PlayReport` from one reading per look while a game runs.
@@ -386,6 +442,13 @@ pub struct PlayTally {
     no_gpu: Option<String>,
     /// Why a temperature could not be read.
     temperature_problem: Option<String>,
+    gpu_busy: Mean,
+    cpu_busy: Mean,
+    /// The processor's times at the last reading, to measure the next one
+    /// against.
+    cpu_before: Option<CpuTimes>,
+    memory_peak: Option<MemoryUse>,
+    memory_problem: Option<String>,
 }
 
 impl PlayTally {
@@ -420,6 +483,19 @@ impl PlayTally {
         self.throttle.add(reasons);
         match gpus {
             Probe::Yes { value } => {
+                // The busiest card: on a laptop with two, the one the game uses.
+                let busy = value
+                    .iter()
+                    .filter_map(|g| match g.busy_percent {
+                        Probe::Yes { value } => Some(value),
+                        _ => None,
+                    })
+                    .max();
+                match (busy, value.first()) {
+                    (Some(b), _) => self.gpu_busy.add(Probe::yes(b)),
+                    (None, Some(g)) => self.gpu_busy.add(g.busy_percent.clone()),
+                    (None, None) => {}
+                }
                 for gpu in value {
                     match gpu.temperature_c {
                         Probe::Yes { value } => self.hottest = Some(self.hottest.map_or(value, |h| h.max(value))),
@@ -433,7 +509,40 @@ impl PlayTally {
                 self.no_gpu.get_or_insert(reason);
             }
             Probe::Unknown { reason } => {
+                self.gpu_busy.add(Probe::unknown(reason.clone()));
                 self.temperature_problem.get_or_insert(reason);
+            }
+        }
+    }
+
+    /// The processor's times and memory use at the same look. The processor
+    /// is measured between two looks, so the first gives no figure.
+    pub fn add_machine(&mut self, cpu_times: Probe<CpuTimes>, memory: Probe<MemoryUse>) {
+        match cpu_times {
+            Probe::Yes { value } => {
+                if let Some(before) = self.cpu_before.replace(value) {
+                    self.cpu_busy.add(match crate::live::busy_percent(before, value) {
+                        Some(p) => Probe::yes(p),
+                        None => Probe::unknown("the processor times did not move forward"),
+                    });
+                }
+            }
+            Probe::No { reason } | Probe::Unknown { reason } => {
+                self.cpu_before = None;
+                self.cpu_busy.add(Probe::unknown(reason));
+            }
+        }
+        match memory {
+            Probe::Yes { value } => {
+                if self
+                    .memory_peak
+                    .is_none_or(|m| value.available_bytes < m.available_bytes)
+                {
+                    self.memory_peak = Some(value);
+                }
+            }
+            Probe::No { reason } | Probe::Unknown { reason } => {
+                self.memory_problem.get_or_insert(reason);
             }
         }
     }
@@ -444,11 +553,21 @@ impl PlayTally {
             (Probe::Unknown { .. }, Some(reason)) => Probe::no(reason.clone()),
             _ => throttle,
         };
+        let none = "no readings were taken while the game ran";
+        let gpu_busy_average = match &self.no_gpu {
+            Some(reason) if self.gpu_busy.count == 0 => Probe::no(reason.clone()),
+            _ => self.gpu_busy.finish(none),
+        };
         let (gpu_hottest_c, temperature_missed) = match (self.hottest, self.no_gpu, self.temperature_problem) {
             (Some(t), _, missed) => (Probe::yes(t), missed),
             (None, Some(reason), _) => (Probe::no(reason), None),
             (None, None, Some(reason)) => (Probe::unknown(reason), None),
             (None, None, None) => (Probe::unknown("no GPU readings were taken while the game ran"), None),
+        };
+        let memory_peak = match (self.memory_peak, self.memory_problem) {
+            (Some(m), _) => Probe::yes(m),
+            (None, Some(reason)) => Probe::unknown(reason),
+            (None, None) => Probe::unknown(none),
         };
         PlayReport {
             game: self.game,
@@ -459,6 +578,9 @@ impl PlayTally {
             hardware_readings: self.hardware_readings,
             gpu_hottest_c,
             temperature_missed,
+            gpu_busy_average,
+            cpu_busy_average: self.cpu_busy.finish("the processor was read in fewer than two looks"),
+            memory_peak,
         }
     }
 }
@@ -487,7 +609,7 @@ impl PlayReports {
         read: F,
     ) -> Option<PlayReport>
     where
-        F: FnOnce() -> (Probe<Vec<ThrottleReason>>, Probe<Vec<GpuLive>>),
+        F: FnOnce() -> PlayLook,
     {
         let mut ended = None;
         match event {
@@ -503,8 +625,9 @@ impl PlayReports {
         }
         if let (Some(t), Some(game)) = (self.tally.as_mut(), running) {
             if t.game() == game {
-                let (reasons, gpus) = read();
-                t.add(now_unix_ms, reasons, gpus);
+                let look = read();
+                t.add(now_unix_ms, look.reasons, look.gpus);
+                t.add_machine(look.cpu_times, look.memory);
             }
         }
         ended
@@ -512,6 +635,21 @@ impl PlayReports {
 
     pub fn last(&self) -> Option<&PlayReport> {
         self.last.as_ref()
+    }
+}
+
+/// One look for `PlayReports::look`: the graphics card (`gpu_look`), the
+/// processor's times and memory in use. Reads only.
+pub fn play_look() -> PlayLook {
+    let (reasons, gpus) = gpu_look();
+    PlayLook {
+        reasons,
+        gpus,
+        cpu_times: crate::live::cpu_times(),
+        memory: match crate::memory::system().usage() {
+            Ok(m) => Probe::yes(m),
+            Err(e) => Probe::unknown(e.to_string()),
+        },
     }
 }
 
@@ -574,6 +712,12 @@ mod tests {
             panic!("throttle not summed: {:?}", report.gpu_throttle)
         };
         assert_eq!(value.samples, 2);
+        assert_eq!(report.gpu_busy_average, Probe::yes(90));
+        assert!(
+            matches!(report.cpu_busy_average, Probe::Unknown { .. }),
+            "no processor readings"
+        );
+        assert!(matches!(report.memory_peak, Probe::Unknown { .. }));
         let count = |r| value.seen.iter().find(|s| s.reason == r).map(|s| s.samples);
         assert_eq!(count(SoftwarePowerCap), Some(2));
         assert_eq!(count(SoftwareThermalSlowdown), Some(1));
@@ -608,10 +752,18 @@ mod tests {
         let mut look = |reports: &mut PlayReports, event, running, now| {
             reports.look(event, running, now, || {
                 reads += 1;
-                (
-                    Probe::yes(vec![SoftwarePowerCap]),
-                    Probe::yes(vec![gpu(Probe::yes(70))]),
-                )
+                let n = reads as u64;
+                PlayLook {
+                    reasons: Probe::yes(vec![SoftwarePowerCap]),
+                    gpus: Probe::yes(vec![gpu(Probe::yes(70))]),
+                    // A third of each window idle.
+                    cpu_times: Probe::yes((100 * n, 200 * n, 100 * n)),
+                    memory: Probe::yes(MemoryUse {
+                        total_bytes: 16,
+                        available_bytes: 10 - n,
+                        cached_bytes: 1,
+                    }),
+                }
             })
         };
         look(&mut reports, None, None, 0);
@@ -636,6 +788,13 @@ mod tests {
             panic!("{:?}", report.gpu_throttle)
         };
         assert_eq!(value.samples, 2);
+        assert_eq!(report.gpu_busy_average, Probe::yes(90));
+        assert_eq!(
+            report.cpu_busy_average,
+            Probe::yes(67),
+            "measured between the two looks"
+        );
+        assert_eq!(report.memory_peak.clone().map(|m| m.available_bytes), Probe::yes(8));
         // The next game's report replaces it only when that game closes.
         look(
             &mut reports,
@@ -666,7 +825,8 @@ mod tests {
     }
 
     /// On Windows CI: a look at the graphics card answers (the runners have
-    /// no NVIDIA card, so not with readings) and makes a report.
+    /// no NVIDIA card, so not with readings), the processor and memory are
+    /// read, and a report is made.
     #[cfg(windows)]
     #[test]
     fn a_look_at_the_graphics_card_answers_on_this_pc() {
@@ -674,11 +834,27 @@ mod tests {
         println!("graphics card look on this runner: {reasons:?} / {gpus:?}");
         let mut tally = PlayTally::new("fortnite", 0);
         tally.add(3_000, reasons, gpus);
+        // Two whole looks, a second apart, for the processor's figure.
+        for now in [6_000, 9_000] {
+            let look = play_look();
+            tally.add(now, look.reasons, look.gpus);
+            tally.add_machine(look.cpu_times, look.memory);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         let report = tally.finish();
         println!("session report on this runner: {report:?}");
         if let Probe::Yes { value } = &report.gpu_throttle {
-            assert_eq!(value.samples, 1);
+            assert_eq!(value.samples, 3);
         }
+        assert!(
+            matches!(report.cpu_busy_average, Probe::Yes { value } if value <= 100),
+            "{:?}",
+            report.cpu_busy_average
+        );
+        let Probe::Yes { value: memory } = &report.memory_peak else {
+            panic!("memory was not read: {:?}", report.memory_peak)
+        };
+        assert!(memory.available_bytes <= memory.total_bytes && memory.total_bytes > 0);
     }
 
     #[test]

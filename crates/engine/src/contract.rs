@@ -831,6 +831,14 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         hardware_readings: 0,
         gpu_hottest_c: Probe::yes(84),
         temperature_missed: None,
+        gpu_busy_average: Probe::yes(97),
+        cpu_busy_average: Probe::yes(41),
+        // 16 GiB with 1.5 GiB available at the fullest: 91% in use.
+        memory_peak: Probe::yes(crate::memory::MemoryUse {
+            total_bytes: 17_179_869_184,
+            available_bytes: 1_610_612_736,
+            cached_bytes: 1_073_741_824,
+        }),
     };
     let valorant = PlayReport {
         game: "valorant".into(),
@@ -847,6 +855,13 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         hardware_readings: 0,
         gpu_hottest_c: Probe::yes(71),
         temperature_missed: None,
+        gpu_busy_average: Probe::yes(88),
+        cpu_busy_average: Probe::yes(52),
+        memory_peak: Probe::yes(crate::memory::MemoryUse {
+            total_bytes: 17_179_869_184,
+            available_bytes: 6_442_450_944,
+            cached_bytes: 3_221_225_472,
+        }),
     };
     let earlier_fortnite = PlayReport {
         game: "fortnite".into(),
@@ -860,6 +875,10 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         hardware_readings: 0,
         gpu_hottest_c: Probe::yes(76),
         temperature_missed: None,
+        // Kept by a version that did not take these readings.
+        gpu_busy_average: crate::play::not_recorded(),
+        cpu_busy_average: crate::play::not_recorded(),
+        memory_peak: crate::play::not_recorded(),
     };
     ts_const(
         &mut out,

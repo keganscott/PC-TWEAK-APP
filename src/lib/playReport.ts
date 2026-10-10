@@ -7,6 +7,7 @@
 
 import type { PlayReport } from "../generated/PlayReport";
 import type { Tone } from "../components/ui/primitives";
+import { formatGiB } from "./format";
 
 export interface ReportNote {
   tone: Tone;
@@ -19,9 +20,62 @@ function of(n: number, total: number): string {
   return `${n.toLocaleString()} of ${total.toLocaleString()} reading${total === 1 ? "" : "s"}`;
 }
 
+/** Memory in use at the fullest reading, as a whole percentage. */
+export function memoryPeakPercent(report: PlayReport): number | null {
+  const m = report.memoryPeak;
+  if (m.state !== "yes" || m.value.totalBytes === 0) return null;
+  return Math.round(((m.value.totalBytes - m.value.availableBytes) / m.value.totalBytes) * 100);
+}
+
+/** At or above this share in use, memory counts as nearly full. Mine
+ * (NOTES N112): Windows sets no such line. */
+export const MEMORY_NEARLY_FULL = 90;
+
+/** "Graphics card busy 97% of the time on average, processor 41% and memory
+ * at most 91% in use (15 GB of 16 GB)." Only the readings that were taken; null
+ * when none was. */
+export function loadLine(report: PlayReport): string | null {
+  const parts: string[] = [];
+  // copy-lint-allow: a reading taken while the game ran, not a promise
+  if (report.gpuBusyAverage.state === "yes") parts.push(`graphics card busy ${report.gpuBusyAverage.value}% of the time on average`);
+  if (report.cpuBusyAverage.state === "yes") {
+    // copy-lint-allow: a reading taken while the game ran, not a promise
+    parts.push(`${parts.length ? "processor" : "processor busy"} ${report.cpuBusyAverage.value}%${parts.length ? "" : " on average"}`);
+  }
+  const peak = memoryPeakPercent(report);
+  if (peak !== null && report.memoryPeak.state === "yes") {
+    const m = report.memoryPeak.value;
+    // copy-lint-allow: a reading taken while the game ran, not a promise
+    parts.push(`memory at most ${peak}% in use (${formatGiB(m.totalBytes - m.availableBytes)} of ${formatGiB(m.totalBytes)})`);
+  }
+  if (parts.length === 0) return null;
+  const line = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `${line.charAt(0).toUpperCase()}${line.slice(1)}.`;
+}
+
+/** The note for memory, when it was nearly full. */
+function memoryNote(report: PlayReport): ReportNote[] {
+  const peak = memoryPeakPercent(report);
+  if (peak === null || peak < MEMORY_NEARLY_FULL) return [];
+  return [
+    {
+      tone: "warn",
+      // copy-lint-allow: a reading taken while the game ran, not a promise
+      title: `Memory was nearly full: up to ${peak}% in use.`,
+      text:
+        "When memory runs short, Windows keeps part of what programs hold on the drive instead, which takes much " +
+        "longer to reach. Closing programs you do not need before playing leaves more for the game.",
+    },
+  ];
+}
+
 /** The notes for one report, most important first. Nothing is rounded up to
  * a problem: a reason seen in no reading gives no note. */
 export function reportNotes(report: PlayReport): ReportNote[] {
+  return [...gpuNotes(report), ...memoryNote(report)];
+}
+
+function gpuNotes(report: PlayReport): ReportNote[] {
   const t = report.gpuThrottle;
   if (t.state === "no") {
     return [
@@ -82,6 +136,13 @@ export function reportNotes(report: PlayReport): ReportNote[] {
 /** One short line for a report in a list of earlier games: the most
  * important note's finding, without the advice. */
 export function reportSummary(report: PlayReport): string {
+  const peak = memoryPeakPercent(report);
+  // copy-lint-allow: a reading taken while the game ran, not a promise
+  const memory = peak !== null && peak >= MEMORY_NEARLY_FULL ? ` Memory up to ${peak}% in use.` : "";
+  return gpuSummary(report) + memory;
+}
+
+function gpuSummary(report: PlayReport): string {
   const t = report.gpuThrottle;
   if (t.state === "no") return "No NVIDIA graphics card to read.";
   if (t.state === "unknown") return "The graphics card could not be read.";

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PlayReport } from "../generated/PlayReport";
 import type { ThrottleSeen } from "../generated/ThrottleSeen";
 import { playStatus } from "../generated/fixtures";
-import { reportNotes, reportSummary, sameReport } from "./playReport";
+import { loadLine, reportNotes, reportSummary, sameReport } from "./playReport";
 
 const report = (samples: number, seen: ThrottleSeen[], counts: { heat?: number; hardware?: number } = {}): PlayReport => ({
   game: "fortnite",
@@ -14,12 +14,16 @@ const report = (samples: number, seen: ThrottleSeen[], counts: { heat?: number; 
   hardwareReadings: counts.hardware ?? 0,
   gpuHottestC: { state: "yes", value: 70 },
   temperatureMissed: null,
+  gpuBusyAverage: { state: "unknown", reason: "not read" },
+  cpuBusyAverage: { state: "unknown", reason: "not read" },
+  memoryPeak: { state: "unknown", reason: "not read" },
 });
 
 describe("reportNotes", () => {
-  it("names heat first, then the power limit, with the counts", () => {
+  it("names heat first, then the power limit, with the counts, then nearly full memory", () => {
     const notes = reportNotes(playStatus.lastSession!);
-    expect(notes.map((n) => n.tone)).toEqual(["warn", "info"]);
+    expect(notes.map((n) => n.tone)).toEqual(["warn", "info", "warn"]);
+    expect(notes[2]!.title).toBe("Memory was nearly full: up to 91% in use.");
     expect(notes[0]!.title).toBe("The graphics card held its clocks down because of heat in 48 of 800 readings.");
     expect(notes[1]!.title).toBe("The driver kept the card within its power limit in 760 of 800 readings.");
   });
@@ -61,7 +65,7 @@ describe("reportNotes", () => {
 
 describe("reportSummary", () => {
   it("leads with heat, then the card's hardware, and otherwise says none was seen", () => {
-    expect(reportSummary(playStatus.lastSession!)).toBe("Slowed for heat in 48 of 800 readings.");
+    expect(reportSummary(playStatus.lastSession!)).toBe("Slowed for heat in 48 of 800 readings. Memory up to 91% in use.");
     expect(reportSummary(report(100, [{ reason: "hardware_slowdown", samples: 2 }], { hardware: 2 }))).toBe(
       "Hardware slowdown in 2 of 100 readings.",
     );
@@ -76,5 +80,26 @@ describe("reportSummary", () => {
   it("finds the last session in the history", () => {
     expect(sameReport(playStatus.history.at(-1)!, playStatus.lastSession!)).toBe(true);
     expect(sameReport(playStatus.history[0]!, playStatus.lastSession!)).toBe(false);
+  });
+});
+
+describe("loadLine", () => {
+  it("says how busy the card and processor were and how full memory got", () => {
+    expect(loadLine(playStatus.lastSession!)).toBe(
+      "Graphics card busy 97% of the time on average, processor 41% and memory at most 91% in use (15 GB of 16 GB).",
+    );
+  });
+
+  it("leaves out what was not read, and is null when nothing was", () => {
+    expect(loadLine({ ...report(1, []), cpuBusyAverage: { state: "yes", value: 30 } })).toBe("Processor busy 30% on average.");
+    expect(loadLine(report(1, []))).toBeNull();
+    expect(loadLine(playStatus.history[0]!)).toBeNull();
+  });
+
+  it("gives no memory note below nearly full", () => {
+    const roomy = { ...report(10, []), memoryPeak: { state: "yes" as const, value: { totalBytes: 100, availableBytes: 11, cachedBytes: 0 } } };
+    expect(reportNotes(roomy).some((n) => n.title.startsWith("Memory"))).toBe(false);
+    const full = { ...roomy, memoryPeak: { state: "yes" as const, value: { totalBytes: 100, availableBytes: 10, cachedBytes: 0 } } };
+    expect(reportNotes(full).at(-1)!.title).toBe("Memory was nearly full: up to 90% in use.");
   });
 });

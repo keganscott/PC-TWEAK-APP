@@ -183,8 +183,9 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
 10. **Last game** (N110): with PeakTweaks open, play a game for a few minutes,
    then close it. Tools > While you play shows **Last game**: how long it ran,
    the hottest graphics card reading, and whether the card slowed down for heat
-   or power. Compare the temperature with the NVIDIA overlay if you use it.
-   NVIDIA cards only.
+   or power, and how busy the card and processor were and how full memory got
+   (N112). Compare the temperature with the NVIDIA overlay if you use it, and
+   the memory figure with Task Manager. Graphics card readings are NVIDIA only.
 11. **Game history** (N111): after step 10, close PeakTweaks and open it again.
    Tools > While you play still shows that game as **Last game**, and its card
    on **Games** says when it was last played.

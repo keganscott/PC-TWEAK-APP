@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 
 use peaktweaks_engine::journal::now_ms;
 use peaktweaks_engine::play::{
-    game_processes, game_running, gpu_look, running_images, watched_ids, PlayReports, PlayStatus, TimerRequest, Watch,
+    game_processes, game_running, play_look, running_images, watched_ids, PlayReports, PlayStatus, TimerRequest, Watch,
     WatchEvent,
 };
 
@@ -78,7 +78,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
         let event = watch.look(running);
         // The graphics card's readings, outside the engine lock: they read
         // NVML only and change nothing.
-        if let Some(report) = reports.look(event.clone(), running, now_ms(), gpu_look) {
+        if let Some(report) = reports.look(event.clone(), running, now_ms(), play_look) {
             ended = Some(report);
         }
         // Engine work only while the lock is free of an earlier panic; the

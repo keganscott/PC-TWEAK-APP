@@ -99,6 +99,9 @@ mod tests {
             hardware_readings: 0,
             gpu_hottest_c: Probe::unknown("no NVIDIA card"),
             temperature_missed: None,
+            gpu_busy_average: Probe::unknown("no NVIDIA card"),
+            cpu_busy_average: Probe::unknown("not read in tests"),
+            memory_peak: Probe::unknown("not read in tests"),
         }
     }
 
@@ -124,6 +127,19 @@ mod tests {
         store.save(&history).unwrap();
         assert_eq!(store.load(), history);
         assert!(!dir.path().join("play-history.json.tmp").exists());
+
+        // A report kept by an earlier version, without the processor and
+        // memory readings, still loads, with those readings unknown.
+        let mut older: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(dir.path().join(FILE)).unwrap()).unwrap();
+        for key in ["gpuBusyAverage", "cpuBusyAverage", "memoryPeak"] {
+            older[0].as_object_mut().unwrap().remove(key);
+        }
+        std::fs::write(dir.path().join(FILE), serde_json::to_vec(&older).unwrap()).unwrap();
+        let loaded = store.load();
+        assert_eq!(loaded.len(), 2);
+        assert!(matches!(&loaded[0].memory_peak, Probe::Unknown { reason } if reason.contains("not taken")));
+        store.save(&history).unwrap();
 
         // One report this version cannot read leaves the others.
         let mut entries: Vec<serde_json::Value> =

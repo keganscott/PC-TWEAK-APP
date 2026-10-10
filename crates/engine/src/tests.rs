@@ -4852,6 +4852,9 @@ fn the_game_history_is_kept_across_restarts_and_capped() {
         hardware_readings: 0,
         gpu_hottest_c: Probe::unknown("not read in tests"),
         temperature_missed: None,
+        gpu_busy_average: Probe::unknown("not read in tests"),
+        cpu_busy_average: Probe::unknown("not read in tests"),
+        memory_peak: Probe::unknown("not read in tests"),
     };
     let fake = Arc::new(FakeRegistry::new());
     let dir = tempfile::tempdir().unwrap();

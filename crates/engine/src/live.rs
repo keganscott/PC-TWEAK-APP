@@ -29,6 +29,15 @@ pub struct LiveReadings {
     pub unix_ms: u64,
 }
 
+/// The processor's idle, kernel and user times since Windows started, in
+/// 100 ns units (`GetSystemTimes`). Two of them give `busy_percent`.
+pub type CpuTimes = (u64, u64, u64);
+
+/// The processor's times now, for a busy share measured between two looks.
+pub fn cpu_times() -> Probe<CpuTimes> {
+    imp::cpu_times()
+}
+
 /// How long the processor is watched for one reading.
 pub const CPU_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -71,6 +80,13 @@ mod imp {
         Ok((n(idle), n(kernel), n(user)))
     }
 
+    pub fn cpu_times() -> Probe<CpuTimes> {
+        match times() {
+            Ok(t) => Probe::yes(t),
+            Err(e) => Probe::unknown(format!("GetSystemTimes failed: {e}")),
+        }
+    }
+
     pub fn cpu_busy() -> Probe<u32> {
         let before = match times() {
             Ok(t) => t,
@@ -96,6 +112,9 @@ mod imp {
     use super::*;
 
     pub fn cpu_busy() -> Probe<u32> {
+        Probe::unknown("live readings are only taken on Windows")
+    }
+    pub fn cpu_times() -> Probe<CpuTimes> {
         Probe::unknown("live readings are only taken on Windows")
     }
     pub fn gpus() -> Probe<Vec<GpuLive>> {

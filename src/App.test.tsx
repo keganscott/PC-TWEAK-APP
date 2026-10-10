@@ -254,6 +254,8 @@ describe("App", () => {
     expect(within(last).getByText(/PeakTweaks watched it for 40 minutes, until .*, reading the graphics card every few seconds and changing nothing\. Hottest reading: 84 °C\./)).toBeTruthy();
     expect(within(last).getByText("The graphics card held its clocks down because of heat in 48 of 800 readings.")).toBeTruthy();
     expect(within(last).getByText("The driver kept the card within its power limit in 760 of 800 readings.")).toBeTruthy();
+    expect(within(last).getByText(/^Graphics card busy 97% of the time on average, processor 41% and memory at most 91% in use/)).toBeTruthy();
+    expect(within(last).getByText("Memory was nearly full: up to 91% in use.")).toBeTruthy();
   });
 
   it("Tools lists the earlier games kept on this PC, newest first", async () => {

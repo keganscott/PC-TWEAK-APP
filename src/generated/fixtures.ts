@@ -1315,7 +1315,23 @@ export const playStatus = {
       "state": "yes",
       "value": 84
     },
-    "temperatureMissed": null
+    "temperatureMissed": null,
+    "gpuBusyAverage": {
+      "state": "yes",
+      "value": 97
+    },
+    "cpuBusyAverage": {
+      "state": "yes",
+      "value": 41
+    },
+    "memoryPeak": {
+      "state": "yes",
+      "value": {
+        "totalBytes": 17179869184,
+        "availableBytes": 1610612736,
+        "cachedBytes": 1073741824
+      }
+    }
   },
   "history": [
     {
@@ -1335,7 +1351,19 @@ export const playStatus = {
         "state": "yes",
         "value": 76
       },
-      "temperatureMissed": null
+      "temperatureMissed": null,
+      "gpuBusyAverage": {
+        "state": "unknown",
+        "reason": "this reading was not taken by the PeakTweaks version that watched the game"
+      },
+      "cpuBusyAverage": {
+        "state": "unknown",
+        "reason": "this reading was not taken by the PeakTweaks version that watched the game"
+      },
+      "memoryPeak": {
+        "state": "unknown",
+        "reason": "this reading was not taken by the PeakTweaks version that watched the game"
+      }
     },
     {
       "game": "valorant",
@@ -1359,7 +1387,23 @@ export const playStatus = {
         "state": "yes",
         "value": 71
       },
-      "temperatureMissed": null
+      "temperatureMissed": null,
+      "gpuBusyAverage": {
+        "state": "yes",
+        "value": 88
+      },
+      "cpuBusyAverage": {
+        "state": "yes",
+        "value": 52
+      },
+      "memoryPeak": {
+        "state": "yes",
+        "value": {
+          "totalBytes": 17179869184,
+          "availableBytes": 6442450944,
+          "cachedBytes": 3221225472
+        }
+      }
     },
     {
       "game": "fortnite",
@@ -1387,7 +1431,23 @@ export const playStatus = {
         "state": "yes",
         "value": 84
       },
-      "temperatureMissed": null
+      "temperatureMissed": null,
+      "gpuBusyAverage": {
+        "state": "yes",
+        "value": 97
+      },
+      "cpuBusyAverage": {
+        "state": "yes",
+        "value": 41
+      },
+      "memoryPeak": {
+        "state": "yes",
+        "value": {
+          "totalBytes": 17179869184,
+          "availableBytes": 1610612736,
+          "cachedBytes": 1073741824
+        }
+      }
     }
   ],
   "historyProblem": null

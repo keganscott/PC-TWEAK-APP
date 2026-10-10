@@ -16,6 +16,7 @@ import { ConnectionSection } from "./ConnectionSection";
 import { LastChange } from "./LastChange";
 import { DriverTool } from "./DriverTool";
 import { MemoryCleaner } from "./MemoryCleaner";
+import { MouseRateCheck } from "./MouseRateCheck";
 import { PlaySection } from "./PlaySection";
 import { PresetsSection } from "./Presets";
 import { StartupSection } from "./StartupSection";
@@ -116,7 +117,10 @@ export function ToolsView() {
             Quick tools
           </h2>
           <div className="grid items-start gap-4 2xl:grid-cols-2">
-            <MemoryCleaner />
+            <div className="flex flex-col gap-4">
+              <MemoryCleaner />
+              <MouseRateCheck />
+            </div>
             <DriverTool />
           </div>
         </section>

@@ -167,7 +167,7 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
    (N106) puts a short text on the clipboard; pasting it on another PC lists what
    that PC would apply.
 4. **After a restart** (N105): restart Windows with a change that needs one
-   (for example the power plan) applied. Home should say whether everything is
+   (its card says it takes effect after a restart) applied. Home should say whether everything is
    still in place.
 5. **Games** (N103, N107): pick your main game; its card comes first. On a Steam
    game, **Play** asks Steam to start it without PeakTweaks' administrator rights.

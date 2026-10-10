@@ -144,6 +144,11 @@ export function onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn> {
   return listen<PlayStatus>("engine://play", (event) => handler(event.payload));
 }
 
+/** Settings saved from outside the window: Gaming Mode from the tray icon. */
+export function onSettings(handler: (s: Settings) => void): Promise<UnlistenFn> {
+  return listen<Settings>("engine://settings", (event) => handler(event.payload));
+}
+
 /** Subscribe to progress events from long-running commands. */
 export function onProgress(handler: (p: Progress) => void): Promise<UnlistenFn> {
   return listen<Progress>("engine://progress", (event) => handler(event.payload));

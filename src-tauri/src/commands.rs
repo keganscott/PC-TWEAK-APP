@@ -145,10 +145,20 @@ pub async fn get_settings(engine: State<'_, EngineHandle>) -> Result<Settings> {
 }
 
 /// Replace the preferences. The engine saves them before it uses them and
-/// returns what is now stored.
+/// returns what is now stored. The tray's Gaming Mode tick follows what is
+/// saved, which is the new setting even when turning it off could not put
+/// every change back.
 #[tauri::command]
-pub async fn set_settings(engine: State<'_, EngineHandle>, settings: Settings) -> Result<Settings> {
-    blocking(&engine, move |e| e.set_settings(settings)).await
+pub async fn set_settings(app: AppHandle, engine: State<'_, EngineHandle>, settings: Settings) -> Result<Settings> {
+    let (out, gaming_mode) = blocking(&engine, move |e| {
+        let out = e.set_settings(settings);
+        Ok((out, e.settings().gaming_mode))
+    })
+    .await?;
+    // After the engine lock is let go: the tick is set on the thread that
+    // runs the window, which must never wait behind the engine.
+    crate::tray::sync(&app, gaming_mode);
+    out
 }
 
 /// Live readings for Home: processor, memory and NVIDIA GPUs (`live.rs`).

@@ -245,6 +245,10 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
   let busId = 0;
   let listening: Promise<() => void> | null = null;
   let watchingPlay: Promise<() => void> | null = null;
+  let watchingSettings: Promise<() => void> | null = null;
+  /** Counts settings saved from the tray, so a window save that was in
+   * flight across one re-reads what the engine kept last. */
+  let traySaves = 0;
 
   const set = (update: (s: State) => State) => {
     const next = update(state);
@@ -326,6 +330,18 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     if (wasActive !== undefined && wasActive !== play.gamingModeActive) void refreshJournal();
   }
 
+  /** Settings saved from the tray icon. Not tagged: a save from the window
+   * still in flight keeps its own spinner and result, and re-reads the
+   * settings when it lands (the event and its reply can arrive in either
+   * order). Gaming Mode turned off puts its changes back, which changes what
+   * Backups lists. */
+  function showSettings(settings: Settings) {
+    traySaves += 1;
+    const before = state.settings;
+    set((s) => ({ ...s, settings }));
+    if (before && before.gamingMode !== settings.gamingMode) void Promise.allSettled([refreshAudit(), refreshJournal()]);
+  }
+
   async function refreshPlay() {
     const current = tag("play");
     try {
@@ -405,7 +421,8 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
           set((s) => ({ ...s, bus: [...s.bus, entry].slice(-BUS_LIMIT) }));
         });
         watchingPlay ??= backend.onPlay(showPlay);
-        await Promise.all([listening, watchingPlay]);
+        watchingSettings ??= backend.onSettings(showSettings);
+        await Promise.all([listening, watchingPlay, watchingSettings]);
         const [context, settings, games, tweaks, journal, sessions] = await Promise.all([
           backend.context(),
           backend.getSettings(),
@@ -465,7 +482,9 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       set((s) => ({ ...s, settingsOp: RUNNING }));
       try {
         const before = state.settings;
-        const saved = await backend.setSettings(settings);
+        const trayBefore = traySaves;
+        let saved = await backend.setSettings(settings);
+        if (traySaves !== trayBefore) saved = await backend.getSettings();
         if (!current()) return false;
         set((s) => ({ ...s, settings: saved, settingsOp: { status: "done", value: null } }));
         // Turning Gaming Mode off mid-game puts its changes back at once.
@@ -778,8 +797,10 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     dispose() {
       void listening?.then((off) => off());
       void watchingPlay?.then((off) => off());
+      void watchingSettings?.then((off) => off());
       listening = null;
       watchingPlay = null;
+      watchingSettings = null;
       listeners.clear();
     },
   };

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { PlayStatus } from "../generated/PlayStatus";
+import type { Settings } from "../generated/Settings";
 import type { StartupList } from "../generated/StartupList";
 import { createMockBackend, type MockOptions } from "../services/mockIpc";
 import { basicTweaks, BUS_LIMIT, createAppStore, driftedTweaks, otherLongWork, recommendedIds, type State } from "./store";
@@ -332,6 +333,69 @@ describe("basic changes and the drift check", () => {
     expect(driftedTweaks([drifted])).toEqual({ all: [drifted], again: ["fixture.drifted"] });
     const advanced = { ...drifted, safety: "moderate" as const, tradeoff: "Uses more power." };
     expect(driftedTweaks([advanced])).toEqual({ all: [advanced], again: [] });
+  });
+});
+
+describe("tray icon", () => {
+  it("Gaming Mode switched from the tray shows in the window and re-reads Backups", async () => {
+    const mock = createMockBackend();
+    let push: ((s: Settings) => void) | undefined;
+    let journalReads = 0;
+    const store = createAppStore({
+      ...mock,
+      listJournal: () => {
+        journalReads += 1;
+        return mock.listJournal();
+      },
+      onSettings: async (handler) => {
+        push = handler;
+        return () => {};
+      },
+    });
+    await store.actions.boot();
+    await settle(store);
+    const before = store.getState().settings!;
+    const reads = journalReads;
+    push!({ ...before, gamingMode: !before.gamingMode });
+    expect(store.getState().settings?.gamingMode).toBe(!before.gamingMode);
+    await settle(store);
+    expect(journalReads).toBe(reads + 1);
+    push!({ ...before, gamingMode: !before.gamingMode, remindersOff: true });
+    await settle(store);
+    expect(store.getState().settings?.remindersOff).toBe(true);
+    expect(journalReads).toBe(reads + 1);
+  });
+
+  it("a save from the window that crosses one from the tray ends on what the engine kept", async () => {
+    // The window's save is slow; the tray's lands in the engine first.
+    const mock = createMockBackend({
+      latencyFor: (command, args) => (command === "setSettings" && (args[0] as Settings).remindersOff ? 40 : undefined),
+    });
+    let push: ((s: Settings) => void) | undefined;
+    let reads = 0;
+    const store = createAppStore({
+      ...mock,
+      getSettings: () => {
+        reads += 1;
+        return mock.getSettings();
+      },
+      onSettings: async (handler) => {
+        push = handler;
+        return () => {};
+      },
+    });
+    await store.actions.boot();
+    await settle(store);
+    const before = store.getState().settings!;
+    const readsBefore = reads;
+    const saving = store.actions.saveSettings({ ...before, remindersOff: true });
+    await new Promise((r) => setTimeout(r, 5));
+    push!(await mock.setSettings({ ...before, gamingMode: !before.gamingMode }));
+    expect(await saving).toBe(true);
+    // The window's reply could be older than the tray's event, so it re-read.
+    expect(reads).toBe(readsBefore + 1);
+    expect(store.getState().settings).toEqual(await mock.getSettings());
+    expect(store.getState().settingsOp.status).toBe("done");
   });
 });
 

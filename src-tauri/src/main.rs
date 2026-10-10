@@ -4,6 +4,7 @@
 mod command_audit;
 mod commands;
 mod play;
+mod tray;
 mod window_place;
 
 use peaktweaks_engine::env::License;
@@ -102,6 +103,11 @@ fn main() {
                 .unwrap_or_default();
             if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
                 tauri::Manager::manage(app, window_place::restore(&window, store));
+            }
+            // The icon by the clock (Gaming Mode, Open). A tray that cannot
+            // be made leaves the app as it was without one.
+            if let Err(e) = tray::build(app, handle.shared()) {
+                eprintln!("tray icon not shown: {e}");
             }
             tauri::Manager::manage(app, handle);
             tauri::Manager::manage(app, status);

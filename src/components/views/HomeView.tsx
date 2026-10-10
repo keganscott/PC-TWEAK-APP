@@ -29,7 +29,7 @@ import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
-import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, Spinner, StatusBadge, type Tone } from "../ui/primitives";
 import { TweakCard } from "./ToolsView";
 
 /** Device changes' ids (`tweaks/msi.rs` `ID_PREFIX`). */
@@ -371,9 +371,7 @@ function Recommended() {
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         {todo.length > 0 &&
           (checking ? (
-            <Button variant="go" busy>
-              Checking for a restore point
-            </Button>
+            <Spinner label="Checking for a restore point" />
           ) : gateOpen ? (
             <Button variant="go" busy={applyingMany} onClick={() => void applyMany(todo)}>
               Apply all basic changes ({todo.length})

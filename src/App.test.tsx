@@ -938,7 +938,7 @@ describe("review regressions", () => {
         return mock.auditSystem();
       },
     });
-    expect(await screen.findByRole("button", { name: "Checking for a restore point" })).toBeTruthy();
+    expect(await screen.findByText("Checking for a restore point")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Make a restore point, then apply/ })).toBeNull();
     act(() => finish!());
     expect(await screen.findByRole("button", { name: /Apply all basic changes/ })).toBeTruthy();

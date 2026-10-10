@@ -70,9 +70,9 @@ export function HomeView() {
         </div>
       </section>
       <Recommended />
-      {/* Gentle, so after the steps that matter now. */}
-      <Reminders />
+      {/* A warning from the last game, then the gentle reminders. */}
       <LastGame />
+      <Reminders />
       <YourPc audit={audit} />
       <RightNow />
       <div className="grid items-start gap-3.5 lg:grid-cols-[1.65fr_1fr]">

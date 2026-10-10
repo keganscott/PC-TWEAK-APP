@@ -739,6 +739,11 @@ describe("review regressions", () => {
     await userEvent.click(screen.getByRole("radio", { name: "Apex Legends" }));
     await waitFor(() => expect((screen.getByRole("radio", { name: "Apex Legends" }) as HTMLInputElement).checked).toBe(true));
     expect(list.value).toBe("");
+    // The main game's card comes first, marked as such.
+    const first = screen.getAllByRole("heading", { level: 3 })[0]!;
+    expect(first.textContent).toBe("Apex Legends");
+    expect(within(first.closest("li") as HTMLElement).getByText("Your main game")).toBeTruthy();
+    expect(screen.getAllByText("Your main game")).toHaveLength(1);
 
     await userEvent.selectOptions(list, "rust");
     await waitFor(() => expect(list.value).toBe("rust"));
@@ -788,6 +793,17 @@ describe("review regressions", () => {
     const cs2 = heading.closest("li") as HTMLElement;
     await userEvent.click(within(cs2).getByRole("button", { name: "Play Counter-Strike 2" }));
     expect(await within(cs2).findByText("PeakTweaks could not ask Steam to start the game.")).toBeTruthy();
+  });
+
+  it("Proof explains a comparison until one is open, and starts one from there", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    const how = await screen.findByRole("region", { name: "How a comparison works" });
+    expect(within(how).getAllByRole("listitem")).toHaveLength(4);
+    await userEvent.click(within(how).getByRole("button", { name: "Start one" }));
+    expect(await screen.findByLabelText("Game program name")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "How a comparison works" })).toBeNull();
   });
 
   it("the proof guide walks before runs, one change, then after runs", async () => {

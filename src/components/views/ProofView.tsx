@@ -63,13 +63,47 @@ export function ProofView() {
           ) : current ? (
             <SessionDetail summary={current} />
           ) : (
-            <Card>
-              <p className="text-sm text-ink-muted">Pick a comparison on the left, or start a new one.</p>
-            </Card>
+            <HowItWorks hasSessions={sessions.length > 0} onStart={() => setCreating(true)} />
           )}
         </div>
       </div>
     </>
+  );
+}
+
+/** Shown until a comparison is open: what one is, in the guide's own steps. */
+function HowItWorks({ hasSessions, onStart }: { hasSessions: boolean; onStart: () => void }) {
+  const steps = [
+    "Record the same scene in your game a few times. Each run is a short capture of frame timings while you play.",
+    "Make one change, in Tools.",
+    `Record the same scene again, the same number of times (${SUGGESTED_RUNS} each is a good start).`,
+    "Compare. PeakTweaks calls a difference real only when it is bigger than the variation between your own runs.",
+  ];
+  return (
+    <Card aria-labelledby="proof-how-title">
+      <h2 id="proof-how-title" className="font-extrabold tracking-tight">
+        How a comparison works
+      </h2>
+      <ol className="mt-3 flex flex-col gap-2.5">
+        {steps.map((text, i) => (
+          <li key={i} className="flex gap-3 text-sm">
+            <span
+              aria-hidden
+              className="grid size-6 shrink-0 place-items-center rounded-full border border-line bg-surface-2 text-xs font-bold tabular-nums"
+            >
+              {i + 1}
+            </span>
+            <span className="pt-0.5 text-ink-muted">{text}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button icon={<Plus aria-hidden className="size-4" />} onClick={onStart}>
+          Start one
+        </Button>
+        {hasSessions && <p className="text-sm text-ink-faint">Or open one of yours on the left.</p>}
+      </div>
+    </Card>
   );
 }
 

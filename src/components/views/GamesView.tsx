@@ -8,7 +8,7 @@ import { explain } from "../../lib/errors";
 import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
-import { Callout, Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
 const FEATURE: Record<SecurityFeature, string> = {
   secure_boot: "Secure Boot",
@@ -42,10 +42,11 @@ export function GamesView() {
   const found = new Set((installs ?? []).map((i) => i.gameId));
   const featured = games.filter((g) => g.featured);
   const others = games.filter((g) => !g.featured).sort((a, b) => a.name.localeCompare(b.name));
-  // A card for each featured game, and for the main game when it is from the list.
-  const shown = (readiness?.perGame ?? []).filter(
-    (g) => g.gameId === target || featured.some((f) => f.id === g.gameId),
-  );
+  // A card for each featured game, and for the main game when it is from the
+  // list; the main game's card comes first.
+  const shown = (readiness?.perGame ?? [])
+    .filter((g) => g.gameId === target || featured.some((f) => f.id === g.gameId))
+    .sort((a, b) => Number(b.gameId === target) - Number(a.gameId === target));
 
   return (
     <>
@@ -148,7 +149,8 @@ export function GamesView() {
                 })}
               </dl>
               <p className="mt-4 text-xs text-ink-faint">
-                These are firmware settings. PeakTweaks only reads them and never switches them.
+                These are firmware settings: each is turned on in your PC's firmware setup (BIOS/UEFI), and your
+                motherboard manual shows how. PeakTweaks only reads them and never switches them.
               </p>
             </Card>
           )}
@@ -168,6 +170,7 @@ export function GamesView() {
                   <GameCard
                     readiness={g}
                     name={games.find((x) => x.id === g.gameId)?.name ?? g.gameId}
+                    main={g.gameId === target}
                     install={
                       installs && games.find((x) => x.id === g.gameId)?.lookedFor
                         ? (installs.find((i) => i.gameId === g.gameId) ?? null)
@@ -214,6 +217,7 @@ function installText(install: GameInstall): string {
 function GameCard({
   readiness,
   name,
+  main,
   install,
   choice,
   launchOp,
@@ -223,6 +227,8 @@ function GameCard({
 }: {
   readiness: GameReadiness;
   name: string;
+  /** The game picked as the main game. */
+  main: boolean;
   install: GameInstall | null | undefined;
   choice: GameGpuChoice | undefined;
   launchOp: Op | undefined;
@@ -245,6 +251,9 @@ function GameCard({
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-bold">{name}</h3>
+        {main && (
+          <span className="rounded-md border border-violet/60 px-2 py-0.5 text-xs font-bold text-violet-soft">Your main game</span>
+        )}
         <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
       </div>
       {readiness.requires.length > 0 && (
@@ -254,19 +263,15 @@ function GameCard({
         </p>
       )}
       {s.status === "not_ready" && s.missing.length > 0 && (
-        <p className="mt-1 text-sm">Missing: {s.missing.map((f) => FEATURE[f]).join(", ")}.</p>
+        <p className="mt-1 text-sm">
+          Missing: {s.missing.map((f) => FEATURE[f]).join(", ")}.{" "}
+          <span className="text-ink-muted">{s.missing.length === 1 ? "It is" : "They are"} turned on in your PC's firmware setup (BIOS/UEFI), as above.</span>
+        </p>
       )}
       {(s.status === "not_ready" || s.status === "unknown") && s.unresolved.length > 0 && (
         <p className="mt-1 text-sm text-ink-muted">Could not check: {s.unresolved.map((f) => FEATURE[f]).join(", ")}.</p>
       )}
       {readiness.source && <p className="mt-2 text-xs text-ink-faint">Source: {readiness.source}</p>}
-      {s.status === "not_ready" && (
-        <div className="mt-3">
-          <Callout tone="info" title="Turning these on happens in your PC's firmware setup (BIOS/UEFI).">
-            Your motherboard manual shows how. PeakTweaks does not change firmware settings.
-          </Callout>
-        </div>
-      )}
       {install !== undefined && (
         <p className="mt-3 text-sm wrap-anywhere">
           {install ? installText(install) : "Not found in the places PeakTweaks looks."}

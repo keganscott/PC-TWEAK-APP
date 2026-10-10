@@ -907,7 +907,7 @@ export const systemAudit = {
         "id": "memory.speed",
         "status": "attention",
         "title": "Memory runs below its rated speed",
-        "reading": "2 of 2 module(s) run below their rated speed (for example 2400 of 3200 MT/s).",
+        "reading": "2 of 2 modules run below their rated speed (for example 2400 of 3200 MT/s).",
         "remedy": "Many motherboards ship with the memory profile (XMP or EXPO) switched off. It is a BIOS setting you change yourself; PeakTweaks does not write to the BIOS. If the PC does not start after changing it, your motherboard manual explains how to reset the BIOS. Some modules report the same number for both, in which case this check cannot see the difference.",
         "guidedOnly": true,
         "fixTweakId": null,

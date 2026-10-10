@@ -253,14 +253,15 @@ function OneTimeActions() {
         <p className="mt-1 text-sm text-ink-muted">These change no setting, so there is nothing to undo.</p>
       </div>
       <ul className="grid items-start gap-3 2xl:grid-cols-2">
+        {/* The two short cards side by side, the tall junk card across both. */}
         <li>
           <StandbyCard />
         </li>
         <li>
-          <CleanupCard />
-        </li>
-        <li>
           <DriveCard />
+        </li>
+        <li className="2xl:col-span-2">
+          <CleanupCard />
         </li>
       </ul>
     </section>

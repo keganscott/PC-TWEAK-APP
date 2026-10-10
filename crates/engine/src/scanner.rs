@@ -179,6 +179,15 @@ fn fix_by(f: &Finding, sticks: usize, ssd_available: bool) -> FixBy {
     }
 }
 
+/// "1 module", "2 modules".
+fn modules(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 fn finding(id: &str, status: Status, title: &str, reading: String, remedy: Option<&str>, guided_only: bool) -> Finding {
     Finding {
         id: id.to_owned(),
@@ -217,7 +226,10 @@ fn memory_channels(hw: &HardwareReport) -> Option<Finding> {
                 ID,
                 Status::Attention,
                 "Memory is on a single channel",
-                format!("{} memory module(s) found, all on one channel.", value.sticks.len()),
+                format!(
+                    "{} found, all on one channel.",
+                    modules(value.sticks.len(), "memory module")
+                ),
                 Some(
                     "A matched pair of modules in the slots your motherboard manual names for two channels \
                      lets the CPU use both. This is a hardware change; PeakTweaks does not push purchases \
@@ -273,9 +285,11 @@ fn memory_speed(hw: &HardwareReport) -> Option<Finding> {
                 Status::Attention,
                 "Memory runs below its rated speed",
                 format!(
-                    "{} of {} module(s) run below their rated speed (for example {running} of {rated} MT/s).",
+                    "{} of {} {} below {} rated speed (for example {running} of {rated} MT/s).",
                     slow.len(),
-                    comparable.len()
+                    modules(comparable.len(), "module"),
+                    if slow.len() == 1 { "runs" } else { "run" },
+                    if slow.len() == 1 { "its" } else { "their" },
                 ),
                 Some(
                     "Many motherboards ship with the memory profile (XMP or EXPO) switched off. It is a BIOS \
@@ -290,7 +304,16 @@ fn memory_speed(hw: &HardwareReport) -> Option<Finding> {
                 ID,
                 Status::Fine,
                 "Memory runs at its rated speed",
-                format!("{} module(s) report running at their rated speed.", comparable.len()),
+                format!(
+                    "{} {} at {} rated speed.",
+                    modules(comparable.len(), "module"),
+                    if comparable.len() == 1 {
+                        "reports running"
+                    } else {
+                        "report running"
+                    },
+                    if comparable.len() == 1 { "its" } else { "their" },
+                ),
                 None,
                 false,
             )

@@ -50,13 +50,16 @@ function useGamingMode() {
 
 /** Counts each time Gaming Mode comes on (from here, Tools or the tray), so
  * the burst plays once per switch-on and not when a page first shows it. */
-function useBurst(on: boolean): number {
+function useBurst(on: boolean, ready: boolean): number {
   const [burst, setBurst] = useState(0);
-  const was = useRef(on);
+  // Null until the settings are read, so loading them with Gaming Mode on is
+  // not taken for a switch-on.
+  const was = useRef<boolean | null>(ready ? on : null);
   useEffect(() => {
-    if (on && !was.current) setBurst((n) => n + 1);
+    if (!ready) return;
+    if (on && was.current === false) setBurst((n) => n + 1);
     was.current = on;
-  }, [on]);
+  }, [on, ready]);
   return burst;
 }
 
@@ -76,7 +79,7 @@ function sentence(m: ReturnType<typeof useGamingMode>): string {
 /** The pill in the top bar. */
 export function GamingModeToggle() {
   const m = useGamingMode();
-  const burst = useBurst(m.on);
+  const burst = useBurst(m.on, m.ready);
   if (!m.ready) return null;
   return (
     <div className="flex items-center gap-2">
@@ -127,7 +130,7 @@ export function GamingModeToggle() {
 /** The big switch on Home. */
 export function GamingModeCard() {
   const m = useGamingMode();
-  const burst = useBurst(m.on);
+  const burst = useBurst(m.on, m.ready);
   const technical = useTechnical();
   const titleId = useId();
   const textId = useId();

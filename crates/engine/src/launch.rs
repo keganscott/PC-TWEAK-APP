@@ -100,20 +100,21 @@ mod shell {
             .map_err(|e| failed("could not find the Windows desktop", e))?;
         let provider: IServiceProvider = found
             .cast()
-            .map_err(|e| failed("the Windows desktop did not answer", e))?;
+            .map_err(|e| failed("the Windows desktop did not answer (service provider)", e))?;
         let browser: IShellBrowser = provider
             .QueryService(&SID_STopLevelBrowser)
-            .map_err(|e| failed("the Windows desktop did not answer", e))?;
+            .map_err(|e| failed("the Windows desktop did not answer (top-level browser)", e))?;
         let view: IShellView = browser
             .QueryActiveShellView()
-            .map_err(|e| failed("the Windows desktop did not answer", e))?;
+            .map_err(|e| failed("the Windows desktop did not answer (shell view)", e))?;
         let background: IShellFolderViewDual = view
             .GetItemObject(SVGIO_BACKGROUND)
-            .map_err(|e| failed("the Windows desktop did not answer", e))?;
-        background
+            .map_err(|e| failed("the Windows desktop did not answer (folder view)", e))?;
+        let app = background
             .Application()
-            .and_then(|app| app.cast())
-            .map_err(|e| failed("the Windows desktop did not answer", e))
+            .map_err(|e| failed("the Windows desktop did not answer (shell application)", e))?;
+        app.cast()
+            .map_err(|e| failed("the Windows desktop did not answer (shell dispatch)", e))
     }
 
     /// Reach the desktop's shell object without opening anything, so a test

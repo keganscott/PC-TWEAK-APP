@@ -131,9 +131,10 @@ function LastSession({ report, name }: { report: PlayReport; name: string }) {
         Last game: {name}
       </h3>
       <p className="mt-1 text-sm text-ink-muted">
-        Ran for {formatDuration(seconds)}, until {formatDateTime(report.endedUnixMs)}. PeakTweaks read the graphics
-        card every few seconds while it ran and changed nothing.
+        PeakTweaks watched it for {formatDuration(seconds)}, until {formatDateTime(report.endedUnixMs)}, reading the
+        graphics card every few seconds and changing nothing.
         {hottest.state === "yes" && ` Hottest reading: ${hottest.value} °C.`}
+        {hottest.state === "yes" && report.temperatureMissed && " Some readings had no temperature, so a hotter moment may be missing."}
       </p>
       <div className="mt-3 flex flex-col gap-2">
         {reportNotes(report).map((n) => (

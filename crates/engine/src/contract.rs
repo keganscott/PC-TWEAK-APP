@@ -101,8 +101,9 @@ fn network_check_fixture() -> NetworkCheck {
         unix_ms: 1_791_332_400_000,
         wifi: crate::probe::Probe::yes(crate::netcheck::WifiSignal {
             adapter: "Sample Wi-Fi 6 adapter".into(),
-            quality: 62,
-            rssi_dbm: Some(-69),
+            rssi_dbm: -69,
+            quality: crate::netcheck::signal_quality(-69),
+            carries_check: Some(true),
         }),
     }
 }
@@ -833,7 +834,10 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
                         },
                     ],
                 }),
+                heat_readings: 48,
+                hardware_readings: 0,
                 gpu_hottest_c: Probe::yes(84),
+                temperature_missed: None,
             }),
             ..PlayStatus::watching()
         },

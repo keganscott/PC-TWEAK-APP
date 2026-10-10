@@ -198,7 +198,7 @@ jobs:
       # Also the state of every tool in the catalogue, read as the Tools
       # screen reads it; none may fail to read.
       - name: Live probes on this runner
-        run: cargo test --workspace -- --nocapture --test-threads=1 live_probe_report spi_getmouse_order every_tool_reads_its_state_on_this_pc
+        run: cargo test --workspace -- --nocapture --test-threads=1 live_probe_report spi_getmouse_order every_tool_reads_its_state_on_this_pc reaches_the_desktop_shell_or_says_why
 
       - name: Real restore operations on this runner
         run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1

@@ -148,6 +148,37 @@ reads wrong afterwards, or is confusing.
    each area first and asks once before deleting; you can cancel there.
 5. **While you play**: switch **Gaming Mode** on and off once.
 
+## 5c. New since your last test (2026-10-10)
+
+Settings (bottom of the dialog) names the build, for example
+"PeakTweaks 0.1.0, build 1a2b3c4". Put that in your notes. Each item below
+points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
+
+1. **Home, first run** (N109): before any restore point, Recommended offers
+   **Make a restore point, then apply N**. One click should make the point and
+   then the changes. While the app is still checking it says "Checking for a
+   restore point".
+2. **Tray icon** (N108): the icon by the clock. Right-click or click it:
+   **Gaming Mode** (ticked when on) and **Open PeakTweaks**. Switch Gaming Mode
+   from the tray, then look at Tools > While you play: it should match. Switch it
+   in Tools and the tray's tick should follow. With a game running, hovering the
+   icon names the game.
+3. **Backups**: each change in effect says when it was applied. **Copy setup**
+   (N106) puts a short text on the clipboard; pasting it on another PC lists what
+   that PC would apply.
+4. **After a restart** (N105): restart Windows with a change that needs one
+   (for example the power plan) applied. Home should say whether everything is
+   still in place.
+5. **Games** (N103, N107): pick your main game; its card comes first. On a Steam
+   game, **Play** asks Steam to start it without PeakTweaks' administrator rights.
+   Games with publisher advice show it with the source named.
+6. **Startup apps** (N100): Store apps (Xbox, Slack and so on) are listed and can
+   be switched off and on.
+7. **Window** (N102): move or resize the window, close, reopen: it comes back
+   where it was.
+8. **Reminders** (N104): Home mentions junk files after 30 days and an old
+   graphics driver after 180; "Not now" hides one for 30 days.
+
 ## 6. Backups and Undo all
 
 1. Open **Backups**. **Applied now** lists what is in effect from step 5b, and
@@ -190,6 +221,8 @@ optional extra steps (frame capture with a game running).
 - `report.json` from step 9. It can identify the PC (hardware IDs, your Windows
   account's ID), so send it only to whoever works on PeakTweaks.
 - `%LOCALAPPDATA%\PeakTweaks\startup-error.log`, if it exists.
+- If something went wrong: open **Activity log** (top right), click **Copy**
+  and paste it with your notes. It starts with the build number.
 
 ## If something goes wrong
 

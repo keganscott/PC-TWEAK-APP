@@ -145,6 +145,11 @@ pub struct Engine {
     window_store: crate::window_place::WindowPlaceStore,
     /// The reports of the last games watched, newest last (`play_history.rs`).
     play_history: Vec<crate::play::PlayReport>,
+    /// The last game that closed while this engine ran, kept even when the
+    /// history could not be saved.
+    last_play: Option<crate::play::PlayReport>,
+    /// Why the last game's report could not be kept, until one is.
+    play_history_problem: Option<String>,
     play_history_store: crate::play_history::PlayHistoryStore,
     offline_error: Option<String>,
     /// The ids the last `startup_apps` and `msi_devices` listed, with the
@@ -186,6 +191,8 @@ impl Engine {
             settings_store: crate::settings::SettingsStore::in_memory(),
             window_store: crate::window_place::WindowPlaceStore::in_memory(),
             play_history: Vec::new(),
+            last_play: None,
+            play_history_problem: None,
             play_history_store: crate::play_history::PlayHistoryStore::in_memory(),
             offline_error: None,
             listed: std::collections::HashMap::new(),
@@ -224,10 +231,38 @@ impl Engine {
     /// Add the report of a game that just ended. Saved first; the in-memory
     /// history changes only if the save worked, so what the UI shows is what
     /// is on disk.
+    /// A failure is also kept for `play_history_problem`.
     pub fn record_play(&mut self, report: crate::play::PlayReport) -> Result<()> {
+        self.last_play = Some(report.clone());
         let history = crate::play_history::with_report(self.play_history.clone(), report);
-        self.play_history_store.save(&history)?;
+        if let Err(e) = self.play_history_store.save(&history) {
+            self.play_history_problem = Some(format!("The last game could not be kept in the game history: {e}"));
+            return Err(e);
+        }
         self.play_history = history;
+        self.play_history_problem = None;
+        Ok(())
+    }
+
+    /// Why the last game could not be kept, until a later one is or the
+    /// history is forgotten.
+    pub fn play_history_problem(&self) -> Option<String> {
+        self.play_history_problem.clone()
+    }
+
+    /// The last game that closed while PeakTweaks was open, until the history
+    /// is forgotten.
+    pub fn last_play(&self) -> Option<crate::play::PlayReport> {
+        self.last_play.clone()
+    }
+
+    /// Forget every kept game, and this run's last one. Saved first, like
+    /// `record_play`.
+    pub fn forget_play_history(&mut self) -> Result<()> {
+        self.play_history_store.save(&[])?;
+        self.play_history.clear();
+        self.last_play = None;
+        self.play_history_problem = None;
         Ok(())
     }
 

@@ -282,6 +282,41 @@ describe("App", () => {
     expect(within(within(section).getByRole("group", { name: "Earlier games" })).getAllByRole("listitem")).toHaveLength(2);
   });
 
+  it("Tools forgets the kept games after asking, and Home's warning goes with them", async () => {
+    const backend = createMockBackend();
+    const forget = vi.spyOn(backend, "forgetPlayHistory");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    expect(await screen.findByRole("region", { name: "Last game" })).toBeTruthy();
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    await userEvent.click(await within(section).findByRole("button", { name: "Forget these games" }));
+    const ask = within(section).getByRole("group", { name: "Forget the games" });
+    expect(within(ask).getByText("Forget these 3 games? Only PeakTweaks' record of them goes.")).toBeTruthy();
+    await userEvent.click(within(ask).getByRole("button", { name: "Keep them" }));
+    expect(forget).not.toHaveBeenCalled();
+    await userEvent.click(within(section).getByRole("button", { name: "Forget these games" }));
+    await userEvent.click(within(section).getByRole("button", { name: "Forget" }));
+    expect(forget).toHaveBeenCalledOnce();
+    await waitFor(() => expect(within(section).queryByRole("group", { name: /Last game/ })).toBeNull());
+    expect(within(section).queryByRole("group", { name: "Earlier games" })).toBeNull();
+    expect(within(section).queryByRole("button", { name: "Forget these games" })).toBeNull();
+    await goTo("Home");
+    expect(screen.queryByRole("region", { name: "Last game" })).toBeNull();
+  });
+
+  it("Tools says when the last game could not be kept, apart from Gaming Mode", async () => {
+    const backend = createMockBackend();
+    const status = await backend.playStatus();
+    vi.spyOn(backend, "playStatus").mockResolvedValue({ ...status, historyProblem: "The last game could not be kept in the game history: disk full" });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(await within(section).findByText("The last game could not be kept in the game history.")).toBeTruthy();
+    expect(within(section).queryByText("Not everything you turned on is in effect.")).toBeNull();
+  });
+
   it("a game's card says when it was last played and what the graphics card did", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });

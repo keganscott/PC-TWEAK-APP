@@ -89,6 +89,8 @@ export const engine = {
   listGames: () => call<GameInfo[]>("list_games"),
   /** Which known game is running and what is in effect for it. Also sent as `onPlay`. */
   playStatus: () => call<PlayStatus>("play_status"),
+  /** Forget the kept game reports and this run's last game; resolves to the status now shown. */
+  forgetPlayHistory: () => call<PlayStatus>("forget_play_history"),
   /** Preferences: rig-class override and plain/technical wording. Never a gate or licence. */
   getSettings: () => call<Settings>("get_settings"),
   /** Replace the preferences; resolves to what is now stored. */

@@ -6,7 +6,7 @@ import { explain } from "../../lib/errors";
 import { formatDateTime, formatDuration } from "../../lib/format";
 import { reportNotes, reportSummary, sameReport } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
+import { Button, Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
 
 /** Only Minecraft's Bedrock Edition is recognised (`GAME_PROCESSES` in the
  * engine's `play.rs`): Java Edition's program name is shared by other programs. */
@@ -42,6 +42,8 @@ export function PlaySection() {
   // This run's last game, or after a restart the newest one kept.
   const history = play?.history ?? [];
   const shownLast = play?.lastSession ?? history.at(-1) ?? null;
+  // This run's last game when it could not be saved into the history.
+  const unsaved = !!play?.lastSession && !history.some((r) => sameReport(r, play.lastSession!));
   const earlier = history
     .filter((r) => !shownLast || !sameReport(r, shownLast))
     .reverse()
@@ -122,13 +124,17 @@ export function PlaySection() {
         {failedHere && settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
         {shownLast && <LastSession report={shownLast} name={name(shownLast.game)} />}
         {earlier.length > 0 && <EarlierGames reports={earlier} name={name} />}
+        {play?.historyProblem && (
+          <Callout tone="warn" title="The last game could not be kept in the game history.">
+            {play.historyProblem}
+          </Callout>
+        )}
+        {shownLast && <ForgetGames count={history.length + (unsaved ? 1 : 0)} technical={technical} />}
       </Card>
     </section>
   );
 }
 
-/** What the graphics card did during the last game (plan 6.2 item 6,
- * advice only). Read while the game ran; nothing was changed by it. */
 /** How many earlier games are listed under the last one. */
 const EARLIER_SHOWN = 5;
 
@@ -159,6 +165,43 @@ function EarlierGames({ reports, name }: { reports: readonly PlayReport[]; name:
   );
 }
 
+/** Forget the kept games, after a second click that says how many. */
+function ForgetGames({ count, technical }: { count: number; technical: boolean }) {
+  const op = useStore((s) => s.forgetHistoryOp);
+  const { forgetPlayHistory } = useActions();
+  const [asking, setAsking] = useState(false);
+  return (
+    <div className="flex flex-col gap-2">
+      {asking ? (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Forget the games">
+          <span className="text-sm">
+            Forget {count === 1 ? "this game" : `these ${count} games`}? Only PeakTweaks' record of them goes.
+          </span>
+          <Button
+            variant="secondary"
+            busy={op.status === "running"}
+            onClick={() => void forgetPlayHistory().then(() => setAsking(false))}
+          >
+            Forget
+          </Button>
+          <Button variant="ghost" onClick={() => setAsking(false)}>
+            Keep them
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button variant="ghost" onClick={() => setAsking(true)}>
+            Forget these games
+          </Button>
+        </div>
+      )}
+      {op.status === "failed" && <ErrorCallout text={explain(op.error)} technical={technical} />}
+    </div>
+  );
+}
+
+/** What the graphics card did during the last game (plan 6.2 item 6,
+ * advice only). Read while the game ran; nothing was changed by it. */
 function LastSession({ report, name }: { report: PlayReport; name: string }) {
   const headingId = useId();
   const seconds = (report.endedUnixMs - report.startedUnixMs) / 1000;

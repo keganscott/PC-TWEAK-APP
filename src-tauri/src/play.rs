@@ -43,15 +43,13 @@ struct Session {
     /// Why some could not be put back (they stay listed in Backups).
     not_put_back: Option<String>,
     timer_problem: Option<String>,
-    /// Why the last game's report could not be kept in the history.
-    not_kept: Option<String>,
     /// On Wi-Fi only when the game started.
     on_wifi: bool,
 }
 
 impl Session {
     fn problem(&self) -> Option<String> {
-        let parts: Vec<&str> = [&self.not_put_back, &self.not_made, &self.timer_problem, &self.not_kept]
+        let parts: Vec<&str> = [&self.not_put_back, &self.not_made, &self.timer_problem]
             .into_iter()
             .flatten()
             .map(String::as_str)
@@ -94,10 +92,8 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 );
             }
             if let Some(report) = ended.take() {
-                session.not_kept = e
-                    .record_play(report)
-                    .err()
-                    .map(|err| format!("The last game's report could not be kept: {err}"));
+                // A failure is shown as `history_problem`.
+                let _ = e.record_play(report);
             }
             let settings = e.settings();
             match event {
@@ -105,7 +101,6 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                     session.tried = false;
                     session.not_made = None;
                     session.not_put_back = None;
-                    session.not_kept = None;
                     // Once per game: listing adapters starts PowerShell.
                     session.on_wifi = e.on_wifi_only();
                 }
@@ -162,8 +157,9 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 problem: session.problem(),
                 on_wifi: watch.current().is_some() && session.on_wifi,
                 watched: watched_ids(&games),
-                last_session: reports.last().cloned(),
+                last_session: e.last_play(),
                 history: e.play_history(),
+                history_problem: e.play_history_problem(),
             };
             drop(e);
             let changed = {

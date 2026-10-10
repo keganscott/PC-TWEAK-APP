@@ -4,8 +4,11 @@
 //! the game's id, when it was watched and the graphics card's readings. It
 //! stays on this PC, like everything else PeakTweaks keeps.
 //!
-//! A missing, unreadable or corrupt file is an empty history; the corrupt
-//! file is replaced by the next save.
+//! A missing or unreadable file is an empty history. Each report is read on
+//! its own, so one PeakTweaks cannot read (damaged, or written by another
+//! version) is left out without losing the others. A file that is not a list
+//! at all is moved aside as `play-history.json.corrupt` before the next save
+//! replaces it.
 
 use std::path::{Path, PathBuf};
 
@@ -40,10 +43,21 @@ impl PlayHistoryStore {
         let Some(path) = &self.path else {
             return Vec::new();
         };
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        match serde_json::from_str::<Vec<serde_json::Value>>(&text) {
+            Ok(entries) => entries
+                .into_iter()
+                .filter_map(|entry| serde_json::from_value(entry).ok())
+                .collect(),
+            Err(_) => {
+                // Kept for a look; a failed move only means the next save
+                // replaces it.
+                let _ = std::fs::rename(path, path.with_extension("json.corrupt"));
+                Vec::new()
+            }
+        }
     }
 
     /// Replace the stored history the way settings are saved: a temporary
@@ -110,8 +124,21 @@ mod tests {
         store.save(&history).unwrap();
         assert_eq!(store.load(), history);
         assert!(!dir.path().join("play-history.json.tmp").exists());
+
+        // One report this version cannot read leaves the others.
+        let mut entries: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(dir.path().join(FILE)).unwrap()).unwrap();
+        entries[0]["gpuThrottle"] = serde_json::json!({ "state": "yes", "value": { "samples": 1, "seen": [{ "reason": "a_reason_from_later", "samples": 1 }] } });
+        std::fs::write(dir.path().join(FILE), serde_json::to_vec(&entries).unwrap()).unwrap();
+        assert_eq!(store.load(), vec![report("roblox", 2)]);
+
+        // A file that is not a list is moved aside, not lost.
         std::fs::write(dir.path().join(FILE), "{ not json").unwrap();
         assert!(store.load().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("play-history.json.corrupt")).unwrap(),
+            "{ not json"
+        );
         assert!(PlayHistoryStore::in_memory().load().is_empty());
         PlayHistoryStore::in_memory().save(&history).unwrap();
     }

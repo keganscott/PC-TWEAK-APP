@@ -147,12 +147,16 @@ pub struct PlayStatus {
     /// Ids of the games watched for (`game_processes`), each once.
     pub watched: Vec<String>,
     /// What the graphics card did during the last game that closed while
-    /// PeakTweaks was open. Kept until PeakTweaks closes; the history keeps
-    /// it longer.
+    /// PeakTweaks was open. Kept until PeakTweaks closes or the history is
+    /// forgotten; the history keeps it longer.
     pub last_session: Option<PlayReport>,
     /// The reports of the last games watched, newest last, kept on this PC
     /// across restarts (`play_history.rs`, at most `play_history::KEEP`).
     pub history: Vec<PlayReport>,
+    /// Why the last game could not be kept in the history (its file could
+    /// not be saved). Not a Gaming Mode problem: nothing the user turned on
+    /// depends on it.
+    pub history_problem: Option<String>,
 }
 
 impl PlayStatus {

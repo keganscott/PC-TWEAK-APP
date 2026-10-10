@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "list_tweaks",
     "list_games",
     "play_status",
+    "forget_play_history",
     "get_settings",
     "set_settings",
     "select_target_game",

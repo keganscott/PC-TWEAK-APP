@@ -1389,7 +1389,8 @@ export const playStatus = {
       },
       "temperatureMissed": null
     }
-  ]
+  ],
+  "historyProblem": null
 } satisfies PlayStatus;
 
 export const games = [

@@ -8,7 +8,7 @@ import type { SecurityFeature } from "../../generated/SecurityFeature";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatDuration } from "../../lib/format";
 import { GAME_GUIDANCE } from "../../lib/gameGuidance";
-import { reportSummary } from "../../lib/playReport";
+import { reportSummary, sameReport } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
 import { Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
@@ -35,6 +35,9 @@ export function GamesView() {
   const launchOps = useStore((s) => s.launchOps);
   const gamingMode = useStore((s) => s.settings?.gamingMode ?? null);
   const history = useStore((s) => s.play?.history);
+  const lastSession = useStore((s) => s.play?.lastSession ?? null);
+  // This run's last game, also when it could not be saved into the history.
+  const played = lastSession && !(history ?? []).some((r) => sameReport(r, lastSession)) ? [...(history ?? []), lastSession] : (history ?? []);
   const { selectTargetGame, launchGame } = useActions();
   const readiness = audit?.antiCheat ?? null;
   const installs = audit?.env.gameInstalls ?? null;
@@ -183,7 +186,7 @@ export function GamesView() {
                     choice={choices.find((c) => c.gameId === g.gameId)}
                     launchOp={launchOps[g.gameId]}
                     gamingMode={gamingMode}
-                    played={(history ?? []).filter((r) => r.game === g.gameId)}
+                    played={played.filter((r) => r.game === g.gameId)}
                     onLaunch={() => void launchGame(g.gameId)}
                     technical={technical}
                   />

@@ -72,6 +72,8 @@ export interface Backend {
   onProgress(handler: (p: Progress) => void): Promise<UnlistenFn>;
   /** The game watcher (catalogue step 5): which game runs and what is in effect for it. */
   playStatus(): Promise<PlayStatus>;
+  /** Forget the kept game reports and this run's last game. */
+  forgetPlayHistory(): Promise<PlayStatus>;
   onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn>;
   /** Settings saved from outside the window (the tray icon's Gaming Mode). */
   onSettings(handler: (s: Settings) => void): Promise<UnlistenFn>;

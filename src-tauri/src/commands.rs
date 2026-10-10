@@ -196,6 +196,27 @@ pub async fn play_status(play: State<'_, SharedPlay>) -> Result<PlayStatus> {
     Ok(play.lock().unwrap_or_else(PoisonError::into_inner).clone())
 }
 
+/// Forget the kept game reports and this run's last game. Deletes nothing
+/// but PeakTweaks' own record; the status shown changes at once.
+#[tauri::command]
+pub async fn forget_play_history(
+    app: AppHandle,
+    engine: State<'_, EngineHandle>,
+    play: State<'_, SharedPlay>,
+) -> Result<PlayStatus> {
+    blocking(&engine, |e| e.forget_play_history()).await?;
+    let now = {
+        let mut shown = play.lock().unwrap_or_else(PoisonError::into_inner);
+        shown.last_session = None;
+        shown.history.clear();
+        shown.history_problem = None;
+        shown.clone()
+    };
+    // Advisory, as from the watcher.
+    let _ = app.emit("engine://play", now.clone());
+    Ok(now)
+}
+
 /// Pick (or clear) the target game. The id is validated against the engine's
 /// own list; the environment is then rebuilt in Rust.
 #[tauri::command]

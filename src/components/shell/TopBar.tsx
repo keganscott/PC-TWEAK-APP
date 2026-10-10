@@ -1,8 +1,38 @@
 import { PanelBottomOpen } from "lucide-react";
 
-import { useStore } from "../../store/hooks";
+import { useActions, useStore } from "../../store/hooks";
 import { SampleBadge, StatusBadge } from "../ui/primitives";
 import { GamingModeToggle } from "./GamingModeButton";
+import { useNavigate } from "./nav";
+
+/** While Proof records, by hand or by itself during a game: a pulsing pill
+ * that opens Proof on that comparison. */
+function ProofRecording() {
+  const auto = useStore((s) => (s.play?.autoRecord?.recordingNow ? s.play.autoRecord : null));
+  const manual = useStore((s) => s.proof.capturingSession);
+  const { showComparison } = useActions();
+  const navigate = useNavigate();
+  const sessionId = auto?.sessionId ?? manual;
+  if (!sessionId) return null;
+  const label = auto ? `Proof recording sample ${auto.recorded + 1} of ${auto.wanted}` : "Proof recording";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        showComparison(sessionId);
+        navigate("proof");
+      }}
+      title="Open Proof on this comparison"
+      className="flex items-center gap-2 rounded-full border border-bad/60 bg-bad/10 py-1.5 pr-3 pl-2.5 text-xs font-bold text-ink hover:border-bad"
+    >
+      <span aria-hidden className="relative flex size-2.5">
+        <span className="absolute inline-flex size-full rounded-full bg-bad opacity-75 motion-safe:animate-ping" />
+        <span className="relative inline-flex size-2.5 rounded-full bg-bad" />
+      </span>
+      <span>{label}</span>
+    </button>
+  );
+}
 
 export function TopBar({ busOpen, onToggleBus }: { busOpen: boolean; onToggleBus: () => void }) {
   const sample = useStore((s) => s.sample);
@@ -28,6 +58,7 @@ export function TopBar({ busOpen, onToggleBus }: { busOpen: boolean; onToggleBus
       </div>
       <div className="flex items-center gap-2">
         {context && !context.elevated && <StatusBadge tone="bad">Not running as administrator</StatusBadge>}
+        <ProofRecording />
         <GamingModeToggle />
         <button
           type="button"

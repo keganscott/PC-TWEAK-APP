@@ -1127,6 +1127,32 @@ describe("review regressions", () => {
     expect(screen.queryByRole("region", { name: "How a comparison works" })).toBeNull();
   });
 
+  it("the top bar shows while Proof records and opens Proof on that comparison", async () => {
+    let finish: () => void = () => {};
+    const held = new Promise<void>((r) => (finish = r));
+    const backend = createMockBackend({ gateOpen: true });
+    const capture = backend.proofCapture.bind(backend);
+    vi.spyOn(backend, "proofCapture").mockImplementation(async (...args) => {
+      await held;
+      return capture(...args);
+    });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    expect(screen.queryByRole("button", { name: /^Proof recording/ })).toBeNull();
+    await goTo("Proof");
+    await userEvent.click(screen.getByRole("button", { name: "New comparison" }));
+    await userEvent.type(screen.getByLabelText("Game program name"), "PillTest.exe");
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await screen.findByRole("heading", { name: "Steps" });
+    await userEvent.click(screen.getByRole("button", { name: "Record" }));
+
+    await goTo("Home");
+    await userEvent.click(await screen.findByRole("button", { name: "Proof recording" }));
+    expect(await screen.findByRole("heading", { name: "PillTest.exe", level: 2 })).toBeTruthy();
+    finish();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Proof recording" })).toBeNull());
+  });
+
   it("the proof guide walks before runs, one change, then after runs", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

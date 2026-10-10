@@ -22,6 +22,7 @@ import type { Probe } from "../../generated/Probe";
 import type { SystemAudit } from "../../generated/SystemAudit";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
+import { reportNotes } from "../../lib/playReport";
 import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
 import { restartCheck } from "../../lib/restartCheck";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -71,6 +72,7 @@ export function HomeView() {
       <Recommended />
       {/* Gentle, so after the steps that matter now. */}
       <Reminders />
+      <LastGame />
       <YourPc audit={audit} />
       <RightNow />
       <div className="grid items-start gap-3.5 lg:grid-cols-[1.65fr_1fr]">
@@ -1064,6 +1066,50 @@ function Reminders() {
         ),
       )}
       <p className="text-xs text-ink-faint">Not now puts a reminder off for a month. Settings can turn them off.</p>
+    </section>
+  );
+}
+
+/** A warning from the last game's graphics card readings (N110), so heat
+ * is seen without opening Tools. Shown until PeakTweaks closes or "Got it". */
+function LastGame() {
+  const report = useStore((s) => s.play?.lastSession ?? null);
+  const games = useStore((s) => s.games);
+  const sample = useStore((s) => s.sample);
+  const navigate = useNavigate();
+  const [seen, setSeen] = useState<number | null>(null);
+  if (!report || seen === report.endedUnixMs) return null;
+  const warnings = reportNotes(report).filter((n) => n.tone === "warn");
+  const first = warnings[0];
+  if (!first) return null;
+  const name = games.find((g) => g.id === report.game)?.name ?? report.game;
+  return (
+    <section aria-label="Last game" className="print:hidden">
+      <Callout
+        tone="warn"
+        title={
+          <>
+            During {name}: {first.title.charAt(0).toLowerCase() + first.title.slice(1)}
+            {sample && (
+              <>
+                {" "}
+                <SampleBadge />
+              </>
+            )}
+          </>
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => navigate("tools")}>Open Tools</Button>
+            <Button variant="ghost" onClick={() => setSeen(report.endedUnixMs)}>
+              Got it
+            </Button>
+          </div>
+        }
+      >
+        <p>{first.text}</p>
+        {warnings.length > 1 && <p className="mt-1">Tools, under While you play, has the rest of what was read.</p>}
+      </Callout>
     </section>
   );
 }

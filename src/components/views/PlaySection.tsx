@@ -1,7 +1,10 @@
 import { useId, useState, type ReactNode } from "react";
 
+import type { PlayReport } from "../../generated/PlayReport";
 import type { Settings } from "../../generated/Settings";
 import { explain } from "../../lib/errors";
+import { formatDateTime, formatDuration } from "../../lib/format";
+import { reportNotes } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
 
@@ -110,8 +113,36 @@ export function PlaySection() {
           on a laptop while a game runs.
         </SwitchRow>
         {failedHere && settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
+        {play?.lastSession && <LastSession report={play.lastSession} name={name(play.lastSession.game)} />}
       </Card>
     </section>
+  );
+}
+
+/** What the graphics card did during the last game (plan 6.2 item 6,
+ * advice only). Read while the game ran; nothing was changed by it. */
+function LastSession({ report, name }: { report: PlayReport; name: string }) {
+  const headingId = useId();
+  const seconds = (report.endedUnixMs - report.startedUnixMs) / 1000;
+  const hottest = report.gpuHottestC;
+  return (
+    <div className="border-t border-line pt-4" role="group" aria-labelledby={headingId}>
+      <h3 id={headingId} className="font-bold">
+        Last game: {name}
+      </h3>
+      <p className="mt-1 text-sm text-ink-muted">
+        Ran for {formatDuration(seconds)}, until {formatDateTime(report.endedUnixMs)}. PeakTweaks read the graphics
+        card every few seconds while it ran and changed nothing.
+        {hottest.state === "yes" && ` Hottest reading: ${hottest.value} °C.`}
+      </p>
+      <div className="mt-3 flex flex-col gap-2">
+        {reportNotes(report).map((n) => (
+          <Callout key={n.title} tone={n.tone} title={n.title}>
+            {n.text}
+          </Callout>
+        ))}
+      </div>
+    </div>
   );
 }
 

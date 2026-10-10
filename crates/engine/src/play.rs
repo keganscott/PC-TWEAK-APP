@@ -27,6 +27,9 @@
 use serde::Serialize;
 use ts_rs::TS;
 
+use crate::probe::Probe;
+use crate::proof::nvml::{GpuLive, ThrottleReason, ThrottleSummary, ThrottleTally};
+
 /// A known game and the name of its program while it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameProcess {
@@ -143,6 +146,9 @@ pub struct PlayStatus {
     pub on_wifi: bool,
     /// Ids of the games watched for (`game_processes`), each once.
     pub watched: Vec<String>,
+    /// What the graphics card did during the last game that closed while
+    /// PeakTweaks was open. Kept until PeakTweaks closes; not saved.
+    pub last_session: Option<PlayReport>,
 }
 
 impl PlayStatus {
@@ -326,12 +332,200 @@ impl Drop for TimerRequest {
     }
 }
 
+/// What the graphics card did while a game ran (plan 6.2 item 6: GPU
+/// throttling, advice only). Read through NVML on NVIDIA cards, every few
+/// seconds with the watcher's look; nothing is changed by it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayReport {
+    /// Id from `env::KNOWN_GAMES`.
+    pub game: String,
+    #[ts(type = "number")]
+    pub started_unix_ms: u64,
+    /// The last look that saw the game running.
+    #[ts(type = "number")]
+    pub ended_unix_ms: u64,
+    /// The reasons NVIDIA's driver gave for holding clocks down, and in how
+    /// many of the readings each was active.
+    pub gpu_throttle: Probe<ThrottleSummary>,
+    /// The highest GPU temperature read, in degrees Celsius.
+    pub gpu_hottest_c: Probe<u32>,
+}
+
+/// Builds a `PlayReport` from one reading per look while a game runs.
+#[derive(Default)]
+pub struct PlayTally {
+    game: String,
+    started_unix_ms: u64,
+    last_seen_unix_ms: u64,
+    throttle: ThrottleTally,
+    hottest: Option<u32>,
+    /// NVML answered and listed no NVIDIA GPU.
+    no_gpu: Option<String>,
+    /// Why a temperature could not be read.
+    temperature_problem: Option<String>,
+}
+
+impl PlayTally {
+    pub fn new(game: &str, now_unix_ms: u64) -> Self {
+        Self {
+            game: game.to_owned(),
+            started_unix_ms: now_unix_ms,
+            last_seen_unix_ms: now_unix_ms,
+            ..Self::default()
+        }
+    }
+
+    /// One look's readings, taken while the game was running.
+    pub fn add(&mut self, now_unix_ms: u64, reasons: Probe<Vec<ThrottleReason>>, gpus: Probe<Vec<GpuLive>>) {
+        self.last_seen_unix_ms = now_unix_ms.max(self.last_seen_unix_ms);
+        self.throttle.add(reasons);
+        match gpus {
+            Probe::Yes { value } => {
+                for gpu in value {
+                    match gpu.temperature_c {
+                        Probe::Yes { value } => self.hottest = Some(self.hottest.map_or(value, |h| h.max(value))),
+                        Probe::No { reason } | Probe::Unknown { reason } => {
+                            self.temperature_problem.get_or_insert(reason);
+                        }
+                    }
+                }
+            }
+            Probe::No { reason } => {
+                self.no_gpu.get_or_insert(reason);
+            }
+            Probe::Unknown { reason } => {
+                self.temperature_problem.get_or_insert(reason);
+            }
+        }
+    }
+
+    pub fn finish(self) -> PlayReport {
+        let throttle = self.throttle.finish();
+        let gpu_throttle = match (&throttle, &self.no_gpu) {
+            (Probe::Unknown { .. }, Some(reason)) => Probe::no(reason.clone()),
+            _ => throttle,
+        };
+        let gpu_hottest_c = match (self.hottest, self.no_gpu, self.temperature_problem) {
+            (Some(t), _, _) => Probe::yes(t),
+            (None, Some(reason), _) => Probe::no(reason),
+            (None, None, Some(reason)) => Probe::unknown(reason),
+            (None, None, None) => Probe::unknown("no GPU readings were taken while the game ran"),
+        };
+        PlayReport {
+            game: self.game,
+            started_unix_ms: self.started_unix_ms,
+            ended_unix_ms: self.last_seen_unix_ms,
+            gpu_throttle,
+            gpu_hottest_c,
+        }
+    }
+}
+
+/// One look at the graphics card for `PlayTally::add`: the clock-limit
+/// reasons and the live readings, through the NVML library the live readings
+/// on Home use. Unknown off Windows.
+pub fn gpu_look() -> (Probe<Vec<ThrottleReason>>, Probe<Vec<GpuLive>>) {
+    #[cfg(windows)]
+    {
+        use crate::proof::nvml::ThrottleSampler;
+        let nvml = crate::proof::nvml::shared();
+        (nvml.sample(), nvml.live())
+    }
+    #[cfg(not(windows))]
+    {
+        let why = "graphics card readings are only taken on Windows";
+        (Probe::unknown(why), Probe::unknown(why))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    fn gpu(temperature: Probe<u32>) -> GpuLive {
+        GpuLive {
+            name: Probe::yes("GPU".to_owned()),
+            busy_percent: Probe::yes(90),
+            temperature_c: temperature,
+            memory_used_bytes: Probe::yes(1),
+            memory_total_bytes: Probe::yes(2),
+        }
+    }
+
+    #[test]
+    fn a_session_report_counts_each_reason_and_keeps_the_hottest_reading() {
+        use ThrottleReason::*;
+        let mut tally = PlayTally::new("fortnite", 1_000);
+        tally.add(
+            4_000,
+            Probe::yes(vec![SoftwarePowerCap]),
+            Probe::yes(vec![gpu(Probe::yes(70))]),
+        );
+        tally.add(
+            7_000,
+            Probe::yes(vec![SoftwarePowerCap, SoftwareThermalSlowdown]),
+            Probe::yes(vec![gpu(Probe::yes(83)), gpu(Probe::unknown("no sensor"))]),
+        );
+        // A look whose reading failed counts for neither.
+        tally.add(10_000, Probe::unknown("NVML busy"), Probe::unknown("NVML busy"));
+        let report = tally.finish();
+        assert_eq!(report.game, "fortnite");
+        assert_eq!((report.started_unix_ms, report.ended_unix_ms), (1_000, 10_000));
+        assert_eq!(report.gpu_hottest_c, Probe::yes(83));
+        let Probe::Yes { value } = report.gpu_throttle else {
+            panic!("throttle not summed: {:?}", report.gpu_throttle)
+        };
+        assert_eq!(value.samples, 2);
+        let count = |r| value.seen.iter().find(|s| s.reason == r).map(|s| s.samples);
+        assert_eq!(count(SoftwarePowerCap), Some(2));
+        assert_eq!(count(SoftwareThermalSlowdown), Some(1));
+        assert_eq!(count(HardwareThermalSlowdown), None);
+    }
+
+    /// On Windows CI: a look at the graphics card answers (the runners have
+    /// no NVIDIA card, so not with readings) and makes a report.
+    #[cfg(windows)]
+    #[test]
+    fn a_look_at_the_graphics_card_answers_on_this_pc() {
+        let (reasons, gpus) = gpu_look();
+        println!("graphics card look on this runner: {reasons:?} / {gpus:?}");
+        let mut tally = PlayTally::new("fortnite", 0);
+        tally.add(3_000, reasons, gpus);
+        let report = tally.finish();
+        println!("session report on this runner: {report:?}");
+        if let Probe::Yes { value } = &report.gpu_throttle {
+            assert_eq!(value.samples, 1);
+        }
+    }
+
+    #[test]
+    fn a_pc_without_an_nvidia_card_reports_no_not_unknown() {
+        let mut tally = PlayTally::new("roblox", 0);
+        let none = "NVML reports no NVIDIA GPU";
+        tally.add(3_000, Probe::no(none), Probe::no(none));
+        let report = tally.finish();
+        assert_eq!(report.gpu_throttle, Probe::no(none));
+        assert_eq!(report.gpu_hottest_c, Probe::no(none));
+    }
+
+    #[test]
+    fn a_missing_library_stays_unknown_with_its_reason() {
+        let mut tally = PlayTally::new("roblox", 0);
+        let why = "nvml.dll was not found";
+        tally.add(3_000, Probe::unknown(why), Probe::unknown(why));
+        let report = tally.finish();
+        assert_eq!(report.gpu_throttle, Probe::unknown(why));
+        assert_eq!(report.gpu_hottest_c, Probe::unknown(why));
+        // A game that closed before any look read anything.
+        let report = PlayTally::new("roblox", 0).finish();
+        assert!(matches!(report.gpu_throttle, Probe::Unknown { .. }));
+        assert!(matches!(report.gpu_hottest_c, Probe::Unknown { .. }));
     }
 
     #[test]

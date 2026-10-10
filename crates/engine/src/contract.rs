@@ -24,7 +24,8 @@ use crate::journal::{
 };
 use crate::memory::{MemoryUse, StandbyPurge};
 use crate::netcheck::{read, summarize, NetworkCheck, PingTarget};
-use crate::play::PlayStatus;
+use crate::play::{PlayReport, PlayStatus};
+use crate::probe::Probe;
 use crate::proof::metrics::compute_stats;
 use crate::proof::nvml::{ThrottleReason, ThrottleSeen, ThrottleSummary};
 use crate::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
@@ -815,6 +816,25 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             gaming_mode_active: true,
             timer_held: Some(5_000),
             problem: None,
+            last_session: Some(PlayReport {
+                game: "fortnite".into(),
+                started_unix_ms: 1_786_280_400_000,
+                ended_unix_ms: 1_786_282_800_000,
+                gpu_throttle: Probe::yes(ThrottleSummary {
+                    samples: 800,
+                    seen: vec![
+                        ThrottleSeen {
+                            reason: ThrottleReason::SoftwarePowerCap,
+                            samples: 760,
+                        },
+                        ThrottleSeen {
+                            reason: ThrottleReason::SoftwareThermalSlowdown,
+                            samples: 48,
+                        },
+                    ],
+                }),
+                gpu_hottest_c: Probe::yes(84),
+            }),
             ..PlayStatus::watching()
         },
     );

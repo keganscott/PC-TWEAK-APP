@@ -59,13 +59,10 @@ pub fn read() -> LiveReadings {
 
 #[cfg(windows)]
 mod imp {
-    use std::sync::OnceLock;
-
     use windows::Win32::Foundation::FILETIME;
     use windows::Win32::System::Threading::GetSystemTimes;
 
     use super::*;
-    use crate::proof::nvml::NvmlSampler;
 
     fn times() -> windows::core::Result<(u64, u64, u64)> {
         let (mut idle, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default());
@@ -90,8 +87,7 @@ mod imp {
     }
 
     pub fn gpus() -> Probe<Vec<GpuLive>> {
-        static NVML: OnceLock<NvmlSampler> = OnceLock::new();
-        NVML.get_or_init(NvmlSampler::new).live()
+        crate::proof::nvml::shared().live()
     }
 }
 

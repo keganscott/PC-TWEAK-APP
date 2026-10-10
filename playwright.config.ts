@@ -18,6 +18,8 @@ export default defineConfig({
   },
   projects: [
     { name: "1366x768", use: { ...devices["Desktop Chrome"], viewport: { width: 1366, height: 768 } } },
+    // Plan section 7: 1366x768 at 125% and 150% Windows scaling.
+    { name: "1366x768 at 125%", use: { ...devices["Desktop Chrome"], viewport: { width: 1093, height: 614 }, deviceScaleFactor: 1.25 } },
     { name: "1366x768 at 150%", use: { ...devices["Desktop Chrome"], viewport: { width: 911, height: 512 }, deviceScaleFactor: 1.5 } },
   ],
   webServer: {

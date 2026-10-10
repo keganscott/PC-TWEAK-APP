@@ -9,6 +9,7 @@ import type { Record as JournalRecord } from "../../generated/Record";
 import { explain } from "../../lib/errors";
 import { formatBytes, formatDateTime, formatDuration } from "../../lib/format";
 import { summaryText } from "../../lib/report";
+import { appliedAt } from "../../lib/restartCheck";
 import { planSetup, readSetupCode, setupCode } from "../../lib/setupCode";
 import { describeEffect, describeItem, describeState } from "../../lib/systemItems";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -31,6 +32,7 @@ export function BackupsView() {
   // From the journal, not the tweak list: every change with an apply still on
   // record, including PeakTweaks' own and any this version no longer ships.
   const applied = useMemo(() => journal?.applied ?? [], [journal]);
+  const appliedTimes = useMemo(() => (journal ? appliedAt(journal) : new Map<string, number>()), [journal]);
   const records = useMemo(() => [...(journal?.records ?? [])].sort((a, b) => b.seq - a.seq), [journal]);
   const name = (id: string) =>
     tweaks.find((t) => t.id === id)?.name ?? applied.find((c) => c.tweakId === id)?.name ?? id;
@@ -108,7 +110,7 @@ export function BackupsView() {
           ) : (
             <ul className="mt-3 divide-y divide-line">
               {applied.map((c) => (
-                <AppliedRow key={c.tweakId} change={c} technical={technical} />
+                <AppliedRow key={c.tweakId} change={c} when={appliedTimes.get(c.tweakId)} technical={technical} />
               ))}
             </ul>
           )}
@@ -359,7 +361,7 @@ function CopySetup() {
   );
 }
 
-function AppliedRow({ change, technical }: { change: AppliedChange; technical: boolean }) {
+function AppliedRow({ change, when, technical }: { change: AppliedChange; when: number | undefined; technical: boolean }) {
   const id = change.tweakId;
   const op = useStore((s) => s.tweakOps[id]);
   const { revertTweak, clearTweakOp } = useActions();
@@ -369,6 +371,7 @@ function AppliedRow({ change, technical }: { change: AppliedChange; technical: b
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <span className="text-sm">{change.name}</span>
+          {when !== undefined && <p className="text-xs text-ink-faint">Applied {formatDateTime(when)}</p>}
           {note && <p className="text-xs text-ink-faint">{note}</p>}
           {technical && <p className="font-mono text-xs text-ink-faint">{id}</p>}
         </div>

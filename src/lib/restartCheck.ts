@@ -28,7 +28,7 @@ export interface RestartCheck {
 }
 
 /** When each change was last applied, from the change record. */
-function appliedAt(journal: JournalView): Map<string, number> {
+export function appliedAt(journal: JournalView): Map<string, number> {
   const at = new Map<string, number>();
   for (const r of journal.records) {
     if ((r.record === "write" || r.record === "change") && r.action === "apply") {

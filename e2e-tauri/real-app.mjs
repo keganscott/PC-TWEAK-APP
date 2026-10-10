@@ -257,6 +257,21 @@ try {
     }
   });
 
+  await step("a pasted setup is checked against this PC's own list (N106)", async () => {
+    // Checked only: nothing is applied here (apply-undo.mjs covers applying).
+    const paste = await driver.findElement(By.css("textarea#setup-paste"));
+    await paste.sendKeys('{"peaktweaks-setup":1,"changes":["gaming.gamemode","not.a.real.change"]}');
+    await driver.findElement(By.xpath("//button[normalize-space()='Check it']")).click();
+    const plan = await driver.wait(
+      until.elementLocated(By.xpath("//*[@role='status'][contains(normalize-space(), 'Not available on this PC')]")),
+      10_000,
+    );
+    const shown = await plan.getText();
+    console.log(`\n===== Pasted setup, as checked here =====\n${shown}\n`);
+    assert.ok(shown.includes("Not available on this PC (1): not.a.real.change."), "an id this PC lacks is listed as not here");
+    assert.ok(!shown.includes("gaming.gamemode"), "a change on this PC's list is named by its name, not its id");
+  });
+
   // N10: the permission boundary, probed from inside the page the way injected
   // script would. This build's capability is the shipped one minus
   // allow-revert-all (tauri.e2e.conf.json; command_audit.rs keeps them in sync).

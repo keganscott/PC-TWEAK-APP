@@ -23,7 +23,9 @@ async function expectNoSeriousA11yIssues(page: Page) {
 
 test("the SAMPLE label is always visible outside the app", async ({ page }) => {
   await open(page);
-  await expect(page.getByText("Demo data, not this PC")).toBeVisible();
+  // Exact: the printed scan's own SAMPLE line also contains these words, hidden
+  // on screen, and appears once the scan has loaded.
+  await expect(page.getByText("Demo data, not this PC", { exact: true })).toBeVisible();
 });
 
 test("every screen loads and passes an accessibility scan", async ({ page }) => {

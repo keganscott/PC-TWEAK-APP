@@ -739,6 +739,11 @@ describe("review regressions", () => {
     await userEvent.click(screen.getByRole("radio", { name: "Apex Legends" }));
     await waitFor(() => expect((screen.getByRole("radio", { name: "Apex Legends" }) as HTMLInputElement).checked).toBe(true));
     expect(list.value).toBe("");
+    // The main game's card comes first, marked as such.
+    const first = screen.getAllByRole("heading", { level: 3 })[0]!;
+    expect(first.textContent).toBe("Apex Legends");
+    expect(within(first.closest("li") as HTMLElement).getByText("Your main game")).toBeTruthy();
+    expect(screen.getAllByText("Your main game")).toHaveLength(1);
 
     await userEvent.selectOptions(list, "rust");
     await waitFor(() => expect(list.value).toBe("rust"));

@@ -3,9 +3,10 @@
 //! it the same way. Stored as `window.json` next to the settings, in the
 //! protected data directory.
 //!
-//! Only a place that still fits is used: one that falls off every screen now
-//! (a monitor unplugged, the resolution lowered) gives Windows' default, as
-//! does a missing or unreadable file.
+//! Only a place that can still be reached is used: one whose title bar falls
+//! off every screen now (a monitor unplugged, the resolution lowered) gives
+//! Windows' default, as does a missing or unreadable file. A window larger
+//! than its screen is now is shrunk and moved to fit on it.
 
 use std::path::{Path, PathBuf};
 
@@ -55,18 +56,60 @@ impl WindowPlace {
         (MIN_WIDTH..=MAX_SIDE).contains(&self.width) && (MIN_HEIGHT..=MAX_SIDE).contains(&self.height)
     }
 
-    /// True when enough of the window's title bar is on one of the screens to
-    /// grab it, so it is never restored somewhere it cannot be reached.
-    pub fn fits(&self, screens: &[Screen]) -> bool {
+    /// The place to open at on these screens, or `None` when not enough of
+    /// the title bar is on any of them to grab it, so the window is never
+    /// restored somewhere it cannot be reached. `frame` is what the window's
+    /// border and title bar add to its inside size (`width`, `height`); a
+    /// window larger than its screen's work area is shrunk to it and moved
+    /// onto it, so every edge can be reached.
+    pub fn placed_on(&self, screens: &[Screen], frame: (u32, u32)) -> Option<WindowPlace> {
         let (left, top) = (i64::from(self.x), i64::from(self.y));
-        let right = left + i64::from(self.width);
-        screens.iter().any(|s| {
+        let right = left + i64::from(self.width) + i64::from(frame.0);
+        let screen = screens.iter().find(|s| {
             let (sl, st) = (i64::from(s.x), i64::from(s.y));
             let (sr, sb) = (sl + i64::from(s.width), st + i64::from(s.height));
             let overlap = right.min(sr) - left.max(sl);
             overlap >= GRAB && top >= st - BORDER && top + GRAB <= sb
+        })?;
+        let width = self.width.min(room(screen.width, frame.0));
+        let height = self.height.min(room(screen.height, frame.1));
+        Some(WindowPlace {
+            x: fit_axis(self.x, width + frame.0, screen.x, screen.width),
+            y: fit_axis(self.y, height + frame.1, screen.y, screen.height),
+            width,
+            height,
+            ..*self
         })
     }
+}
+
+/// The inside size that fits in a screen's length once the frame is added.
+fn room(screen: u32, frame: u32) -> u32 {
+    screen.saturating_sub(frame).max(1)
+}
+
+/// Moves a window's start back so its far edge is on the screen (allowing for
+/// Windows' invisible border), never past the screen's near edge.
+fn fit_axis(start: i32, outer: u32, screen_start: i32, screen_len: u32) -> i32 {
+    let screen_end = i64::from(screen_start) + i64::from(screen_len);
+    let start = i64::from(start);
+    if start + i64::from(outer) <= screen_end + BORDER {
+        return start as i32;
+    }
+    let moved = (screen_end - i64::from(outer)).max(i64::from(screen_start));
+    moved.min(start) as i32
+}
+
+/// Whether Windows shows the window maximised or minimised. Read from Windows
+/// itself: the window library's own flag is set only after it reports the
+/// move that maximising makes, so that move would be taken for a normal place.
+#[cfg(windows)]
+pub fn maximized_or_minimized(hwnd: *mut std::ffi::c_void) -> (bool, bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsZoomed};
+    let hwnd = HWND(hwnd);
+    // SAFETY: both only read the window's style; an invalid handle reads false.
+    unsafe { (IsZoomed(hwnd).as_bool(), IsIconic(hwnd).as_bool()) }
 }
 
 /// Where the window's place lives. `None` (tests, dev) keeps nothing.
@@ -152,9 +195,15 @@ mod tests {
         assert_eq!(WindowPlaceStore::in_memory().load(), None);
     }
 
+    const FRAME: (u32, u32) = (16, 39);
+
+    fn reachable(place: WindowPlace, screens: &[Screen]) -> bool {
+        place.placed_on(screens, FRAME).is_some()
+    }
+
     #[test]
     fn a_place_is_used_only_while_its_title_bar_is_on_a_screen() {
-        assert!(PLACE.fits(&[MAIN]));
+        assert_eq!(PLACE.placed_on(&[MAIN], FRAME), Some(PLACE), "fits as it is");
         // A second screen to the left, at negative coordinates.
         let left = Screen {
             x: -1920,
@@ -167,16 +216,63 @@ mod tests {
             y: 50,
             ..PLACE
         };
-        assert!(there.fits(&[left, MAIN]));
-        assert!(!there.fits(&[MAIN]), "that screen was unplugged");
+        assert_eq!(there.placed_on(&[left, MAIN], FRAME), Some(there));
+        assert!(!reachable(there, &[MAIN]), "that screen was unplugged");
         // Mostly off the right edge: only a sliver of the title bar shows.
-        let edge = WindowPlace { x: 2500, ..PLACE };
-        assert!(!edge.fits(&[MAIN]));
+        assert!(!reachable(WindowPlace { x: 2500, ..PLACE }, &[MAIN]));
         // Above the top, or with the title bar under the bottom edge.
-        assert!(!WindowPlace { y: -40, ..PLACE }.fits(&[MAIN]));
+        assert!(!reachable(WindowPlace { y: -40, ..PLACE }, &[MAIN]));
         // Snapped to the left half: its invisible border is off the screen.
-        assert!(WindowPlace { x: -7, y: -7, ..PLACE }.fits(&[MAIN]));
-        assert!(!WindowPlace { y: 1350, ..PLACE }.fits(&[MAIN]));
-        assert!(!PLACE.fits(&[]), "no screens known");
+        let snapped = WindowPlace { x: -7, y: -7, ..PLACE };
+        assert_eq!(snapped.placed_on(&[MAIN], FRAME), Some(snapped));
+        assert!(!reachable(WindowPlace { y: 1350, ..PLACE }, &[MAIN]));
+        assert!(!reachable(PLACE, &[]), "no screens known");
+    }
+
+    #[test]
+    fn a_window_larger_than_its_screen_now_is_shrunk_onto_it() {
+        // Saved on a 2560x1400 screen; the resolution is now 1366x728.
+        let small = Screen {
+            x: 0,
+            y: 0,
+            width: 1366,
+            height: 728,
+        };
+        let big = WindowPlace {
+            x: 0,
+            y: 0,
+            width: 2500,
+            height: 1360,
+            maximized: false,
+        };
+        let placed = big.placed_on(&[small], FRAME).unwrap();
+        assert_eq!((placed.width, placed.height), (1366 - 16, 728 - 39));
+        assert_eq!((placed.x, placed.y), (0, 0));
+        // Partly past the right and bottom edges: moved back so all of it shows.
+        let late = WindowPlace {
+            x: 800,
+            y: 300,
+            width: 1100,
+            height: 650,
+            ..big
+        };
+        let placed = late.placed_on(&[small], FRAME).unwrap();
+        assert_eq!((placed.width, placed.height), (1100, 650), "small enough already");
+        assert_eq!((placed.x, placed.y), (1366 - 1100 - 16, 728 - 650 - 39));
+        assert!(!placed.maximized);
+        // On a screen to the left, it stays on that screen.
+        let left = Screen {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        };
+        let there = WindowPlace {
+            x: -1900,
+            width: 2400,
+            ..late
+        };
+        let placed = there.placed_on(&[left, MAIN], FRAME).unwrap();
+        assert_eq!((placed.x, placed.width), (-1920, 1920 - 16));
     }
 }

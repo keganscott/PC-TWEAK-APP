@@ -30,10 +30,21 @@ pub fn restore(window: &WebviewWindow, store: WindowPlaceStore) -> Tracker {
             }
         })
         .collect();
-    let saved = store.load().filter(|p| p.fits(&screens));
+    // What the border and title bar add, read off the window at its default size.
+    let frame = match (window.outer_size(), window.inner_size()) {
+        (Ok(outer), Ok(inner)) => (
+            outer.width.saturating_sub(inner.width),
+            outer.height.saturating_sub(inner.height),
+        ),
+        _ => (0, 0),
+    };
+    let saved = store.load().and_then(|p| p.placed_on(&screens, frame));
     if let Some(p) = saved {
-        let _ = window.set_size(PhysicalSize::new(p.width, p.height));
+        // Moved first, so the size is set at the scale of the screen it ends
+        // up on: a size set before moving to a screen with another scale is
+        // rescaled by Windows.
         let _ = window.set_position(PhysicalPosition::new(p.x, p.y));
+        let _ = window.set_size(PhysicalSize::new(p.width, p.height));
         if p.maximized {
             let _ = window.maximize();
         }
@@ -63,7 +74,7 @@ pub fn on_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
             }
         }
         WindowEvent::CloseRequested { .. } => {
-            let maximized = window.is_maximized().unwrap_or(false);
+            let maximized = shown(window).is_some_and(|(maximized, _)| maximized);
             if let Some(place) = normal_place(window).or(*last) {
                 // Best effort: a place not saved only means the default next time.
                 let _ = tracker.store.save(&WindowPlace { maximized, ..place });
@@ -75,7 +86,8 @@ pub fn on_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
 
 /// Where the window is, when it is shown at its own size.
 fn normal_place<R: Runtime>(window: &Window<R>) -> Option<WindowPlace> {
-    if window.is_maximized().ok()? || window.is_minimized().ok()? {
+    let (maximized, minimized) = shown(window)?;
+    if maximized || minimized {
         return None;
     }
     let position = window.outer_position().ok()?;
@@ -87,4 +99,16 @@ fn normal_place<R: Runtime>(window: &Window<R>) -> Option<WindowPlace> {
         height: size.height,
         maximized: false,
     })
+}
+
+/// Whether the window is maximised and whether it is minimised.
+#[cfg(windows)]
+fn shown<R: Runtime>(window: &Window<R>) -> Option<(bool, bool)> {
+    let hwnd = window.hwnd().ok()?;
+    Some(peaktweaks_engine::window_place::maximized_or_minimized(hwnd.0))
+}
+
+#[cfg(not(windows))]
+fn shown<R: Runtime>(window: &Window<R>) -> Option<(bool, bool)> {
+    Some((window.is_maximized().ok()?, window.is_minimized().ok()?))
 }

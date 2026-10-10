@@ -178,6 +178,8 @@ pub const ALL_GAMES: &[GameInfo] = &[
     game("deltaforce", "Delta Force", false, true),
     game("battlefield6", "Battlefield 6", false, true),
     game("naraka", "Naraka: Bladepoint", false, true),
+    // Kegan, 2026-10-10: "one of my top games is Arc Raiders".
+    game("arcraiders", "ARC Raiders", false, true),
 ];
 
 /// The games offered. Ids are validated against this list.

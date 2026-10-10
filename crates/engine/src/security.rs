@@ -483,6 +483,12 @@ const REQUIREMENTS: &[Requirement] = &[
         scope: "",
         source: "",
     },
+    Requirement {
+        game_id: "arcraiders",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
 ];
 
 pub fn evaluate_requirements(requires: &[SecurityFeature], report: &SecurityReport) -> ReadinessStatus {

@@ -839,7 +839,8 @@ describe("review regressions", () => {
 
     // A game from the list gets its card once it is the main game.
     expect(screen.getAllByRole("heading", { level: 3 }).some((h) => h.textContent === "Minecraft")).toBe(false);
-    await userEvent.selectOptions(screen.getByLabelText("Or another game"), "minecraft");
+    await userEvent.type(screen.getByRole("combobox", { name: "Or another game" }), "mine");
+    await userEvent.click(screen.getByRole("option", { name: "Minecraft" }));
     await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 }).some((h) => h.textContent === "Minecraft")).toBe(true));
     const minecraft = card("Minecraft");
     expect(within(minecraft).getByText("Not found in the places PeakTweaks looks.")).toBeTruthy();
@@ -855,37 +856,71 @@ describe("review regressions", () => {
     // The sample PC has Fortnite and Counter-Strike 2 installed, and the picker says so.
     expect(buttons).toEqual(["Fortnite on this PC", "Valorant", "Counter-Strike 2 on this PC", "Apex Legends", "Call of Duty"]);
     expect(screen.getByRole("radio", { name: "Fortnite on this PC" })).toBeTruthy();
-    const list = screen.getByLabelText("Or another game") as HTMLSelectElement;
-    // A placeholder, then 25 games in name order, none of them a button.
-    const names = Array.from(list.options).slice(1).map((o) => o.text);
-    expect(names).toHaveLength(25);
-    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    const box = screen.getByRole("combobox", { name: "Or another game" }) as HTMLInputElement;
+    // Opened, the list holds 26 games in name order, none of them a button.
+    await userEvent.click(box);
+    const names = within(screen.getByRole("listbox", { name: "Games" }))
+      .getAllByRole("option")
+      .map((o) => o.firstChild!.textContent);
+    expect(names).toHaveLength(26);
+    expect(names).toEqual([...names].sort((a, b) => a!.localeCompare(b!)));
     expect(names.filter((n) => fx.games.some((g) => g.featured && g.name === n))).toEqual([]);
+    expect(names).toContain("ARC Raiders");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).toBeNull();
 
     await userEvent.click(screen.getByRole("radio", { name: "Apex Legends" }));
     await waitFor(() => expect((screen.getByRole("radio", { name: "Apex Legends" }) as HTMLInputElement).checked).toBe(true));
-    expect(list.value).toBe("");
+    expect(box.value).toBe("");
     // The main game's card comes first, marked as such.
     const first = screen.getAllByRole("heading", { level: 3 })[0]!;
     expect(first.textContent).toBe("Apex Legends");
     expect(within(first.closest("li") as HTMLElement).getByText("Your main game")).toBeTruthy();
     expect(screen.getAllByText("Your main game")).toHaveLength(1);
 
-    await userEvent.selectOptions(list, "rust");
-    await waitFor(() => expect(list.value).toBe("rust"));
+    // Typing narrows the list; Enter picks the first match.
+    await userEvent.type(box, "rus");
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((o) => o.firstChild!.textContent)).toEqual(["Rust"]);
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(box.value).toBe("Rust"));
     expect(screen.getAllByRole("radio").every((r) => !(r as HTMLInputElement).checked)).toBe(true);
     // Looked for in Steam's libraries and not there.
     const card = (name: string) =>
       screen.getAllByRole("heading", { level: 3 }).find((h) => h.textContent === name)!.closest("li") as HTMLElement;
     expect(within(card("Rust")).getByText("Not found in the places PeakTweaks looks.")).toBeTruthy();
     // Not on Steam and not looked for, so the card does not claim it is missing.
-    await userEvent.selectOptions(list, "league");
-    await waitFor(() => expect(list.value).toBe("league"));
+    await userEvent.clear(box);
+    await userEvent.type(box, "legends");
+    await userEvent.click(screen.getByRole("option", { name: "League of Legends" }));
+    await waitFor(() => expect(box.value).toBe("League of Legends"));
     expect(within(card("League of Legends")).queryByText("Not found in the places PeakTweaks looks.")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "No main game" }));
-    await waitFor(() => expect(list.value).toBe(""));
+    await waitFor(() => expect(box.value).toBe(""));
     expect(screen.queryByRole("button", { name: "No main game" })).toBeNull();
+  });
+
+  it("the game search ignores capitals and punctuation, moves with the arrow keys and says when nothing matches", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const box = screen.getByRole("combobox", { name: "Or another game" }) as HTMLInputElement;
+    await userEvent.type(box, "arc-rai");
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((o) => o.firstChild!.textContent)).toEqual(["ARC Raiders"]);
+    await userEvent.clear(box);
+    await userEvent.type(box, "o");
+    const options = within(screen.getByRole("listbox")).getAllByRole("option");
+    expect(box.getAttribute("aria-activedescendant")).toBe(options[0]!.id);
+    await userEvent.keyboard("{ArrowDown}");
+    expect(box.getAttribute("aria-activedescendant")).toBe(options[1]!.id);
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+    expect(box.getAttribute("aria-activedescendant")).toBe(options.at(-1)!.id);
+    await userEvent.clear(box);
+    await userEvent.type(box, "zzz");
+    expect(within(screen.getByRole("listbox")).getByText("No game by that name in the list.")).toBeTruthy();
+    // Escape puts back what was there: nothing picked.
+    await userEvent.keyboard("{Escape}");
+    expect(box.value).toBe("");
   });
 
   it("a game found in a Steam library has a Play button that asks Steam to start it", async () => {

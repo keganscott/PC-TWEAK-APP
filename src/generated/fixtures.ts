@@ -898,6 +898,15 @@ export const systemAudit = {
         "status": {
           "status": "no_known_requirements"
         }
+      },
+      {
+        "gameId": "arcraiders",
+        "requires": [],
+        "scope": "",
+        "source": "",
+        "status": {
+          "status": "no_known_requirements"
+        }
       }
     ]
   },
@@ -1631,6 +1640,12 @@ export const games = [
   {
     "id": "naraka",
     "name": "Naraka: Bladepoint",
+    "featured": false,
+    "lookedFor": true
+  },
+  {
+    "id": "arcraiders",
+    "name": "ARC Raiders",
     "featured": false,
     "lookedFor": true
   }

@@ -127,6 +127,9 @@ pub const STEAM_GAMES: &[(&str, &[u32])] = &[
     ("deltaforce", &[2_507_950]),
     ("battlefield6", &[2_807_960]),
     ("naraka", &[1_203_220]),
+    // From memory, not checked against the store API like the others: the
+    // proxy here refuses Steam (VERIFY, NOTES N113).
+    ("arcraiders", &[1_808_500]),
 ];
 
 /// Every offered game found, each with the kind of drive it is on.

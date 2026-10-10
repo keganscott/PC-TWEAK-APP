@@ -256,6 +256,12 @@ pub const GAME_FACTS: &[GameFacts] = &[
         programs: &[],
         stable_path: false,
     },
+    GameFacts {
+        id: "arcraiders",
+        anti_cheat: &[AntiCheat::NotIdentified],
+        programs: &[],
+        stable_path: false,
+    },
 ];
 
 pub fn facts(game_id: &str) -> Option<&'static GameFacts> {
@@ -313,11 +319,12 @@ mod tests {
     }
 
     #[test]
-    fn five_featured_shooters_and_twenty_five_more_each_once() {
-        // Kegan, 2026-10-09: five buttons, then about 25 most-played games.
+    fn five_featured_shooters_and_twenty_six_more_each_once() {
+        // Kegan, 2026-10-09: five buttons, then about 25 most-played games;
+        // 2026-10-10: plus ARC Raiders.
         let featured = ALL_GAMES.iter().filter(|g| g.featured).count();
         assert_eq!(featured, 5);
-        assert_eq!(ALL_GAMES.len() - featured, 25);
+        assert_eq!(ALL_GAMES.len() - featured, 26);
         let mut ids: Vec<&str> = ALL_GAMES.iter().map(|g| g.id).collect();
         ids.sort_unstable();
         ids.dedup();

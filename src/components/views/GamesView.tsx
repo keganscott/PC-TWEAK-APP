@@ -11,6 +11,7 @@ import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { playedReports, reportSummary } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
+import { GameSearch } from "./GameSearch";
 import { Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
 const FEATURE: Record<SecurityFeature, string> = {
@@ -95,23 +96,14 @@ export function GamesView() {
               <label htmlFor="other-game" className="text-sm text-ink-muted">
                 Or another game
               </label>
-              <select
+              <GameSearch
                 id="other-game"
-                value={target !== null && !featured.some((g) => g.id === target) ? target : ""}
-                onChange={(e) => {
-                  if (e.target.value) void selectTargetGame(e.target.value);
-                }}
-                className={`min-w-60 rounded-md border bg-surface-0 px-3 py-2 text-sm ${
-                  target !== null && others.some((g) => g.id === target) ? "border-violet font-bold" : "border-line-strong"
-                }`}
-              >
-                <option value="">More games</option>
-                {others.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {found.has(g.id) ? `${g.name} (on this PC)` : g.name}
-                  </option>
-                ))}
-              </select>
+                games={others}
+                found={found}
+                chosen={others.find((g) => g.id === target) ?? null}
+                disabled={targetOp.status === "running"}
+                onPick={(id) => void selectTargetGame(id)}
+              />
               {target !== null && (
                 <button
                   type="button"

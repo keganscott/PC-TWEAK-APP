@@ -1271,6 +1271,22 @@ describe("review regressions", () => {
     expect(await screen.findByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeTruthy();
   });
 
+  it("Proof opens on a tile for each game found here, and one click sets it to record", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    const games = await screen.findByRole("region", { name: "Record your games" });
+    const tile = (name: string) => within(games).getByRole("article", { name });
+    expect(within(tile("Fortnite")).getByText("Proof can record Fortnite by itself while you play, for a before and after on this PC.")).toBeTruthy();
+    expect(within(tile("Counter-Strike 2")).getByRole("button", { name: "Record my next games" })).toBeTruthy();
+    await userEvent.click(within(tile("Fortnite")).getByRole("button", { name: "Record my next games" }));
+
+    expect(await screen.findByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeTruthy();
+    const card = screen.getByRole("region", { name: "Record while you play" });
+    expect(await within(card).findByText("0 of 3 runs on the before side so far.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Record your games" })).toBeNull();
+  });
+
   it("recording while playing is offered only for a game PeakTweaks watches for", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

@@ -5,7 +5,6 @@ import type { GameInstall } from "../../generated/GameInstall";
 import type { GameReadiness } from "../../generated/GameReadiness";
 import type { GpuPreference } from "../../generated/GpuPreference";
 import type { PlayReport } from "../../generated/PlayReport";
-import type { ProofSessionSummary } from "../../generated/ProofSessionSummary";
 import type { Probe } from "../../generated/Probe";
 import type { SecurityFeature } from "../../generated/SecurityFeature";
 import { explain } from "../../lib/errors";
@@ -13,9 +12,9 @@ import { formatDateTime, formatDuration } from "../../lib/format";
 import { GAME_GUIDANCE } from "../../lib/gameGuidance";
 import { playedReports, reportSummary } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { AUTO_RUNS, type Op } from "../../store/store";
-import { useNavigate } from "../shell/nav";
+import type { Op } from "../../store/store";
 import { GameArt } from "./GameArt";
+import { GameProofActions, useGameProof } from "./GameProof";
 import { GameSearch } from "./GameSearch";
 import { Button, Card, cx, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 
@@ -398,93 +397,36 @@ function GameCard({
 }
 
 /**
- * "Record my next games" (`proof/auto.rs`): one click sets a Proof
- * comparison for this game to record by itself while it is played, and opens
- * Proof on it. Shown for a game found here that the game watcher looks for.
- * Between the two sides it says the before runs are in and the changes come
- * next; once both sides are in, it points at the result on Proof.
+ * "Record my next games" (`proof/auto.rs`, `GameProof.tsx`): one click sets a
+ * Proof comparison for this game to record by itself while it is played, and
+ * opens Proof on it. Shown for a game found here that the game watcher looks
+ * for. Between the two sides it says the before runs are in and the changes
+ * come next; once both sides are in, it points at the result on Proof.
  */
 function MeasureRow({ gameId, exe, name, technical }: { gameId: string; exe: string; name: string; technical: boolean }) {
-  const auto = useStore((s) => s.play?.autoRecord ?? null);
-  const watched = useStore((s) => s.play?.watched);
-  const sessions = useStore((s) => s.proof.sessions);
-  const op = useStore((s) => s.measureOps[gameId]);
-  const { measureGame, showComparison } = useActions();
-  const navigate = useNavigate();
-  if (!watched?.includes(gameId)) return null;
-  const mine = auto?.gameId === gameId ? auto : null;
-  const file = exe.slice(exe.lastIndexOf("\\") + 1).toLowerCase();
-  // The newest comparison made for this game's own program.
-  const latest = sessions
-    .filter((c) => c.session.gameId === gameId && c.session.exe.toLowerCase() === file)
-    .reduce<ProofSessionSummary | null>((a, c) => (!a || c.session.createdUnixMs > a.session.createdUnixMs ? c : a), null);
-  const stage = mine
-    ? "recording"
-    : latest && latest.beforeRuns >= AUTO_RUNS && latest.afterRuns >= AUTO_RUNS
-      ? "done"
-      : latest && latest.beforeRuns >= AUTO_RUNS
-        ? "between"
-        : "none";
-  const open = (sessionId: string) => {
-    showComparison(sessionId);
-    navigate("proof");
-  };
-  const record = (label: string) => (
-    <Button
-      busy={op?.status === "running"}
-      onClick={() => void measureGame(gameId).then((id) => id && navigate("proof"))}
-      icon={<Gamepad2 aria-hidden className="size-4" />}
-    >
-      {label}
-    </Button>
-  );
+  const proof = useGameProof(gameId, exe, name);
+  if (!proof.watched) return null;
   return (
     <div className="mt-3 rounded-xl border border-violet/30 bg-violet/5 p-3">
       <div className="flex items-start gap-3">
         <Gamepad2 aria-hidden className="mt-0.5 size-4 shrink-0 text-violet" />
         <div className="min-w-0 flex-1">
           <p className="text-sm" role="status">
-            {mine
-              ? mine.recordingNow
-                ? `Proof is recording sample ${mine.recorded + 1} of ${mine.wanted} of ${name} now, for the ${mine.side} side.`
-                : `Proof records ${name} while you play: ${mine.recorded} of ${mine.wanted} runs on the ${mine.side} side so far.`
-              : stage === "between"
-                ? `The before side has its ${latest!.beforeRuns} runs of ${name}. Make your changes in Tools, then record the after side the same way.`
-                : stage === "done"
-                  ? `Proof has before and after runs of ${name}, in the test started ${formatDateTime(latest!.session.createdUnixMs)}. The result is on Proof.`
-                  : `Proof can record ${name} by itself while you play, for a before and after on this PC.`}
+            {proof.text}
           </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {mine ? (
-              <Button onClick={() => open(mine.sessionId)}>Open Proof</Button>
-            ) : stage === "between" ? (
-              <>
-                <Button variant="ghost" onClick={() => navigate("tools")}>
-                  Open Tools
-                </Button>
-                {record("Record the after side")}
-              </>
-            ) : stage === "done" ? (
-              <>
-                <Button variant="ghost" onClick={() => open(latest!.session.sessionId)}>
-                  See the result
-                </Button>
-                {record("Record a new test")}
-              </>
-            ) : (
-              record("Record my next games")
-            )}
+          <div className="mt-2">
+            <GameProofActions proof={proof} />
           </div>
-          {stage === "none" && !op && (
+          {proof.stage === "none" && !proof.op && (
             <p className="mt-2 text-xs text-ink-faint">
               For runs that compare fairly, play the same mode and map for the before side and the after side.
             </p>
           )}
         </div>
       </div>
-      {op?.status === "failed" && (
+      {proof.op?.status === "failed" && (
         <div className="mt-2">
-          <ErrorCallout text={explain(op.error)} technical={technical} />
+          <ErrorCallout text={explain(proof.op.error)} technical={technical} />
         </div>
       )}
     </div>

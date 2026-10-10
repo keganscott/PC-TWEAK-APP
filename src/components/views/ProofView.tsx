@@ -12,6 +12,7 @@ import { comparisonText } from "../../lib/report";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { AUTO_RUNS, otherLongWork } from "../../store/store";
 import { useNavigate } from "../shell/nav";
+import { ProofGames } from "./GameProof";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, Spinner, cx } from "../ui/primitives";
 
 /** The engine's limits (proof/capture.rs `validate_timing`). */
@@ -74,7 +75,10 @@ export function ProofView() {
           ) : current ? (
             <SessionDetail summary={current} />
           ) : (
-            <HowItWorks hasSessions={sessions.length > 0} onStart={() => setCreating(true)} />
+            <div className="flex flex-col gap-5">
+              <ProofGames />
+              <HowItWorks hasSessions={sessions.length > 0} onStart={() => setCreating(true)} />
+            </div>
           )}
         </div>
       </div>

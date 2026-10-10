@@ -22,6 +22,9 @@ export interface RestartCheck {
   /** Applied changes that do not read as PeakTweaks left them. */
   setBack: { id: string; name: string }[];
   unreadable: { id: string; name: string }[];
+  /** Applied changes not in the lists given (startup apps, or devices not
+   * read yet), by the change record's name: their state was not checked. */
+  unchecked: string[];
 }
 
 /** When each change was last applied, from the change record. */
@@ -35,7 +38,8 @@ function appliedAt(journal: JournalView): Map<string, number> {
   return at;
 }
 
-/** The check to show now, or null. */
+/** The check to show now, or null. `tweaks` is every list read so far that
+ * can hold an applied change: the catalogue, and the devices once read. */
 export function restartCheck(
   context: ContextInfo | null,
   settings: Settings | null,
@@ -48,17 +52,27 @@ export function restartCheck(
   if (seen !== null && Math.abs(seen - booted) < SAME_BOOT_MS) return null;
 
   const at = appliedAt(journal);
+  const found = (id: string) => tweaks.find((x) => x.id === id);
   const applied = journal.applied.flatMap((a) => {
-    const t = tweaks.find((x) => x.id === a.tweakId);
+    const t = found(a.tweakId);
     return t ? [t] : [];
   });
   const pick = (t: TweakView) => ({ id: t.id, name: t.name });
-  const waited = applied.filter((t) => t.requiresReboot && (at.get(t.id) ?? Infinity) < booted).map(pick);
+  // Waited for this start: applied before it, and after the start already
+  // seen (a change from before that was shown then).
+  const since = seen ?? -Infinity;
+  const waited = applied
+    .filter((t) => {
+      const when = at.get(t.id);
+      return t.requiresReboot && when !== undefined && when < booted && when > since;
+    })
+    .map(pick);
   if (waited.length === 0) return null;
   return {
     booted,
     waited,
     setBack: applied.filter((t) => t.state.status === "drifted" || t.state.status === "default").map(pick),
     unreadable: applied.filter((t) => t.state.status === "unknown").map(pick),
+    unchecked: journal.applied.filter((a) => !found(a.tweakId)).map((a) => a.name),
   };
 }

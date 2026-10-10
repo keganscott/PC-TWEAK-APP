@@ -37,15 +37,16 @@ describe("copying a setup to another PC", () => {
       id: "gated",
       blocked: { code: "no_restore_point" as const, trigger: null, message: "SAMPLE" },
     };
+    const looks = { ...views.find((t) => t.id === "fixture.default")!, id: "looks", category: "appearance" };
     const policy = { ...gated, id: "policy", blocked: { code: "set_by_policy" as const, trigger: null, message: "SAMPLE" } };
-    const list: TweakView[] = [...views, risky, gated, policy];
+    const list: TweakView[] = [...views, risky, gated, policy, looks];
     const plan = planSetup(
-      ["fixture.default", "fixture.drifted", "gated", "fixture.applied", "fixture.foreign", "fixture.unknown", "risky", "policy", "fixture.blocked", "elsewhere.only"],
+      ["fixture.default", "fixture.drifted", "gated", "fixture.applied", "fixture.foreign", "fixture.unknown", "risky", "policy", "looks", "fixture.blocked", "elsewhere.only"],
       list,
     );
     expect(ids(plan.apply)).toEqual(["fixture.default", "fixture.drifted", "gated"]);
     expect(ids(plan.already)).toEqual(["fixture.applied", "fixture.foreign"]);
-    expect(ids(plan.yourself)).toEqual(["fixture.unknown", "risky", "policy"]);
+    expect(ids(plan.yourself)).toEqual(["fixture.unknown", "risky", "policy", "looks"]);
     expect(plan.notHere).toEqual([views.find((t) => t.id === "fixture.blocked")!.name, "elsewhere.only"]);
   });
 });

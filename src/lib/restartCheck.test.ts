@@ -37,6 +37,7 @@ describe("the check after a restart", () => {
       waited: [{ id: "fixture.applied", name: tweaks[0]!.name }],
       setBack: [],
       unreadable: [],
+      unchecked: [],
     });
     // Applied after this start: it still waits for the next restart.
     expect(restartCheck(context, settings, tweaks, journal([["fixture.applied", BOOT + 1000]]))).toBeNull();
@@ -63,6 +64,22 @@ describe("the check after a restart", () => {
     const before = journal([["fixture.applied", BOOT - 60_000]]);
     expect(restartCheck(context, { ...settings, restartCheckSeenBoot: BOOT - 40 }, tweaks, before)).toBeNull();
     const next = { ...context, bootedUnixMs: BOOT + 3_600_000 };
-    expect(restartCheck(next, { ...settings, restartCheckSeenBoot: BOOT }, tweaks, before)).not.toBeNull();
+    const seen = { ...settings, restartCheckSeenBoot: BOOT };
+    // The change was shown after the start it waited for; the next start
+    // has nothing new to show.
+    expect(restartCheck(next, seen, tweaks, before)).toBeNull();
+    // Applied after that start, it waited for this one.
+    expect(restartCheck(next, seen, tweaks, journal([["fixture.applied", BOOT + 1000]]))).not.toBeNull();
+  });
+
+  it("names applied changes it could not check, such as a device not read yet", () => {
+    const tweaks = [tweak("fixture.applied", true)];
+    const both = journal([["fixture.applied", BOOT - 1], ["msi.dev", BOOT - 1]]);
+    expect(restartCheck(context, settings, tweaks, both)!.unchecked).toEqual(["msi.dev"]);
+    // Once the devices are read, a device change is checked like the rest.
+    const device = { ...tweak("fixture.applied", true), id: "msi.dev", name: "MSI mode: Sample" };
+    const check = restartCheck(context, settings, [...tweaks, device], both)!;
+    expect(check.unchecked).toEqual([]);
+    expect(check.waited.map((c) => c.id)).toEqual(["fixture.applied", "msi.dev"]);
   });
 });

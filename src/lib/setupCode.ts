@@ -8,6 +8,7 @@
 
 import type { BlockedCode } from "../generated/BlockedCode";
 import type { TweakView } from "../generated/TweakView";
+import { APPEARANCE } from "../store/store";
 
 const KIND = "peaktweaks-setup";
 const VERSION = 1;
@@ -45,7 +46,8 @@ export function readSetupCode(text: string): { ids: string[] } | { problem: stri
 export interface SetupPlan {
   /** Can be applied together: no warning to read, not blocked, not in place. */
   apply: TweakView[];
-  /** Each has a cost line or a warning, is held back for a reason Tools
+  /** Each has a cost line or a warning, changes how Windows looks (one
+   * click each, never part of a set), is held back for a reason Tools
    * explains, or its state could not be read, so it is applied from Tools. */
   yourself: TweakView[];
   /** In place on this PC already. */
@@ -65,7 +67,9 @@ export function planSetup(ids: readonly string[], tweaks: readonly TweakView[]):
     const held = reason !== undefined && reason !== "no_restore_point";
     if (!t || (reason && NOT_HERE.includes(reason))) plan.notHere.push(t?.name ?? id);
     else if (t.state.status === "applied" || t.state.status === "foreign") plan.already.push(t);
-    else if (held || t.safety !== "safe" || t.tradeoff || t.state.status === "unknown") plan.yourself.push(t);
+    else if (held || t.safety !== "safe" || t.tradeoff || t.category === APPEARANCE || t.state.status === "unknown") {
+      plan.yourself.push(t);
+    }
     else plan.apply.push(t);
   }
   return plan;

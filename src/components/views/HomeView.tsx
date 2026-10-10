@@ -32,6 +32,9 @@ import { RestorePointButton } from "../shell/RestorePointButton";
 import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
 import { TweakCard } from "./ToolsView";
 
+/** Device changes' ids (`tweaks/msi.rs` `ID_PREFIX`). */
+const MSI_PREFIX = "msi.";
+
 /** The small uppercase label used across the dashboard. */
 function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
   return <p className={cx("text-[10.5px] font-bold tracking-[0.14em] uppercase", className ?? "text-ink-faint")}>{children}</p>;
@@ -938,21 +941,33 @@ function AfterRestart() {
   const settings = useStore((s) => s.settings);
   const tweaks = useStore((s) => s.tweaks);
   const journal = useStore((s) => s.journal);
+  const msi = useStore((s) => s.msi);
+  const msiIdle = useStore((s) => s.msiOp.status === "idle");
   const saving = useStore((s) => s.settingsOp.status === "running");
-  const { saveSettings } = useActions();
+  const { saveSettings, loadMsi } = useActions();
   const navigate = useNavigate();
-  const check = restartCheck(context, settings, tweaks, journal);
+  // A device change (MSI mode) waits for a restart too; its state is in the
+  // device list, which is otherwise read only in Tools.
+  const deviceApplied = journal?.applied.some((a) => a.tweakId.startsWith(MSI_PREFIX)) ?? false;
+  useEffect(() => {
+    if (deviceApplied && msiIdle) void loadMsi();
+  }, [deviceApplied, msiIdle, loadMsi]);
+  const listed = msi ? [...tweaks, ...msi.devices.map((d) => d.tweak)] : tweaks;
+  const check = restartCheck(context, settings, listed, journal);
   if (!check || !settings) return null;
 
   const fine = check.setBack.length === 0 && check.unreadable.length === 0;
   const one = check.waited.length === 1;
+  const all = check.unchecked.length === 0;
   return (
     <section aria-label="After the restart" className="print:hidden">
       <Callout
         tone={fine ? "ok" : "warn"}
         title={
           fine
-            ? "Windows restarted, and every change PeakTweaks made is still in place."
+            ? all
+              ? "Windows restarted, and every change PeakTweaks made is still in place."
+              : "Windows restarted, and every change PeakTweaks checked is still in place."
             : "Windows restarted, and not every change PeakTweaks made is as it left it."
         }
         action={
@@ -971,6 +986,7 @@ function AfterRestart() {
         </p>
         {check.setBack.length > 0 && <p className="mt-1.5">Set back since: {names(check.setBack)}.</p>}
         {check.unreadable.length > 0 && <p className="mt-1.5">Could not be read now: {names(check.unreadable)}.</p>}
+        {!all && <p className="mt-1.5">Not checked here: {check.unchecked.join(", ")}. Backups lists them.</p>}
         <p className="mt-1.5 text-ink-muted">
           If something does not work as it did before, undo {one ? "it" : "these"} first, in Backups, then restart again.
         </p>

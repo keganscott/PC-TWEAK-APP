@@ -7,11 +7,15 @@
 //! engine (`Engine::set_settings`, so turning it off mid-game puts its changes
 //! back at once). After a change from here the window is told the new
 //! settings (`engine://settings`); after a change from the window the tick
-//! here follows (`sync`).
+//! here follows (`sync`). Hovering the icon says which game is running and
+//! whether Gaming Mode's changes are in effect (`show_play`).
 
 use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
+
+use peaktweaks_engine::env::KNOWN_GAMES;
+use peaktweaks_engine::play::PlayStatus;
 
 use crate::commands::SharedEngine;
 
@@ -90,10 +94,72 @@ fn toggle_gaming_mode(app: AppHandle, engine: SharedEngine) {
     });
 }
 
+/// Say on the icon what the play watcher sees now.
+pub fn show_play(app: &AppHandle, status: &PlayStatus) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(tooltip(status)));
+    }
+}
+
+/// The icon's hover text: the game running and Gaming Mode's state, short
+/// enough for Windows (it cuts tooltips at 127 characters).
+fn tooltip(status: &PlayStatus) -> String {
+    let Some(id) = status.game.as_deref() else {
+        return "PeakTweaks".into();
+    };
+    let game = KNOWN_GAMES.iter().find(|g| g.id == id).map_or(id, |g| g.name);
+    let state = if status.problem.is_some() {
+        "something you turned on is not in effect (open PeakTweaks to see why)"
+    } else if status.gaming_mode_active {
+        "Gaming Mode in effect"
+    } else {
+        "Gaming Mode off"
+    };
+    format!("PeakTweaks: {game} running, {state}")
+}
+
 fn show_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn playing(game: Option<&str>, active: bool, problem: Option<&str>) -> PlayStatus {
+        PlayStatus {
+            game: game.map(str::to_owned),
+            gaming_mode_active: active,
+            problem: problem.map(str::to_owned),
+            ..PlayStatus::watching()
+        }
+    }
+
+    #[test]
+    fn tooltip_names_the_game_and_gaming_mode() {
+        let fortnite = KNOWN_GAMES[0];
+        assert_eq!(tooltip(&playing(None, false, None)), "PeakTweaks");
+        assert_eq!(
+            tooltip(&playing(Some(fortnite.id), true, None)),
+            format!("PeakTweaks: {} running, Gaming Mode in effect", fortnite.name)
+        );
+        assert_eq!(
+            tooltip(&playing(Some(fortnite.id), false, None)),
+            format!("PeakTweaks: {} running, Gaming Mode off", fortnite.name)
+        );
+        let problem = tooltip(&playing(
+            Some(fortnite.id),
+            true,
+            Some("Gaming Mode is not fully on: x"),
+        ));
+        assert!(problem.contains("not in effect"), "{problem}");
+        for g in KNOWN_GAMES {
+            let longest = tooltip(&playing(Some(g.id), true, Some("x")));
+            assert!(longest.chars().count() <= 127, "{longest}");
+        }
     }
 }

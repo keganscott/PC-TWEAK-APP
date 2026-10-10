@@ -145,9 +145,18 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 watched: watched_ids(&games),
             };
             drop(e);
-            let mut shown = status.lock().unwrap_or_else(PoisonError::into_inner);
-            if *shown != now {
-                *shown = now.clone();
+            let changed = {
+                let mut shown = status.lock().unwrap_or_else(PoisonError::into_inner);
+                let changed = *shown != now;
+                if changed {
+                    *shown = now.clone();
+                }
+                changed
+            };
+            if changed {
+                // Outside both locks: the icon's text is set on the window's
+                // thread, and this waits for it.
+                crate::tray::show_play(app, &now);
                 // Advisory; the UI also asks with `play_status`.
                 let _ = app.emit("engine://play", now);
             }

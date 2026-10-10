@@ -30,6 +30,7 @@ pub mod netcheck;
 pub mod nvapi;
 pub mod offline;
 pub mod play;
+pub mod play_history;
 pub mod power;
 pub mod probe;
 pub mod proc;

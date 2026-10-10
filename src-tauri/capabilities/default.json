@@ -11,6 +11,7 @@
     "allow-list-tweaks",
     "allow-list-games",
     "allow-play-status",
+    "allow-forget-play-history",
     "allow-get-settings",
     "allow-set-settings",
     "allow-select-target-game",

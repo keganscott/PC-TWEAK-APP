@@ -4837,3 +4837,41 @@ fn the_input_buffer_tool_never_raises_a_smaller_size() {
     let engine = build_engine(&fake, dir.path(), tweak(), true, Tier::Ultimate);
     assert!(matches!(engine.list().unwrap()[0].state, TweakState::Foreign));
 }
+
+#[test]
+fn the_game_history_is_kept_across_restarts_and_capped() {
+    use crate::play::PlayReport;
+    use crate::probe::Probe;
+
+    let report = |ended: u64| PlayReport {
+        game: "fortnite".into(),
+        started_unix_ms: ended - 1_000,
+        ended_unix_ms: ended,
+        gpu_throttle: Probe::unknown("not read in tests"),
+        heat_readings: 0,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::unknown("not read in tests"),
+        temperature_missed: None,
+    };
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let trusted = TrustedDir::insecure_for_tests(dir.path());
+    let mut engine = build_engine(&fake, dir.path(), vec![], true, Tier::Free).with_play_history_in(&trusted);
+    assert!(engine.play_history().is_empty());
+    for i in 0..(crate::play_history::KEEP as u64 + 2) {
+        engine.record_play(report(10_000 + i)).unwrap();
+    }
+    let kept = engine.play_history();
+    assert_eq!(kept.len(), crate::play_history::KEEP);
+    assert_eq!(
+        kept.last().map(|r| r.ended_unix_ms),
+        Some(10_000 + crate::play_history::KEEP as u64 + 1)
+    );
+
+    let again = build_engine(&fake, dir.path(), vec![], true, Tier::Free).with_play_history_in(&trusted);
+    assert_eq!(
+        again.play_history(),
+        kept,
+        "a new engine on the same directory sees the same history"
+    );
+}

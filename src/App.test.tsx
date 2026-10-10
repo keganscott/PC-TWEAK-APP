@@ -256,6 +256,76 @@ describe("App", () => {
     expect(within(last).getByText("The driver kept the card within its power limit in 760 of 800 readings.")).toBeTruthy();
   });
 
+  it("Tools lists the earlier games kept on this PC, newest first", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    const earlier = await within(section).findByRole("group", { name: "Earlier games" });
+    const rows = within(earlier).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringMatching(/^Valorant, .*, watched for 1 hour, hottest 71 °C\. No slowdown for heat or the card's hardware in any of 1,200 readings\.$/),
+      expect.stringMatching(/^Fortnite, .*, watched for 30 minutes, hottest 76 °C\. No slowdown/),
+    ]);
+  });
+
+  it("Tools shows the newest kept game as the last one after a restart", async () => {
+    const backend = createMockBackend();
+    const status = await backend.playStatus();
+    vi.spyOn(backend, "playStatus").mockResolvedValue({ ...status, lastSession: null });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    expect(screen.queryByRole("region", { name: "Last game" })).toBeNull();
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(await within(section).findByRole("group", { name: "Last game: Fortnite" })).toBeTruthy();
+    expect(within(within(section).getByRole("group", { name: "Earlier games" })).getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("Tools forgets the kept games after asking, and Home's warning goes with them", async () => {
+    const backend = createMockBackend();
+    const forget = vi.spyOn(backend, "forgetPlayHistory");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    expect(await screen.findByRole("region", { name: "Last game" })).toBeTruthy();
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    await userEvent.click(await within(section).findByRole("button", { name: "Forget these games" }));
+    const ask = within(section).getByRole("group", { name: "Forget the games" });
+    expect(within(ask).getByText("Forget these 3 games? Only PeakTweaks' record of them goes.")).toBeTruthy();
+    await userEvent.click(within(ask).getByRole("button", { name: "Keep them" }));
+    expect(forget).not.toHaveBeenCalled();
+    await userEvent.click(within(section).getByRole("button", { name: "Forget these games" }));
+    await userEvent.click(within(section).getByRole("button", { name: "Forget" }));
+    expect(forget).toHaveBeenCalledOnce();
+    await waitFor(() => expect(within(section).queryByRole("group", { name: /Last game/ })).toBeNull());
+    expect(within(section).queryByRole("group", { name: "Earlier games" })).toBeNull();
+    expect(within(section).queryByRole("button", { name: "Forget these games" })).toBeNull();
+    await goTo("Home");
+    expect(screen.queryByRole("region", { name: "Last game" })).toBeNull();
+  });
+
+  it("Tools says when the last game could not be kept, apart from Gaming Mode", async () => {
+    const backend = createMockBackend();
+    const status = await backend.playStatus();
+    vi.spyOn(backend, "playStatus").mockResolvedValue({ ...status, historyProblem: "The last game could not be kept in the game history: disk full" });
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const section = await screen.findByRole("region", { name: /While you play/ });
+    expect(await within(section).findByText("The last game could not be kept in the game history.")).toBeTruthy();
+    expect(within(section).queryByText("Not everything you turned on is in effect.")).toBeNull();
+  });
+
+  it("a game's card says when it was last played and what the graphics card did", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Games");
+    const card = (await screen.findByRole("heading", { name: "Fortnite", level: 3 })).closest("section") as HTMLElement;
+    expect(within(card).getByText(/Last played .*, for 40 minutes, hottest graphics card reading 84 °C\. Slowed for heat in 48 of 800 readings\./)).toBeTruthy();
+    expect(within(card).getByText("Watched twice in the games kept on this PC.")).toBeTruthy();
+  });
+
   it("Tools turns Gaming Mode and the game timer on from their switches and says what is in effect", async () => {
     const backend = createMockBackend({ playing: "fortnite", gateOpen: true });
     const save = vi.spyOn(backend, "setSettings");

@@ -4,9 +4,9 @@ import type { PlayReport } from "../../generated/PlayReport";
 import type { Settings } from "../../generated/Settings";
 import { explain } from "../../lib/errors";
 import { formatDateTime, formatDuration } from "../../lib/format";
-import { reportNotes } from "../../lib/playReport";
+import { reportNotes, reportSummary, sameReport } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
-import { Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
+import { Button, Callout, Card, ErrorCallout, SampleBadge, StatusBadge } from "../ui/primitives";
 
 /** Only Minecraft's Bedrock Edition is recognised (`GAME_PROCESSES` in the
  * engine's `play.rs`): Java Edition's program name is shared by other programs. */
@@ -39,6 +39,15 @@ export function PlaySection() {
   const [failedHere, setFailedHere] = useState(false);
 
   const name = (id: string) => games.find((g) => g.id === id)?.name ?? id;
+  // This run's last game, or after a restart the newest one kept.
+  const history = play?.history ?? [];
+  const shownLast = play?.lastSession ?? history.at(-1) ?? null;
+  // This run's last game when it could not be saved into the history.
+  const unsaved = !!play?.lastSession && !history.some((r) => sameReport(r, play.lastSession!));
+  const earlier = history
+    .filter((r) => !shownLast || !sameReport(r, shownLast))
+    .reverse()
+    .slice(0, EARLIER_SHOWN);
   const flip = async (key: Switch, on: boolean) => {
     if (!settings) return;
     setSaving(key);
@@ -113,9 +122,81 @@ export function PlaySection() {
           on a laptop while a game runs.
         </SwitchRow>
         {failedHere && settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
-        {play?.lastSession && <LastSession report={play.lastSession} name={name(play.lastSession.game)} />}
+        {shownLast && <LastSession report={shownLast} name={name(shownLast.game)} />}
+        {earlier.length > 0 && <EarlierGames reports={earlier} name={name} />}
+        {play?.historyProblem && (
+          <Callout tone="warn" title="The last game could not be kept in the game history.">
+            {play.historyProblem}
+          </Callout>
+        )}
+        {shownLast && <ForgetGames count={history.length + (unsaved ? 1 : 0)} technical={technical} />}
       </Card>
     </section>
+  );
+}
+
+/** How many earlier games are listed under the last one. */
+const EARLIER_SHOWN = 5;
+
+/** The games before the last one, newest first, one line each. */
+function EarlierGames({ reports, name }: { reports: readonly PlayReport[]; name: (id: string) => string }) {
+  const headingId = useId();
+  return (
+    <div className="border-t border-line pt-4" role="group" aria-labelledby={headingId}>
+      <h3 id={headingId} className="font-bold">
+        Earlier games
+      </h3>
+      <ul className="mt-2 flex flex-col gap-1.5 text-sm">
+        {reports.map((r) => {
+          const hottest = r.gpuHottestC;
+          return (
+            <li key={`${r.game}-${r.startedUnixMs}`}>
+              <span className="font-semibold">{name(r.game)}</span>
+              <span className="text-ink-muted">
+                , {formatDateTime(r.endedUnixMs)}, watched for {formatDuration((r.endedUnixMs - r.startedUnixMs) / 1000)}
+                {hottest.state === "yes" && `, hottest ${hottest.value} °C`}. {reportSummary(r)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-2 text-xs text-ink-faint">The last few games are kept on this PC only.</p>
+    </div>
+  );
+}
+
+/** Forget the kept games, after a second click that says how many. */
+function ForgetGames({ count, technical }: { count: number; technical: boolean }) {
+  const op = useStore((s) => s.forgetHistoryOp);
+  const { forgetPlayHistory } = useActions();
+  const [asking, setAsking] = useState(false);
+  return (
+    <div className="flex flex-col gap-2">
+      {asking ? (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Forget the games">
+          <span className="text-sm">
+            Forget {count === 1 ? "this game" : `these ${count} games`}? Only PeakTweaks' record of them goes.
+          </span>
+          <Button
+            variant="secondary"
+            busy={op.status === "running"}
+            onClick={() => void forgetPlayHistory().then(() => setAsking(false))}
+          >
+            Forget
+          </Button>
+          <Button variant="ghost" onClick={() => setAsking(false)}>
+            Keep them
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button variant="ghost" onClick={() => setAsking(true)}>
+            Forget these games
+          </Button>
+        </div>
+      )}
+      {op.status === "failed" && <ErrorCallout text={explain(op.error)} technical={technical} />}
+    </div>
   );
 }
 

@@ -24,7 +24,7 @@
 //! undocumented; their parameters follow System Informer's `phnt` as recalled
 //! (NOTES N80).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::probe::Probe;
@@ -147,8 +147,16 @@ pub struct PlayStatus {
     /// Ids of the games watched for (`game_processes`), each once.
     pub watched: Vec<String>,
     /// What the graphics card did during the last game that closed while
-    /// PeakTweaks was open. Kept until PeakTweaks closes; not saved.
+    /// PeakTweaks was open. Kept until PeakTweaks closes or the history is
+    /// forgotten; the history keeps it longer.
     pub last_session: Option<PlayReport>,
+    /// The reports of the last games watched, newest last, kept on this PC
+    /// across restarts (`play_history.rs`, at most `play_history::KEEP`).
+    pub history: Vec<PlayReport>,
+    /// Why the last game could not be kept in the history (its file could
+    /// not be saved). Not a Gaming Mode problem: nothing the user turned on
+    /// depends on it.
+    pub history_problem: Option<String>,
 }
 
 impl PlayStatus {
@@ -335,7 +343,7 @@ impl Drop for TimerRequest {
 /// What the graphics card did while a game ran (plan 6.2 item 6: GPU
 /// throttling, advice only). Read through NVML on NVIDIA cards, every few
 /// seconds with the watcher's look; nothing is changed by it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayReport {
@@ -468,15 +476,27 @@ impl PlayReports {
     /// `game_running` gave them. `read` is called only while the watched game
     /// itself is running, so a second game that keeps the session open (see
     /// `Watch`) adds nothing to the first one's report.
-    pub fn look<F>(&mut self, event: Option<WatchEvent>, running: Option<&str>, now_unix_ms: u64, read: F)
+    ///
+    /// Returns the report of a game that ended with this look, for the
+    /// history to keep.
+    pub fn look<F>(
+        &mut self,
+        event: Option<WatchEvent>,
+        running: Option<&str>,
+        now_unix_ms: u64,
+        read: F,
+    ) -> Option<PlayReport>
     where
         F: FnOnce() -> (Probe<Vec<ThrottleReason>>, Probe<Vec<GpuLive>>),
     {
+        let mut ended = None;
         match event {
             Some(WatchEvent::Started(game)) => self.tally = Some(PlayTally::new(game, now_unix_ms)),
             Some(WatchEvent::Stopped(_)) => {
                 if let Some(t) = self.tally.take() {
-                    self.last = Some(t.finish());
+                    let report = t.finish();
+                    self.last = Some(report.clone());
+                    ended = Some(report);
                 }
             }
             None => {}
@@ -487,6 +507,7 @@ impl PlayReports {
                 t.add(now_unix_ms, reasons, gpus);
             }
         }
+        ended
     }
 
     pub fn last(&self) -> Option<&PlayReport> {
@@ -606,8 +627,9 @@ mod tests {
         look(&mut reports, None, Some("roblox"), 9_000);
         look(&mut reports, None, None, 12_000);
         assert!(reports.last().is_none(), "no report before the game counts as closed");
-        look(&mut reports, Some(WatchEvent::Stopped("fortnite")), None, 15_000);
+        let ended = look(&mut reports, Some(WatchEvent::Stopped("fortnite")), None, 15_000);
         let report = reports.last().expect("a report").clone();
+        assert_eq!(ended.as_ref(), Some(&report), "the finished report is handed on once");
         assert_eq!(report.game, "fortnite");
         assert_eq!((report.started_unix_ms, report.ended_unix_ms), (3_000, 6_000));
         let Probe::Yes { value } = &report.gpu_throttle else {

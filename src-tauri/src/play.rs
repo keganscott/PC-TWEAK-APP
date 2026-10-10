@@ -70,13 +70,17 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
     let mut watch = Watch::new();
     let mut session = Session::default();
     let mut reports = PlayReports::default();
+    // A finished report waiting for the engine lock to be kept.
+    let mut ended = None;
     let mut first = true;
     loop {
         let running = running_images().ok().and_then(|images| game_running(&images, &games));
         let event = watch.look(running);
         // The graphics card's readings, outside the engine lock: they read
         // NVML only and change nothing.
-        reports.look(event.clone(), running, now_ms(), gpu_look);
+        if let Some(report) = reports.look(event.clone(), running, now_ms(), gpu_look) {
+            ended = Some(report);
+        }
         // Engine work only while the lock is free of an earlier panic; the
         // next look tries again.
         if let Ok(mut e) = engine.lock() {
@@ -86,6 +90,10 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                     "Some Gaming Mode changes could not be put back; Undo them in Backups:",
                     e.end_play_session().into_iter().filter_map(|r| r.error),
                 );
+            }
+            if let Some(report) = ended.take() {
+                // A failure is shown as `history_problem`.
+                let _ = e.record_play(report);
             }
             let settings = e.settings();
             match event {
@@ -149,7 +157,9 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 problem: session.problem(),
                 on_wifi: watch.current().is_some() && session.on_wifi,
                 watched: watched_ids(&games),
-                last_session: reports.last().cloned(),
+                last_session: e.last_play(),
+                history: e.play_history(),
+                history_problem: e.play_history_problem(),
             };
             drop(e);
             let changed = {

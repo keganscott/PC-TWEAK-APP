@@ -207,6 +207,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   // Gaming Mode's changes are not added to the SAMPLE Backups list. As in the
   // engine, they need a restore point.
   const playListeners = new Set<(p: PlayStatus) => void>();
+  let historyForgotten = false;
   const playStatus = (): PlayStatus => {
     const game = options.playing ?? null;
     const wanted = game !== null && settings.gamingMode;
@@ -217,6 +218,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       timerHeld: game !== null && settings.gameTimer ? fx.playStatus.timerHeld : null,
       problem: wanted && !gateOpen ? "Gaming Mode is not fully on: There is no verified restore point, so there is nothing to roll back to." : null,
       onWifi: game !== null && (options.onWifi ?? false),
+      ...(historyForgotten ? { lastSession: null, history: [] } : {}),
     };
   };
   let shownPlay = JSON.stringify(playStatus());
@@ -413,6 +415,12 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       reply("checkConnection", [], () => {
         emit("netcheck", "Checking the connection");
         return { ...clone(fx.networkCheck), unixMs: Date.now() };
+      }),
+    forgetPlayHistory: () =>
+      reply("forgetPlayHistory", [], () => {
+        historyForgotten = true;
+        emitPlay();
+        return playStatus();
       }),
     launchGame: (gameId) =>
       reply("launchGame", [gameId], () => {

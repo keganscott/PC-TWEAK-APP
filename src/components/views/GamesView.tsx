@@ -2,10 +2,13 @@ import type { GameGpuChoice } from "../../generated/GameGpuChoice";
 import type { GameInstall } from "../../generated/GameInstall";
 import type { GameReadiness } from "../../generated/GameReadiness";
 import type { GpuPreference } from "../../generated/GpuPreference";
+import type { PlayReport } from "../../generated/PlayReport";
 import type { Probe } from "../../generated/Probe";
 import type { SecurityFeature } from "../../generated/SecurityFeature";
 import { explain } from "../../lib/errors";
+import { formatDateTime, formatDuration } from "../../lib/format";
 import { GAME_GUIDANCE } from "../../lib/gameGuidance";
+import { reportSummary, sameReport } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
 import { Card, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
@@ -31,6 +34,10 @@ export function GamesView() {
   const sample = useStore((s) => s.sample);
   const launchOps = useStore((s) => s.launchOps);
   const gamingMode = useStore((s) => s.settings?.gamingMode ?? null);
+  const history = useStore((s) => s.play?.history);
+  const lastSession = useStore((s) => s.play?.lastSession ?? null);
+  // This run's last game, also when it could not be saved into the history.
+  const played = lastSession && !(history ?? []).some((r) => sameReport(r, lastSession)) ? [...(history ?? []), lastSession] : (history ?? []);
   const { selectTargetGame, launchGame } = useActions();
   const readiness = audit?.antiCheat ?? null;
   const installs = audit?.env.gameInstalls ?? null;
@@ -179,6 +186,7 @@ export function GamesView() {
                     choice={choices.find((c) => c.gameId === g.gameId)}
                     launchOp={launchOps[g.gameId]}
                     gamingMode={gamingMode}
+                    played={played.filter((r) => r.game === g.gameId)}
                     onLaunch={() => void launchGame(g.gameId)}
                     technical={technical}
                   />
@@ -222,6 +230,7 @@ function GameCard({
   choice,
   launchOp,
   gamingMode,
+  played,
   onLaunch,
   technical,
 }: {
@@ -234,6 +243,8 @@ function GameCard({
   launchOp: Op | undefined;
   /** The Gaming Mode setting, or null before the settings are read. */
   gamingMode: boolean | null;
+  /** The kept reports of this game, oldest first. */
+  played: readonly PlayReport[];
   onLaunch: () => void;
   technical: boolean;
 }) {
@@ -308,6 +319,7 @@ function GameCard({
           <ErrorCallout text={explain(launchOp.error)} technical={technical} />
         </div>
       )}
+      {played.length > 0 && <Played reports={played} />}
       {choice && (
         <p className="mt-1 text-sm text-ink-muted">
           Graphics chip: {choice.preference.state === "yes" ? CHOICE[choice.preference.value] : "could not tell"}.
@@ -328,5 +340,19 @@ function GameCard({
         </div>
       )}
     </Card>
+  );
+}
+
+/** What PeakTweaks saw the last time this game ran, from the kept history. */
+function Played({ reports }: { reports: readonly PlayReport[] }) {
+  const last = reports.at(-1)!;
+  const hottest = last.gpuHottestC;
+  const times = reports.length === 1 ? "once" : reports.length === 2 ? "twice" : `${reports.length} times`;
+  return (
+    <p className="mt-3 text-sm">
+      Last played {formatDateTime(last.endedUnixMs)}, for {formatDuration((last.endedUnixMs - last.startedUnixMs) / 1000)}
+      {hottest.state === "yes" && `, hottest graphics card reading ${hottest.value} °C`}. {reportSummary(last)}{" "}
+      <span className="text-ink-muted">Watched {times} in the games kept on this PC.</span>
+    </p>
   );
 }

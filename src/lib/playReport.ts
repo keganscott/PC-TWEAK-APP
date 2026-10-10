@@ -78,3 +78,21 @@ export function reportNotes(report: PlayReport): ReportNote[] {
   }
   return notes;
 }
+
+/** One short line for a report in a list of earlier games: the most
+ * important note's finding, without the advice. */
+export function reportSummary(report: PlayReport): string {
+  const t = report.gpuThrottle;
+  if (t.state === "no") return "No NVIDIA graphics card to read.";
+  if (t.state === "unknown") return "The graphics card could not be read.";
+  const { samples } = t.value;
+  if (report.heatReadings > 0) return `Slowed for heat in ${of(report.heatReadings, samples)}.`;
+  if (report.hardwareReadings > 0) return `Hardware slowdown in ${of(report.hardwareReadings, samples)}.`;
+  return `No slowdown for heat or the card's hardware in ${samples === 1 ? "the one reading" : `any of ${samples.toLocaleString()} readings`}.`;
+}
+
+/** The same game session: the history keeps the report `lastSession` also
+ * holds. */
+export function sameReport(a: PlayReport, b: PlayReport): boolean {
+  return a.game === b.game && a.startedUnixMs === b.startedUnixMs && a.endedUnixMs === b.endedUnixMs;
+}

@@ -113,6 +113,8 @@ export interface State {
   proof: ProofState;
   /** The game watcher (catalogue step 5); null until it first answers. */
   play: PlayStatus | null;
+  /** "Forget these games": the kept game reports. */
+  forgetHistoryOp: Op;
   /** Startup apps (H12), once the Tools section has asked. Kept on screen
    * while it is read again; `startupOp` says how the latest read went. */
   startup: StartupList | null;
@@ -157,6 +159,7 @@ export function initialState(sample: boolean): State {
     lastChange: null,
     proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
     play: null,
+    forgetHistoryOp: IDLE,
     startup: null,
     startupOp: IDLE,
     msi: null,
@@ -564,6 +567,21 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
         set((s) => ({ ...s, netcheckOp: { status: "done", value: result } }));
       } catch (e) {
         set((s) => ({ ...s, netcheckOp: failed(e) }));
+      }
+    },
+
+    /** Forget the kept game reports and this run's last game. Only
+     * PeakTweaks' own record goes; the watcher's status is newer than any
+     * reply in flight, so this takes its channel. */
+    async forgetPlayHistory() {
+      if (state.forgetHistoryOp.status === "running") return;
+      set((s) => ({ ...s, forgetHistoryOp: RUNNING }));
+      try {
+        const play = await backend.forgetPlayHistory();
+        showPlay(play);
+        set((s) => ({ ...s, forgetHistoryOp: { status: "done", value: null } }));
+      } catch (e) {
+        set((s) => ({ ...s, forgetHistoryOp: failed(e) }));
       }
     },
 

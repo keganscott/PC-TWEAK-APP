@@ -122,6 +122,7 @@ fn main() {
             commands::list_games,
             commands::live_readings,
             commands::play_status,
+            commands::forget_play_history,
             commands::get_settings,
             commands::set_settings,
             commands::select_target_game,

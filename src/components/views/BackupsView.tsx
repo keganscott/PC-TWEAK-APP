@@ -182,7 +182,11 @@ export function BackupsView() {
           </div>
           {journal?.warnings.length ? (
             <div className="mt-3">
-              <Callout tone="warn" title={`${journal.warnings.length} damaged line(s) in the record were skipped.`}>
+              <Callout tone="warn" title={
+                  journal.warnings.length === 1
+                    ? "1 damaged line in the record was skipped."
+                    : `${journal.warnings.length} damaged lines in the record were skipped.`
+                }>
                 {technical && journal.warnings.map((w) => <p key={w.line}>Line {w.line}: {w.detail}</p>)}
               </Callout>
             </div>

@@ -395,6 +395,9 @@ describe("tray icon", () => {
     // The window's reply could be older than the tray's event, so it re-read.
     expect(reads).toBe(readsBefore + 1);
     expect(store.getState().settings).toEqual(await mock.getSettings());
+    // Both are kept: the window's change, and the tray's switch it never saw.
+    expect(store.getState().settings?.remindersOff).toBe(true);
+    expect(store.getState().settings?.gamingMode).toBe(!before.gamingMode);
     expect(store.getState().settingsOp.status).toBe("done");
   });
 });

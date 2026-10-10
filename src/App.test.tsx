@@ -244,11 +244,11 @@ describe("App", () => {
     expect(await within(section).findByText("Fortnite is running.")).toBeTruthy();
 
     await userEvent.click(within(section).getByRole("switch", { name: "Gaming Mode" }));
-    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true, gameTimer: false }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true, gameTimer: false }), expect.anything());
     expect(await within(section).findByText(/Gaming Mode is on\./)).toBeTruthy();
 
     await userEvent.click(within(section).getByRole("switch", { name: "Game timer" }));
-    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true, gameTimer: true }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ gamingMode: true, gameTimer: true }), expect.anything());
     expect(await within(section).findByText(/The game timer is held at 0\.5 ms\./)).toBeTruthy();
     expect(within(section).getAllByText("On now")).toHaveLength(2);
   });
@@ -904,7 +904,44 @@ describe("review regressions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Get started" }));
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ welcomeSeen: true })));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ welcomeSeen: true }), expect.anything()));
+  });
+
+  it("Settings keeps a choice not saved yet when the tray switches Gaming Mode", async () => {
+    let push: ((s: import("./generated/Settings").Settings) => void) | undefined;
+    const mock = createMockBackend({ gateOpen: true });
+    renderApp({
+      ...mock,
+      onSettings: async (handler) => {
+        push = handler;
+        return () => {};
+      },
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    await userEvent.click(within(dialog).getByLabelText(/Technical/));
+    const before = await mock.getSettings();
+    act(() => push!({ ...before, gamingMode: !before.gamingMode }));
+    expect((within(dialog).getByLabelText(/Technical/) as HTMLInputElement).checked).toBe(true);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("Home waits for the first check before offering to make a restore point", async () => {
+    let finish: (() => void) | undefined;
+    const mock = createMockBackend({ gateOpen: true });
+    renderApp({
+      ...mock,
+      auditSystem: async () => {
+        await new Promise<void>((r) => (finish = r));
+        return mock.auditSystem();
+      },
+    });
+    expect(await screen.findByRole("button", { name: "Checking for a restore point" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Make a restore point, then apply/ })).toBeNull();
+    act(() => finish!());
+    expect(await screen.findByRole("button", { name: /Apply all basic changes/ })).toBeTruthy();
   });
 
   it("the welcome stays away once seen and can be shown again from Settings", async () => {
@@ -930,7 +967,7 @@ describe("review regressions", () => {
     expect(within(reminders).getByText(/PeakTweaks does not install drivers/)).toBeTruthy();
 
     await userEvent.click(within(reminders).getAllByRole("button", { name: "Not now" })[0]!);
-    await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ cleanupReminderSnoozedUntil: expect.any(Number) })));
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ cleanupReminderSnoozedUntil: expect.any(Number) }), expect.anything()));
     await waitFor(() => expect(screen.queryByText(/^Junk files were last cleared/)).toBeNull());
     expect(screen.getByText("The Example GPU driver is dated 2025-08-20.")).toBeTruthy();
 
@@ -938,7 +975,7 @@ describe("review regressions", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: /Gentle reminders on Home/ }));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Reminders" })).toBeNull());
-    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ remindersOff: true }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ remindersOff: true }), expect.anything());
   });
 
   it("after a restart, Home says whether the changes are still in place and names those that waited for it", async () => {
@@ -964,7 +1001,7 @@ describe("review regressions", () => {
     expect(within(check).getByText("This change waited for the restart: Sample setting B.")).toBeTruthy();
     await userEvent.click(within(check).getByRole("button", { name: "Got it" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "After the restart" })).toBeNull());
-    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ restartCheckSeenBoot: fx.contextInfo.bootedUnixMs }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ restartCheckSeenBoot: fx.contextInfo.bootedUnixMs }), expect.anything());
   });
 
   it("Backups copies this PC's setup as text and applies a pasted one after checking it against this PC", async () => {

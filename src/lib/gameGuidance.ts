@@ -93,7 +93,7 @@ export const GAME_GUIDANCE: Record<string, GameGuidance> = {
       "Close background programs you do not need.",
       "Basic settings: Anti-aliasing FXAA Low or Off, Render Quality and Render Detail set to Performance.",
       "Advanced settings: Texture Detail High Performance, World Detail and Particle Detail Performance.",
-      "Windows power plan: High performance, or Ultimate Performance where Windows offers it (Power & sleep settings > Additional power settings).",
+      "Windows power plan: High performance, or Ultimate Performance where Windows offers it (Control Panel > Power Options).",
     ],
   },
   // The entries below were read 2026-10-10 on each publisher's own support
@@ -101,6 +101,8 @@ export const GAME_GUIDANCE: Record<string, GameGuidance> = {
   // config files, use launch options or third-party tools, or touch only the
   // network are left out on purpose.
   // Riot Support, "Low FPS & Framerate Drops - Windows & Mac" (2025-03-07).
+  // Its clean boot is given as closing programs: a clean boot also stops
+  // third-party services, Riot Vanguard among them, which League needs.
   league: {
     source: "Riot Games' own League of Legends support article on low frame rates",
     intro: "Riot suggests these for League of Legends.",
@@ -108,7 +110,7 @@ export const GAME_GUIDANCE: Record<string, GameGuidance> = {
       "Check that the PC meets the game's minimum requirements.",
       "Update the graphics driver.",
       "Lower the graphics settings a step at a time until the game runs well enough and still looks good to you.",
-      "Do a clean boot of Windows, so background programs are not running beside the game.",
+      "Close programs you do not need while you play.",
     ],
   },
   // PUBG Support, "General crashing and performance guide" (updated

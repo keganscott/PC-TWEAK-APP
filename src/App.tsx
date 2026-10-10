@@ -39,7 +39,7 @@ export function App() {
   const closeWelcome = useCallback(() => {
     setWelcomeClosed(true);
     setWelcomeAgain(false);
-    if (settings && !settings.welcomeSeen) void saveSettings({ ...settings, welcomeSeen: true });
+    if (settings && !settings.welcomeSeen) void saveSettings({ ...settings, welcomeSeen: true }, settings);
   }, [settings, saveSettings]);
   const showWelcome = useCallback(() => {
     setSettingsOpen(false);

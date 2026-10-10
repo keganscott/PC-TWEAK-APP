@@ -57,7 +57,9 @@ export function comparisonText(
 ): string {
   const figure = (m: Comparison["average"]) =>
     // copy-lint-allow: labels for the medians of the stored runs listed below
-    `${m.metric === "avg_fps" ? "Average FPS" : "1% low FPS"}: before ${formatNumber(m.beforeMedian)}, after ${formatNumber(m.afterMedian)} (a difference counts above ${formatNumber(m.threshold)})`;
+    `${m.metric === "avg_fps" ? "Average FPS" : "1% low FPS"}: before ${formatNumber(m.beforeMedian)}, after ${formatNumber(m.afterMedian)} (${
+      m.verdict === "not_enough_data" ? "too few runs to judge a difference" : `a difference counts above ${formatNumber(m.threshold)}`
+    })`;
   return [
     ...(sample ? ["SAMPLE DATA: made up for testing, not a real PC"] : []),
     `PeakTweaks comparison, ${program}, ${at.toISOString().slice(0, 10)}`,

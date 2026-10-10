@@ -92,7 +92,9 @@ export const engine = {
   /** Preferences: rig-class override and plain/technical wording. Never a gate or licence. */
   getSettings: () => call<Settings>("get_settings"),
   /** Replace the preferences; resolves to what is now stored. */
-  setSettings: (settings: Settings) => call<Settings>("set_settings", { settings }),
+  /** `base` is what the window showed: only fields changed from it are saved
+   * over what the engine has now (a tray switch made since is kept). */
+  setSettings: (settings: Settings, base?: Settings) => call<Settings>("set_settings", { settings, base: base ?? null }),
   /** Pick a known game, or `null` to clear. The id is validated in Rust. */
   selectTargetGame: (gameId: string | null) => call<TweakView[]>("select_target_game", { gameId }),
   /** Re-run every probe (nothing cached) and return the refreshed list. */

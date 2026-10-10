@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 // report from a tester's PC names the exact commit it came from.
 const version = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
 function commit(): string {
+  const fromCi = process.env.PEAKTWEAKS_COMMIT;
+  if (fromCi) return fromCi.slice(0, 7);
   try {
     return execSync("git rev-parse --short=7 HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
   } catch {

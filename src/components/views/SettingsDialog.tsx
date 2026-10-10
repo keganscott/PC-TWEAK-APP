@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import type { Language } from "../../generated/Language";
 import type { RigClass } from "../../generated/RigClass";
@@ -26,9 +26,14 @@ export function SettingsDialog({
   const [reminders, setReminders] = useState(true);
   const rigId = useId();
 
-  // Start from what is stored each time the dialog opens.
+  // Start from what is stored each time the dialog opens. Not again while it
+  // is open: a switch from the tray icon changes the settings meanwhile and
+  // must not wipe a choice not saved yet.
+  const filled = useRef(false);
   useEffect(() => {
-    if (open && settings) {
+    if (!open) filled.current = false;
+    else if (settings && !filled.current) {
+      filled.current = true;
       setLanguage(settings.language);
       setRig(settings.rigClassOverride ?? "");
       setReminders(!settings.remindersOff);
@@ -38,7 +43,7 @@ export function SettingsDialog({
   const save = async () => {
     // Stay open on failure so the error is seen next to what was chosen.
     // Only what this dialog edits changes; anything else stored is kept.
-    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null, remindersOff: !reminders }))) onClose();
+    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null, remindersOff: !reminders }, settings))) onClose();
   };
 
   return (

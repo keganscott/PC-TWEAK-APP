@@ -110,9 +110,80 @@ impl SettingsStore {
     }
 }
 
+impl Settings {
+    /// What the window meant by a save: the fields it changed from `base` (the
+    /// settings it was showing) put onto `current` (what is saved now). A
+    /// field the window did not touch keeps its saved value, so a switch made
+    /// from the tray meanwhile is not put back by a save of something else.
+    pub fn with_changes(current: &Settings, base: &Settings, wanted: &Settings) -> Result<Settings> {
+        let json = |s: &Settings| {
+            serde_json::to_value(s).map_err(|e| EngineError::Internal {
+                detail: format!("settings: {e}"),
+            })
+        };
+        let (base, wanted) = (json(base)?, json(wanted)?);
+        let mut out = json(current)?;
+        if let (Some(base), Some(wanted), Some(out)) = (base.as_object(), wanted.as_object(), out.as_object_mut()) {
+            let keys: std::collections::BTreeSet<&String> = base.keys().chain(wanted.keys()).collect();
+            for key in keys {
+                match (base.get(key), wanted.get(key)) {
+                    (b, Some(w)) if b != Some(w) => {
+                        out.insert(key.clone(), w.clone());
+                    }
+                    // Left out of the window's settings (an empty optional
+                    // field): back to its default.
+                    (Some(_), None) => {
+                        out.remove(key);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        serde_json::from_value(out).map_err(|e| EngineError::Internal {
+            detail: format!("settings: {e}"),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_changes_only_what_the_window_changed() {
+        let base = Settings::default();
+        // The tray turned Gaming Mode on after the window read its settings.
+        let current = Settings {
+            gaming_mode: true,
+            ..base.clone()
+        };
+        // The window saves a new wording, still showing Gaming Mode off.
+        let wanted = Settings {
+            language: Language::Technical,
+            ..base.clone()
+        };
+        let out = Settings::with_changes(&current, &base, &wanted).unwrap();
+        assert!(out.gaming_mode, "the tray's switch is kept");
+        assert_eq!(out.language, Language::Technical);
+        // Turning it off from the window still turns it off.
+        let off = Settings::with_changes(
+            &current,
+            &current,
+            &Settings {
+                gaming_mode: false,
+                ..current.clone()
+            },
+        )
+        .unwrap();
+        assert!(!off.gaming_mode);
+        // Clearing an optional field is a change too.
+        let set = Settings {
+            rig_class_override: Some(RigClass::Low),
+            ..base.clone()
+        };
+        let cleared = Settings::with_changes(&set, &set, &base).unwrap();
+        assert_eq!(cleared.rig_class_override, None);
+    }
 
     fn store(dir: &Path) -> SettingsStore {
         SettingsStore::in_dir(&TrustedDir::insecure_for_tests(dir))

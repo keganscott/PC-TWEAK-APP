@@ -18,6 +18,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # The commit the build number names (vite.config.ts): on a pull request the
+  # checkout is a temporary merge commit, so name the branch's own head.
+  PEAKTWEAKS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   # The real gate: the app only ever runs on Windows.

@@ -153,3 +153,41 @@ test("the welcome walks through its three steps and passes an accessibility scan
   await page.getByRole("button", { name: "Get started" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
+
+test("a setup pasted from another PC is checked against this list, then applied", async ({ page }) => {
+  await open(page);
+  await nav(page, "Backups");
+  const card = page.getByRole("region", { name: "Copy this setup to another PC" });
+  await card.getByLabel("Paste a setup from another PC").fill("not a setup");
+  await card.getByRole("button", { name: "Check it" }).click();
+  await expect(card.getByText("That is not a setup copied from PeakTweaks.")).toBeVisible();
+
+  await card
+    .getByLabel("Paste a setup from another PC")
+    .fill('{"peaktweaks-setup":1,"changes":["fixture.default","fixture.applied","fixture.blocked","elsewhere.only"]}');
+  await card.getByRole("button", { name: "Check it" }).click();
+  await expect(card.getByText("Can be applied here (1):")).toBeVisible();
+  await expect(card.getByText("Already in place here (1): Sample setting B.")).toBeVisible();
+  await expect(card.getByText("Not available on this PC (2): Sample setting D, elsewhere.only.")).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  // Locked until a restore point exists, like every other change.
+  await expect(card.getByRole("button", { name: "Apply 1 change" })).toBeDisabled();
+  await page.getByRole("button", { name: "Home" }).first().click();
+  await page.getByRole("main").getByRole("button", { name: "Make a restore point" }).first().click();
+  await expect(page.getByText("Restore point ready")).toBeVisible();
+  await nav(page, "Backups");
+  await card.getByLabel("Paste a setup from another PC").fill('{"peaktweaks-setup":1,"changes":["fixture.default"]}');
+  await card.getByRole("button", { name: "Check it" }).click();
+  await card.getByRole("button", { name: "Apply 1 change" }).click();
+  await expect(card.getByText("Already in place here (1): Sample setting A.")).toBeVisible();
+  await expect(card.getByText("Nothing in it is left to apply here.")).toBeVisible();
+});
+
+test("a reminder put off with Not now leaves Home", async ({ page }) => {
+  await open(page);
+  const reminders = page.getByRole("region", { name: "Reminders" });
+  const driver = reminders.getByRole("note").filter({ hasText: "The Example GPU driver is dated" });
+  await expect(driver).toBeVisible();
+  await driver.getByRole("button", { name: "Not now" }).click();
+  await expect(driver).toBeHidden();
+});

@@ -42,6 +42,8 @@
   --animate-gm-glow: gm-glow 2.2s ease-in-out infinite;
   --animate-gm-burst: gm-burst 0.8s ease-out forwards;
   --animate-gm-sheen: gm-sheen 2.6s ease-in-out infinite;
+  /* One pass of the sheen, when a one-time action finishes. */
+  --animate-sweep-once: gm-sheen 1.2s ease-out 1 forwards;
 
   @keyframes gm-spin {
     to {

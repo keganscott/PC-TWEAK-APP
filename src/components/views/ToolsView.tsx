@@ -1,3 +1,4 @@
+import { Search } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 
 import type { BlockedCode } from "../../generated/BlockedCode";
@@ -6,14 +7,18 @@ import type { DiskMedia } from "../../generated/DiskMedia";
 import type { TweakView } from "../../generated/TweakView";
 import { blockedHint, whyBlocked } from "../../lib/blocked";
 import { explain } from "../../lib/errors";
-import { formatBytes, formatDateTime, formatDuration, formatNumber, probeValue } from "../../lib/format";
+import { formatBytes, formatDateTime, formatDuration, probeValue } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { otherLongWork, recommendedIds, type LongWork } from "../../store/store";
 import { RestorePointButton, useCanMakeRestorePoint } from "../shell/RestorePointButton";
+import { categoryIcon, categoryName } from "./categories";
 import { ConnectionSection } from "./ConnectionSection";
+import { LastChange } from "./LastChange";
+import { MemoryCleaner } from "./MemoryCleaner";
 import { PlaySection } from "./PlaySection";
+import { PresetsSection } from "./Presets";
 import { StartupSection } from "./StartupSection";
-import { Button, Callout, Card, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
+import { Button, Callout, Card, cx, Dialog, ErrorCallout, PageHeader, SampleBadge, StatusBadge, type Tone } from "../ui/primitives";
 
 const STATE: Record<TweakView["state"]["status"], { tone: Tone; label: string }> = {
   default: { tone: "neutral", label: "Not applied" },
@@ -102,23 +107,29 @@ export function ToolsView() {
               : "A restore point lets Windows put the whole PC back the way it is now. One click makes it; it can take a minute."}
           </Callout>
         )}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {forThisPc > 0 && (
-            <p className="text-sm text-ink-muted">
-              {doneCount} of {forThisPc} already optimized on this PC.
-            </p>
-          )}
-          <div className="w-full sm:w-72">
+        <LastChange />
+        <Overview done={doneCount} total={forThisPc} tweaks={tweaks} />
+        <PresetsSection gateOpen={gateOpen} />
+        <section aria-labelledby="quick-tools-title">
+          <h2 id="quick-tools-title" className="mb-3 font-display text-xl font-extrabold tracking-tight">
+            Quick tools
+          </h2>
+          <MemoryCleaner />
+        </section>
+        <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface-0 px-1 py-2.5">
+          <CategoryNav groups={groups} />
+          <div className="relative w-full sm:w-72">
             <label htmlFor={searchId} className="sr-only">
               Search the tools
             </label>
+            <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-faint" />
             <input
               id={searchId}
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search the tools"
-              className="w-full rounded-lg border border-line bg-surface-1 px-3 py-2 text-sm placeholder:text-ink-faint focus:border-violet-soft focus:outline-none"
+              className="w-full rounded-lg border border-line bg-surface-1 py-2 pr-3 pl-9 text-sm placeholder:text-ink-faint focus:border-violet-soft focus:outline-none"
             />
           </div>
         </div>
@@ -136,13 +147,8 @@ export function ToolsView() {
           </p>
         )}
         {groups.map(([category, list]) => (
-          <section key={category} aria-labelledby={`cat-${category}`}>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 id={`cat-${category}`} className="text-base font-extrabold tracking-tight">
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </h2>
-              <ApplyRecommended ids={recommendedIds(list)} gateOpen={gateOpen} />
-            </div>
+          <section key={category} aria-labelledby={`cat-${category}`} className="scroll-mt-16">
+            <CategoryHeader category={category} list={list} gateOpen={gateOpen} />
             <ul className="grid items-start gap-3 2xl:grid-cols-2">
               {list
                 .filter((t) => !notForThisPc(t))
@@ -162,6 +168,128 @@ export function ToolsView() {
         <OneTimeActions />
       </div>
     </>
+  );
+}
+
+/** In effect on this PC, by PeakTweaks or set before. */
+const inEffect = (t: TweakView) => t.state.status === "applied" || t.state.status === "foreign";
+
+/** The ring at the top of Tools: how much of the list this PC already has. */
+function Overview({ done, total, tweaks }: { done: number; total: number; tweaks: readonly TweakView[] }) {
+  if (total === 0) return null;
+  const r = 40;
+  const length = 2 * Math.PI * r;
+  const share = done / total;
+  const setBack = tweaks.filter((t) => t.state.status === "drifted").length;
+  const toApply = tweaks.filter((t) => t.state.status === "default" && !t.blocked).length;
+  return (
+    <section
+      aria-label="Overview"
+      className="relative isolate flex flex-wrap items-center gap-5 overflow-hidden rounded-2xl border border-line bg-surface-1 p-5"
+    >
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 texture-lines" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-24 -left-10 -z-10 size-64 rounded-full bg-violet/25 blur-3xl"
+      />
+      <div className="relative size-24 shrink-0">
+        <svg viewBox="0 0 100 100" className="size-full -rotate-90" aria-hidden>
+          <circle cx="50" cy="50" r={r} fill="none" strokeWidth="10" className="stroke-surface-3" />
+          <circle
+            cx="50"
+            cy="50"
+            r={r}
+            fill="none"
+            strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={length}
+            strokeDashoffset={length * (1 - share)}
+            className="stroke-lime transition-[stroke-dashoffset] duration-700"
+          />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center font-display text-xl font-extrabold tabular-nums">
+          {done}/{total}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-display text-2xl font-extrabold tracking-tight">
+          {done} of {total} already optimized on this PC.
+        </p>
+        <p className="mt-1 text-sm text-ink-muted">
+          {toApply === 0 ? "Nothing left to apply in this list." : `${toApply} still to apply.`}
+          {setBack > 0 && ` ${setBack} set back outside PeakTweaks.`} A preset below applies a set in one go, or pick
+          them one by one further down.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/** Jump to a category further down the page. */
+function CategoryNav({ groups }: { groups: [string, TweakView[]][] }) {
+  if (groups.length < 2) return <span />;
+  return (
+    <nav aria-label="Tool categories" className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+      {groups.map(([category, list]) => {
+        const Icon = categoryIcon(category);
+        const here = list.filter((t) => !notForThisPc(t));
+        const done = here.filter(inEffect).length;
+        return (
+          <button
+            key={category}
+            type="button"
+            onClick={() =>
+              document.getElementById(`cat-${category}`)?.closest("section")?.scrollIntoView?.({ behavior: "smooth" })
+            }
+            className="flex items-center gap-1.5 rounded-full border border-line bg-surface-1 px-3 py-1.5 text-xs font-bold text-ink-muted transition-colors hover:border-violet hover:text-ink"
+          >
+            <Icon aria-hidden className="size-3.5" />
+            {categoryName(category)}
+            <span
+              className={cx(
+                "rounded-full px-1.5 tabular-nums",
+                here.length > 0 && done === here.length ? "bg-lime text-black" : "bg-surface-3 text-ink-muted",
+              )}
+            >
+              {done}/{here.length}
+            </span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** A category's title, how much of it is in effect, and Apply recommended. */
+function CategoryHeader({ category, list, gateOpen }: { category: string; list: TweakView[]; gateOpen: boolean | null }) {
+  const Icon = categoryIcon(category);
+  const here = list.filter((t) => !notForThisPc(t));
+  const done = here.filter(inEffect).length;
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-3">
+      <span
+        aria-hidden
+        className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-violet to-violet-strong text-white shadow-[0_0_24px_-6px] shadow-violet"
+      >
+        <Icon className="size-5" strokeWidth={2.2} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 id={`cat-${category}`} className="font-display text-xl font-extrabold tracking-tight">
+          {categoryName(category)}
+        </h2>
+        {here.length > 0 && (
+          <div className="mt-1 flex items-center gap-2">
+            <div aria-hidden className="h-1 w-24 overflow-hidden rounded-full bg-surface-3">
+              <div className="h-full rounded-full bg-lime" style={{ width: `${(done / here.length) * 100}%` }} />
+            </div>
+            <span className="text-xs font-semibold text-ink-muted">
+              {done} of {here.length} in effect
+            </span>
+          </div>
+        )}
+      </div>
+      <ApplyRecommended ids={recommendedIds(list)} gateOpen={gateOpen} />
+    </div>
   );
 }
 
@@ -252,15 +380,12 @@ function OneTimeActions() {
         </h2>
         <p className="mt-1 text-sm text-ink-muted">These change no setting, so there is nothing to undo.</p>
       </div>
-      <ul className="grid items-start gap-3 2xl:grid-cols-2">
-        {/* The two short cards side by side, the tall junk card across both. */}
-        <li>
-          <StandbyCard />
-        </li>
+      <ul className="grid items-start gap-3">
+        {/* Clean memory is under Quick tools, at the top. */}
         <li>
           <DriveCard />
         </li>
-        <li className="2xl:col-span-2">
+        <li>
           <CleanupCard />
         </li>
       </ul>
@@ -274,53 +399,6 @@ const WAIT_FOR: Record<LongWork, string> = {
   cleanup: "Available again when the junk cleanup finishes.",
   drive: "Available again when the drive optimization finishes.",
 };
-
-const gb = (bytes: number) => `${formatNumber(bytes / 1024 ** 3)} GB`;
-
-/** Catalogue E6. Refused by the engine while a Proof recording runs. */
-function StandbyCard() {
-  const op = useStore((s) => s.standbyOp);
-  const capturing = useStore((s) => s.proof.capturingSession !== null);
-  const sample = useStore((s) => s.sample);
-  const technical = useTechnical();
-  const { purgeStandby } = useActions();
-  const headingId = useId();
-  const result = op.status === "done" ? op.value : null;
-
-  return (
-    <Card className="p-4" aria-labelledby={headingId}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 id={headingId} className="font-bold">
-              Empty the standby list
-            </h3>
-            {sample && <SampleBadge />}
-          </div>
-          <p className="mt-1 text-sm text-ink-muted">
-            Windows keeps files it read recently in memory that nothing else is using, and gives that memory to a
-            program as soon as it asks. This empties that list now; Windows fills it again as files are read.
-          </p>
-          {capturing && <p className="mt-2 text-sm text-ink-muted">{WAIT_FOR.proof}</p>}
-          {result && (
-            <p className="mt-2 text-sm" role="status">
-              Emptied {formatDateTime(result.unixMs)}. Files kept in memory: {gb(result.before.cachedBytes)} before,{" "}
-              {gb(result.after.cachedBytes)} after.
-            </p>
-          )}
-        </div>
-        <Button busy={op.status === "running"} disabled={capturing} onClick={() => void purgeStandby()}>
-          Empty it now
-        </Button>
-      </div>
-      {op.status === "failed" && (
-        <div className="mt-3">
-          <ErrorCallout text={explain(op.error)} technical={technical} />
-        </div>
-      )}
-    </Card>
-  );
-}
 
 /** Catalogue H28, in the engine's order. */
 const AREAS: { area: CleanupArea; name: string; note: string }[] = [
@@ -630,9 +708,33 @@ export function TweakCard({ tweak, gateOpen }: { tweak: TweakView; gateOpen: boo
   const restartLine =
     tweak.requiresReboot && !foreign && !(tradeoffShown && /needs a restart/i.test(tweak.tradeoff ?? ""));
 
+  const Icon = categoryIcon(tweak.category);
+  const inPlace = applied || foreign;
   return (
-    <Card className="p-4">
+    <Card
+      className={cx(
+        "relative overflow-hidden p-4 pl-5 transition-colors",
+        inPlace ? "border-lime/30" : blocked ? "border-line" : "hover:border-violet/60",
+      )}
+    >
+      {/* The state at a glance, beside its word: lime in effect, violet to apply, red not offered. */}
+      <span
+        aria-hidden
+        className={cx(
+          "absolute inset-y-0 left-0 w-1",
+          inPlace ? "bg-lime" : blocked || tweak.state.status === "blocked" ? "bg-bad/70" : drifted ? "bg-violet-soft" : "bg-violet",
+        )}
+      />
       <div className="flex flex-wrap items-start justify-between gap-3">
+        <span
+          aria-hidden
+          className={cx(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg",
+            inPlace ? "bg-lime/15 text-lime" : "bg-violet/15 text-violet-soft",
+          )}
+        >
+          <Icon className="size-[18px]" strokeWidth={2} />
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-bold">{tweak.name}</h3>

@@ -105,6 +105,9 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   let startup: StartupList = clone(fx.startupList) as StartupList;
   // How many live readings were asked for (they move a little each time).
   let live = 0;
+  // SAMPLE files kept in memory: down after a clean, then filling again.
+  const CACHED_FULL = 6 * 2 ** 30;
+  let cached = CACHED_FULL;
   // MSI mode per device (H6): changes like any other, as startup switches.
   let msi: MsiDeviceList = clone(fx.msiDevices) as MsiDeviceList;
   let settings: Settings = { ...(clone(fx.systemAudit.settings) as Settings), welcomeSeen: !options.firstRun };
@@ -355,6 +358,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       reply("purgeStandbyMemory", [], () => {
         emit("standby", "Emptying the standby list");
         const result = { ...clone(fx.standbyPurge), unixMs: Date.now() };
+        cached = result.after.cachedBytes;
         recordAction({ action: "purge_standby", cachedBefore: result.before.cachedBytes, cachedAfter: result.after.cachedBytes });
         return result;
       }),
@@ -392,10 +396,11 @@ export function createMockBackend(options: MockOptions = {}): Backend {
       reply("liveReadings", [], (): LiveReadings => {
         // SAMPLE numbers that move a little, so the tiles can be seen updating.
         live += 1;
+        cached = Math.min(CACHED_FULL, cached + 0.15 * 2 ** 30);
         const wobble = (base: number) => base + ((live * 7) % 9) - 4;
         return {
           cpuBusyPercent: { state: "yes", value: wobble(23) },
-          memory: { state: "yes", value: { totalBytes: 16 * 2 ** 30, availableBytes: 6.9 * 2 ** 30, cachedBytes: 4.2 * 2 ** 30 } },
+          memory: { state: "yes", value: { totalBytes: 16 * 2 ** 30, availableBytes: 6.9 * 2 ** 30, cachedBytes: cached } },
           gpus: {
             state: "yes",
             value: [

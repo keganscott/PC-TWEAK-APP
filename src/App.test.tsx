@@ -198,14 +198,45 @@ describe("App", () => {
     await waitFor(() => expect(within(card).getByText("Optimized")).toBeTruthy());
   });
 
-  it("Tools empties the standby list without a restore point and shows before and after", async () => {
+  it("Tools cleans memory without a restore point, with live readings and before and after", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Home", level: 1 });
     await goTo("Tools");
-    const card = await screen.findByRole("region", { name: "Empty the standby list" });
+    const card = await screen.findByRole("region", { name: "Clean memory" });
     expect(within(card).getByText("SAMPLE")).toBeTruthy();
-    await userEvent.click(within(card).getByRole("button", { name: "Empty it now" }));
-    expect(await within(card).findByText(/6\.0 GB before, 1\.0 GB after/)).toBeTruthy();
+    expect(await within(card).findByText("Files kept in memory")).toBeTruthy();
+    await userEvent.click(within(card).getByRole("button", { name: "Clean memory" }));
+    expect(await within(card).findByText(/5\.0 GB of files let go\. Files kept in memory: 6\.0 GB before, 1\.0 GB after\./)).toBeTruthy();
+  });
+
+  it("Home's memory tile cleans memory in one click", async () => {
+    const backend = createMockBackend();
+    const purge = vi.spyOn(backend, "purgeStandbyMemory");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    const tile = (await screen.findByRole("meter", { name: /^Memory: / })).closest("li") as HTMLElement;
+    await userEvent.click(within(tile).getByRole("button", { name: "Clean memory" }));
+    expect(purge).toHaveBeenCalledTimes(1);
+    expect(await within(tile).findByText(/Cleaned: 5\.0 GB of files let go/)).toBeTruthy();
+  });
+
+  it("Tools shows presets and applies one after its review lists every change", async () => {
+    const backend = createMockBackend({ gateOpen: true });
+    const apply = vi.spyOn(backend, "applyTweak");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const presets = await screen.findByRole("region", { name: "Presets" });
+    const basics = within(presets).getByRole("article", { name: "Basics" });
+    await userEvent.click(within(basics).getByRole("button", { name: "Review 2 changes" }));
+    const dialog = await screen.findByRole("dialog", { name: "Basics: 2 changes to apply" });
+    expect(within(dialog).getByText("Sample setting A")).toBeTruthy();
+    expect(within(dialog).getByText("Sample setting F")).toBeTruthy();
+    expect(within(dialog).getByText(/Not offered on this PC now: Sample setting D, Sample setting E\./)).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Apply 2" }));
+    await waitFor(() => expect(apply).toHaveBeenCalledWith("fixture.drifted"));
+    expect(apply).toHaveBeenCalledWith("fixture.default");
+    await waitFor(() => expect(within(basics).getByRole("button", { name: "Nothing to apply" })).toBeTruthy());
   });
 
   it("Tools checks the connection and says where echoes were lost", async () => {

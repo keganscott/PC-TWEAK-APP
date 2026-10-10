@@ -11,6 +11,7 @@ import {
   Printer,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -25,10 +26,12 @@ import { formatDate, formatDateTime, formatGiB, probeValue, RIG_LABEL } from "..
 import { playedReports, reportNotes } from "../../lib/playReport";
 import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
 import { restartCheck } from "../../lib/restartCheck";
-import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { useActions, useLiveReadings, useStore, useTechnical } from "../../store/hooks";
 import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
 import { GamingModeCard } from "../shell/GamingModeButton";
+import { LastChange } from "./LastChange";
+import { gb, useCleanMemory } from "./MemoryCleaner";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
 import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, Spinner, StatusBadge, type Tone } from "../ui/primitives";
@@ -549,23 +552,11 @@ function YourPc({ audit }: { audit: SystemAudit | null }) {
 // (real readings only, plan section 7; `live.rs`)
 // ---------------------------------------------------------------------------
 
-/** How often Home asks for new readings. Each takes half a second. */
-const LIVE_EVERY_MS = 3000;
-
 function RightNow() {
   const live = useStore((s) => s.live);
   const op = useStore((s) => s.liveOp);
   const sample = useStore((s) => s.sample);
-  const { readLive } = useActions();
-
-  useEffect(() => {
-    const read = () => {
-      if (!document.hidden) void readLive();
-    };
-    read();
-    const timer = window.setInterval(read, LIVE_EVERY_MS);
-    return () => window.clearInterval(timer);
-  }, [readLive]);
+  useLiveReadings();
 
   const memory = live?.memory.state === "yes" ? live.memory.value : null;
   const gpus = live?.gpus.state === "yes" ? live.gpus.value : [];
@@ -600,6 +591,7 @@ function RightNow() {
             }
             unit="in use"
             detail={memory && `${formatGiB(memory.totalBytes - memory.availableBytes)} of ${formatGiB(memory.totalBytes)}`}
+            action={<CleanMemoryButton />}
           />
           {gpus.map((g, i) => {
             const name = g.name.state === "yes" ? g.name.value : `Graphics card ${i + 1}`;
@@ -652,12 +644,14 @@ function LiveMeter({
   reading,
   unit,
   detail,
+  action,
 }: {
   label: string;
   icon: LucideIcon;
   reading: Probe<number>;
   unit: string;
   detail?: ReactNode;
+  action?: ReactNode;
 }) {
   const value = reading.state === "yes" ? Math.min(100, Math.max(0, reading.value)) : null;
   return (
@@ -688,7 +682,38 @@ function LiveMeter({
         </>
       )}
       {detail && <div className="mt-2 text-xs text-ink-muted">{detail}</div>}
+      {action && <div className="mt-auto pt-3">{action}</div>}
     </li>
+  );
+}
+
+/** Clean memory from Home's memory tile: the same action as Tools' Quick tools. */
+function CleanMemoryButton() {
+  const { op, capturing, clean } = useCleanMemory();
+  const result = op.status === "done" ? op.value : null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Button
+        variant="secondary"
+        className="px-3 py-1.5 text-xs"
+        busy={op.status === "running"}
+        disabled={capturing}
+        onClick={() => void clean()}
+        icon={<Sparkles aria-hidden className="size-3.5" />}
+      >
+        Clean memory
+      </Button>
+      {result && (
+        <span role="status" className="text-xs text-ink-muted">
+          Cleaned: {gb(Math.max(0, result.before.cachedBytes - result.after.cachedBytes))} of files let go.
+        </span>
+      )}
+      {op.status === "failed" && (
+        <span role="alert" className="text-xs text-bad">
+          {explain(op.error).title}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -835,60 +860,6 @@ function DisplayTile({ probe, status }: { probe: SystemAuditDisplay; status: Ton
       )}
       {d && `${d.width}×${d.height}`}
     </Tile>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Result card after a change (plan section 7)
-// ---------------------------------------------------------------------------
-
-function LastChange() {
-  const change = useStore((s) => s.lastChange);
-  const tweaks = useStore((s) => s.tweaks);
-  const startup = useStore((s) => s.startup);
-  const msi = useStore((s) => s.msi);
-  const undoing = useStore((s) => s.applyManyOp.status === "running");
-  const { dismissChange, revertMany } = useActions();
-  const navigate = useNavigate();
-  if (!change) return null;
-
-  const name = (id: string) =>
-    (
-      tweaks.find((t) => t.id === id) ??
-      startup?.apps.find((a) => a.tweak.id === id)?.tweak ??
-      msi?.devices.find((d) => d.tweak.id === id)?.tweak
-    )?.name ?? id;
-  const verb = change.kind === "apply" ? "Applied" : "Undid";
-  const what = change.tweakIds.length ? change.tweakIds.map(name).join(", ") : "nothing";
-  return (
-    <Callout
-      tone={change.failed.length ? "warn" : "ok"}
-      title={`${verb}: ${what}`}
-      action={
-        <div className="flex flex-wrap gap-2">
-          {change.kind === "apply" && change.tweakIds.length > 0 && (
-            <Button busy={undoing} onClick={() => void revertMany(change.tweakIds)}>
-              Undo these
-            </Button>
-          )}
-          <Button onClick={() => navigate("backups")}>Review in Backups</Button>
-          {change.kind === "apply" && <Button onClick={() => navigate("proof")}>Check the effect in Proof</Button>}
-          <Button variant="ghost" onClick={dismissChange}>
-            Dismiss
-          </Button>
-        </div>
-      }
-    >
-      {change.failed.length > 0 && (
-        <ul className="list-disc pl-5">
-          {change.failed.map((f) => (
-            <li key={f.tweakId}>
-              {name(f.tweakId)} could not be {change.kind === "apply" ? "applied" : "undone"}: {f.error ?? "no reason given"}
-            </li>
-          ))}
-        </ul>
-      )}
-    </Callout>
   );
 }
 

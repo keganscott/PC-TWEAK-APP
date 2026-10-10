@@ -64,6 +64,14 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "Win32_NetworkManagement",
         "\"Win32_NetworkManagement_Ndis\",",
     ),
+    // The WLAN API, read only: whether a Wi-Fi adapter is connected and its
+    // signal, shown with the check. It sends nothing (WlanOpenHandle,
+    // WlanEnumInterfaces, WlanQueryInterface; NOTES N88).
+    (
+        "crates/engine/Cargo.toml",
+        "Win32_NetworkManagement",
+        "\"Win32_NetworkManagement_WiFi\",",
+    ),
 ];
 
 /// UI code: every way a page can talk to the network. The CSP blocks these at

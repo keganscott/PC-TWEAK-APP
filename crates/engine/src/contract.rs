@@ -98,6 +98,11 @@ fn network_check_fixture() -> NetworkCheck {
         reading: read(&results),
         results,
         unix_ms: 1_791_332_400_000,
+        wifi: crate::probe::Probe::yes(crate::netcheck::WifiSignal {
+            adapter: "Sample Wi-Fi 6 adapter".into(),
+            quality: 62,
+            rssi_dbm: Some(-69),
+        }),
     }
 }
 

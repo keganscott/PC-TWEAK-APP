@@ -1174,7 +1174,15 @@ export const networkCheck = {
     }
   ],
   "reading": "loss_past_router",
-  "unixMs": 1791332400000
+  "unixMs": 1791332400000,
+  "wifi": {
+    "state": "yes",
+    "value": {
+      "adapter": "Sample Wi-Fi 6 adapter",
+      "quality": 62,
+      "rssiDbm": -69
+    }
+  }
 } satisfies NetworkCheck;
 
 export const cleanupSizes = [

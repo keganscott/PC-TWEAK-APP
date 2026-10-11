@@ -90,7 +90,6 @@ struct Recorder {
 struct Due {
     svc: Arc<ProofService>,
     status: AutoRecordStatus,
-    applied: Vec<String>,
 }
 
 impl Recorder {
@@ -101,7 +100,6 @@ impl Recorder {
         &mut self,
         svc: Option<Arc<ProofService>>,
         game: Option<&str>,
-        applied: impl FnOnce() -> Vec<String>,
         now: u64,
     ) -> (Option<AutoRecordStatus>, Option<Due>) {
         if self.sample.as_ref().is_some_and(JoinHandle::is_finished) {
@@ -114,14 +112,7 @@ impl Recorder {
         }
         let Some(svc) = svc else { return (None, None) };
         match self.schedule.look(&svc, game, now) {
-            (Some(status), true) => (
-                Some(status.clone()),
-                Some(Due {
-                    svc,
-                    status,
-                    applied: applied(),
-                }),
-            ),
+            (Some(status), true) => (Some(status.clone()), Some(Due { svc, status })),
             (status, _) => (status, None),
         }
     }
@@ -129,12 +120,8 @@ impl Recorder {
     /// Outside the engine lock: start the sample that is due, if the game is
     /// in front and no other long work holds the disk; otherwise say why it
     /// waits (the next look tries again).
-    fn start(&mut self, app: &AppHandle, due: Due, status: &mut PlayStatus) {
-        let Due {
-            svc,
-            status: shown,
-            applied,
-        } = due;
+    fn start(&mut self, app: &AppHandle, engine: &SharedEngine, due: Due, status: &mut PlayStatus) {
+        let Due { svc, status: shown } = due;
         let wait = |why: String| {
             Some(AutoRecordStatus {
                 problem: Some(why),
@@ -163,6 +150,7 @@ impl Recorder {
             }
         };
         let app = app.clone();
+        let engine = engine.clone();
         let (session_id, side) = (shown.session_id.clone(), shown.side);
         let message = format!(
             "Proof: recording sample {} of {} while {} runs",
@@ -173,7 +161,16 @@ impl Recorder {
         let spawned = std::thread::Builder::new().name("proof-sample".into()).spawn(move || {
             let _activity = activity;
             progress(&app, "proof_auto", None, message);
-            let result = svc.capture(&session_id, side, AUTO_SECONDS, 0, applied, &|stage, message| {
+            // Read at the start and again at the end: a change made or undone
+            // meanwhile (Gaming Mode taking effect included) means the sample
+            // is not kept (`capture_checked`).
+            let applied = || {
+                engine
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .applied_tweak_ids()
+            };
+            let result = svc.capture_checked(&session_id, side, AUTO_SECONDS, 0, &applied, &|stage, message| {
                 progress(&app, stage, None, message)
             });
             progress(
@@ -311,8 +308,7 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
             }
             session.gaming_mode_was_on = settings.gaming_mode;
             // A Proof sample due now is started once the lock is let go.
-            let (auto_record, due) =
-                recorder.look(e.proof_service(), watch.current(), || e.applied_tweak_ids(), now_ms());
+            let (auto_record, due) = recorder.look(e.proof_service(), watch.current(), now_ms());
 
             let mut now = PlayStatus {
                 game: watch.current().map(str::to_owned),
@@ -329,7 +325,12 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
             };
             drop(e);
             if let Some(due) = due {
-                recorder.start(app, due, &mut now);
+                recorder.start(app, engine, due, &mut now);
+                // Not in the pass that starts a sample: emptying the file
+                // cache as it begins would disturb it.
+                if recorder.sample.is_some() {
+                    clean_for = None;
+                }
             }
             let changed = {
                 let mut shown = status.lock().unwrap_or_else(PoisonError::into_inner);
@@ -362,8 +363,8 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
 fn clean_memory(game: &str, session: &mut Session, reports: &mut PlayReports) {
     let lists = memory::system();
     let now = now_ms();
-    let due = match lists.usage() {
-        Ok(m) => memory::auto_clean_due(&m, session.last_clean_ms, now),
+    let due = match lists.usage().and_then(|m| Ok((m, lists.free_bytes()?))) {
+        Ok((m, free)) => memory::auto_clean_due(&m, free, session.last_clean_ms, now),
         Err(err) => {
             session.clean_problem = Some(format!("Memory could not be read for cleaning: {err}"));
             return;

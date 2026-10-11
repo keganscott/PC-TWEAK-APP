@@ -60,6 +60,9 @@ impl StandbyPurge {
 /// What emptying the standby list needs from Windows.
 pub trait MemoryLists: Send + Sync {
     fn usage(&self) -> Result<MemoryUse>;
+    /// Memory on Windows' zero and free page lists: used by nothing, not even
+    /// for files. For cleaning during games only.
+    fn free_bytes(&self) -> Result<u64>;
     fn purge_standby(&self) -> Result<()>;
 }
 
@@ -82,19 +85,16 @@ pub const AUTO_CACHED_AT_LEAST: u64 = 1 << 30;
 /// See `AUTO_FREE_BELOW`.
 pub const AUTO_GAP_MS: u64 = 60_000;
 
-/// Memory no one is using at all, not even for files: what is available less
-/// the files kept in memory. An estimate: `cached_bytes` also counts the
-/// system's own working set, so it can read low, never high.
-pub fn free_estimate(m: &MemoryUse) -> u64 {
-    m.available_bytes.saturating_sub(m.cached_bytes)
-}
-
-/// Whether to clean now: free memory under `AUTO_FREE_BELOW`, files kept in
+/// Whether to clean now: free memory (`MemoryLists::free_bytes`, the zero and
+/// free lists as Windows counts them) under `AUTO_FREE_BELOW`, files kept in
 /// memory at least `AUTO_CACHED_AT_LEAST`, and the last clean (Unix ms) at
-/// least `AUTO_GAP_MS` ago.
-pub fn auto_clean_due(m: &MemoryUse, last_clean_ms: Option<u64>, now_ms: u64) -> bool {
+/// least `AUTO_GAP_MS` ago. Free memory used to be estimated as available less
+/// `SystemCache`, which also counts the system's own working set and so read
+/// low enough to clean every minute on a PC with plenty free (review,
+/// 2026-10-11).
+pub fn auto_clean_due(m: &MemoryUse, free_bytes: u64, last_clean_ms: Option<u64>, now_ms: u64) -> bool {
     let rested = last_clean_ms.is_none_or(|last| now_ms.saturating_sub(last) >= AUTO_GAP_MS);
-    rested && free_estimate(m) < AUTO_FREE_BELOW && m.cached_bytes >= AUTO_CACHED_AT_LEAST
+    rested && free_bytes < AUTO_FREE_BELOW && m.cached_bytes >= AUTO_CACHED_AT_LEAST
 }
 
 /// The real thing on Windows; elsewhere, a refusal.
@@ -118,6 +118,9 @@ impl MemoryLists for Unavailable {
             detail: "memory lists exist only on Windows".into(),
         })
     }
+    fn free_bytes(&self) -> Result<u64> {
+        self.usage().map(|_| 0)
+    }
     fn purge_standby(&self) -> Result<()> {
         self.usage().map(drop)
     }
@@ -135,6 +138,7 @@ mod imp {
     };
     use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
     use windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
+    use windows::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     use super::{MemoryLists, MemoryUse};
@@ -146,6 +150,35 @@ mod imp {
     const MEMORY_PURGE_STANDBY_LIST: i32 = 4;
 
     type NtSetSystemInformation = unsafe extern "system" fn(i32, *mut c_void, u32) -> NTSTATUS;
+    type NtQuerySystemInformation = unsafe extern "system" fn(i32, *mut c_void, u32, *mut u32) -> NTSTATUS;
+
+    /// `SYSTEM_MEMORY_LIST_INFORMATION` (phnt `ntexapi.h`): page counts per
+    /// list. VERIFY: the layout is phnt's as recalled (five counts, then
+    /// eight per standby priority, eight repurposed, one modified to the page
+    /// file); only the first two are read, and Windows CI prints them beside
+    /// `GetPerformanceInfo`'s figures.
+    #[repr(C)]
+    #[derive(Default)]
+    struct MemoryListInformation {
+        zero_page_count: usize,
+        free_page_count: usize,
+        modified_page_count: usize,
+        modified_no_write_page_count: usize,
+        bad_page_count: usize,
+        page_count_by_priority: [usize; 8],
+        repurposed_pages_by_priority: [usize; 8],
+        modified_page_count_page_file: usize,
+    }
+
+    fn ntdll_export(name: windows::core::PCSTR) -> Result<unsafe extern "system" fn() -> isize> {
+        // SAFETY: ntdll is always loaded; the name is a static string.
+        unsafe {
+            let ntdll = GetModuleHandleW(w!("ntdll.dll")).map_err(|e| EngineError::win32("GetModuleHandleW", e))?;
+            GetProcAddress(ntdll, name).ok_or_else(|| EngineError::Internal {
+                detail: format!("ntdll.dll does not export {}", String::from_utf8_lossy(name.as_bytes())),
+            })
+        }
+    }
 
     pub struct WinMemory;
 
@@ -211,6 +244,35 @@ mod imp {
             })
         }
 
+        fn free_bytes(&self) -> Result<u64> {
+            enable_profile_privilege()?;
+            let f = ntdll_export(s!("NtQuerySystemInformation"))?;
+            let mut info = MemoryListInformation::default();
+            let mut returned = 0u32;
+            // SAFETY: the pointer is transmuted to the function's documented
+            // signature; the buffer is ours and its size is passed.
+            let status = unsafe {
+                let query = std::mem::transmute::<unsafe extern "system" fn() -> isize, NtQuerySystemInformation>(f);
+                query(
+                    SYSTEM_MEMORY_LIST_INFORMATION,
+                    std::ptr::from_mut(&mut info).cast(),
+                    std::mem::size_of::<MemoryListInformation>() as u32,
+                    &mut returned,
+                )
+            };
+            if status.is_err() {
+                return Err(EngineError::Win32 {
+                    call: "NtQuerySystemInformation".into(),
+                    code: status.0 as u32,
+                    detail: format!("Windows did not report its memory lists (NTSTATUS 0x{:08X})", status.0),
+                });
+            }
+            let mut sys = SYSTEM_INFO::default();
+            // SAFETY: valid out-pointer.
+            unsafe { GetSystemInfo(&mut sys) };
+            Ok((info.zero_page_count as u64 + info.free_page_count as u64) * u64::from(sys.dwPageSize))
+        }
+
         fn purge_standby(&self) -> Result<()> {
             enable_profile_privilege()?;
             // SAFETY: ntdll is always loaded; the pointer is transmuted to the
@@ -251,7 +313,16 @@ mod imp {
             eprintln!("SKIPPED: not elevated, so the standby list cannot be emptied here");
             return;
         }
+        let free_before = WinMemory.free_bytes().expect("reading the free lists");
         let out = super::purge_standby(&WinMemory, 0).expect("emptying the standby list");
+        let free_after = WinMemory.free_bytes().expect("reading the free lists");
+        eprintln!(
+            "free lists (zero + free): {} -> {} MiB",
+            free_before >> 20,
+            free_after >> 20
+        );
+        // Emptying the standby list moves its pages to the free list.
+        assert!(free_after <= out.after.available_bytes, "free is part of available");
         eprintln!(
             "standby purge: cached {} -> {} MiB, available {} -> {} MiB, total {} MiB",
             out.before.cached_bytes >> 20,
@@ -279,6 +350,9 @@ mod tests {
     }
 
     impl MemoryLists for Fake {
+        fn free_bytes(&self) -> Result<u64> {
+            Ok(0)
+        }
         fn usage(&self) -> Result<MemoryUse> {
             self.calls.lock().unwrap().push("usage");
             Ok(MemoryUse {
@@ -317,37 +391,26 @@ mod tests {
     #[test]
     fn cleaning_during_a_game_waits_for_short_free_memory_a_big_list_and_a_minute() {
         const GIB: u64 = 1 << 30;
-        let short = MemoryUse {
+        let m = MemoryUse {
             total_bytes: 16 * GIB,
             available_bytes: 6 * GIB + GIB / 2,
             cached_bytes: 6 * GIB,
         };
-        assert_eq!(free_estimate(&short), GIB / 2);
-        assert!(auto_clean_due(&short, None, 1_000_000));
+        let short = GIB / 2;
+        assert!(auto_clean_due(&m, short, None, 1_000_000));
         assert!(
-            !auto_clean_due(&short, Some(1_000_000 - AUTO_GAP_MS + 1), 1_000_000),
+            !auto_clean_due(&m, short, Some(1_000_000 - AUTO_GAP_MS + 1), 1_000_000),
             "within a minute"
         );
-        assert!(auto_clean_due(&short, Some(1_000_000 - AUTO_GAP_MS), 1_000_000));
-        let plenty_free = MemoryUse {
-            available_bytes: 8 * GIB,
-            ..short
-        };
-        assert!(!auto_clean_due(&plenty_free, None, 0), "2 GB free");
+        assert!(auto_clean_due(&m, short, Some(1_000_000 - AUTO_GAP_MS), 1_000_000));
+        assert!(!auto_clean_due(&m, 2 * GIB, None, 0), "2 GB free");
         let small_list = MemoryUse {
-            available_bytes: GIB,
             cached_bytes: GIB / 2,
-            ..short
+            ..m
         };
-        assert!(!auto_clean_due(&small_list, None, 0), "little to let go");
-        let odd = MemoryUse {
-            available_bytes: GIB,
-            cached_bytes: 3 * GIB,
-            ..short
-        };
-        assert_eq!(free_estimate(&odd), 0, "never below zero");
+        assert!(!auto_clean_due(&small_list, short, None, 0), "little to let go");
         assert!(
-            !auto_clean_due(&odd, Some(5), 0),
+            !auto_clean_due(&m, short, Some(5), 0),
             "a clock that went back is not a minute"
         );
     }

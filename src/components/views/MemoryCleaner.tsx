@@ -27,7 +27,7 @@ export function useCleanMemory() {
     capturing,
     clean: async () => {
       await purgeStandby();
-      await readLive();
+      await readLive(true);
     },
   };
 }

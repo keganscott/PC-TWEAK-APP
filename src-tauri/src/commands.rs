@@ -349,20 +349,30 @@ pub async fn proof_capture(
     let activity = Activity::start("a Proof recording")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _activity = activity;
-        let (svc, applied) = {
+        let svc = {
             let guard = shared.lock().map_err(|_| EngineError::Internal {
                 detail: "engine state was poisoned by an earlier panic; restart PeakTweaks".into(),
             })?;
-            (
-                guard.proof_service().ok_or_else(|| EngineError::Internal {
-                    detail: "this build has no proof service".into(),
-                })?,
-                guard.applied_tweak_ids(),
-            )
+            guard.proof_service().ok_or_else(|| EngineError::Internal {
+                detail: "this build has no proof service".into(),
+            })?
         };
-        let result = svc.capture(&session_id, side, seconds, delay_seconds, applied, &|stage, message| {
-            progress(&app, stage, None, message)
-        });
+        // Read at the start and again at the end: a change made meanwhile
+        // means the run is not kept (`capture_checked`).
+        let applied = || {
+            shared
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .applied_tweak_ids()
+        };
+        let result = svc.capture_checked(
+            &session_id,
+            side,
+            seconds,
+            delay_seconds,
+            &applied,
+            &|stage, message| progress(&app, stage, None, message),
+        );
         progress(
             &app,
             if result.is_ok() { "proof_done" } else { "proof_failed" },

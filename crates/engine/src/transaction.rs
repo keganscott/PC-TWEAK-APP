@@ -447,21 +447,35 @@ impl<'a> Transaction<'a> {
     /// putting back failed too, so nobody is told nothing was left half-done
     /// while its writes stay outstanding for Undo (audit I5).
     pub fn abandon(self, err: EngineError) -> EngineError {
-        let tweak_id = self.tweak_id.clone();
-        match self.rollback() {
-            Ok(()) => err,
-            Err(undo) => EngineError::PartlyApplied {
-                tweak_id,
+        // Nothing written: nothing to put back, whatever the journal can take.
+        if self.written.is_empty() && self.changes.is_empty() {
+            return err;
+        }
+        if let Err(undo) = self.put_back_all() {
+            return EngineError::PartlyApplied {
+                tweak_id: self.tweak_id.clone(),
                 detail: err.to_string(),
                 undo_detail: undo.to_string(),
-            },
+            };
         }
+        // Everything is back. If the rollback line cannot be written the
+        // writes stay outstanding in the journal, and Undo putting the same
+        // values back again is harmless, so `err` is still the whole story.
+        let _ = self.record_rollback();
+        err
     }
 
     /// Undo this transaction's own writes, newest first, straight from their
     /// journal records, then cancel them in the journal. If any undo fails the
     /// cancel is not written: the writes stay outstanding so a revert can retry.
     pub fn rollback(self) -> Result<()> {
+        self.put_back_all()?;
+        self.record_rollback()
+    }
+
+    /// Every write and change of this transaction put back, newest first; the
+    /// first failure is returned after trying them all.
+    fn put_back_all(&self) -> Result<()> {
         let mut first_err = None;
         // Newest first across registry writes and other changes.
         let mut seqs: Vec<(u64, bool, usize)> = self
@@ -483,9 +497,10 @@ impl<'a> Transaction<'a> {
                 first_err.get_or_insert(err);
             }
         }
-        if let Some(err) = first_err {
-            return Err(err);
-        }
+        first_err.map_or(Ok(()), Err)
+    }
+
+    fn record_rollback(self) -> Result<()> {
         let seq = self.journal.take_seq();
         self.journal.append_commit(CommitRecord {
             seq,
@@ -542,6 +557,17 @@ impl<'a> Transaction<'a> {
     fn undo_entry(&self, e: &JournalEntry) -> Result<()> {
         let (hive, full) = self.resolver.route(e.root, &e.key_path);
         let backend = self.resolver.backend();
+        // A write that failed (its record is made first) left the value as it
+        // was, and created no key: nothing to put back, so a refusing registry
+        // is not asked again.
+        let unchanged = backend.read_value(hive, &full, &e.value_name).ok().as_ref() == Some(&e.previous);
+        let no_new_keys = e.created_keys.iter().all(|k| {
+            let (h, p) = self.resolver.route(e.root, k);
+            backend.key_exists(h, &p).is_ok_and(|exists| !exists)
+        });
+        if unchanged && no_new_keys {
+            return Ok(());
+        }
         match &e.previous {
             Some(prev) => backend.write_value(hive, &full, &e.value_name, prev)?,
             None => {

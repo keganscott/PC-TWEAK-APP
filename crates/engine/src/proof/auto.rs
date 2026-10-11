@@ -92,11 +92,19 @@ pub struct AutoSchedule {
     last_ended_ms: Option<u64>,
     recording: bool,
     failed: Option<String>,
+    /// Looks in a row that could not read the comparison.
+    unreadable: u32,
 }
+
+/// Looks in a row (3 s apart, about a minute) that may fail to read the
+/// comparison before recording stops: one failed read (a file held open by
+/// antivirus) is not taken for a comparison that is gone.
+pub const UNREADABLE_LOOKS: u32 = 20;
 
 impl AutoSchedule {
     /// One look: what to show, and whether a sample is due now. Stops
-    /// recording once the side has its runs or the comparison cannot be read.
+    /// recording once the side has its runs or the comparison has not been
+    /// readable for `UNREADABLE_LOOKS` looks.
     /// `game` is the game the watcher sees running (`env::KNOWN_GAMES` id).
     pub fn look(&mut self, svc: &ProofService, game: Option<&str>, now_ms: u64) -> (Option<AutoRecordStatus>, bool) {
         let record = svc.auto_record();
@@ -114,11 +122,15 @@ impl AutoSchedule {
             Ok(Some(status)) => status,
             Ok(None) => return (None, false),
             Err(_) => {
-                // The comparison can no longer be read: nothing to record into.
-                let _ = svc.stop_auto_record();
+                self.unreadable += 1;
+                if self.unreadable >= UNREADABLE_LOOKS {
+                    // The comparison can no longer be read: nothing to record into.
+                    let _ = svc.stop_auto_record();
+                }
                 return (None, false);
             }
         };
+        self.unreadable = 0;
         if status.recorded >= status.wanted && !self.recording {
             // The side has its runs; the Proof page shows them.
             let _ = svc.stop_auto_record();
@@ -204,6 +216,34 @@ mod tests {
 
         fn sample(svc: &ProofService, id: &str, side: Side) {
             svc.capture(id, side, AUTO_SECONDS, 0, vec![], &|_, _| {}).unwrap();
+        }
+
+        #[test]
+        fn a_comparison_that_cannot_be_read_stops_recording_only_after_a_minute_of_failed_looks() {
+            let d = tempfile::tempdir().unwrap();
+            let (svc, id) = fortnite(d.path());
+            svc.start_auto_record(&id, Side::Before).unwrap();
+            let mut s = AutoSchedule::default();
+            assert!(s.look(&svc, Some("fortnite"), T0).0.is_some());
+            // The comparison's folder goes (or is held open) under it.
+            let dir = d.path().join("proof").join(&id);
+            let hidden = d.path().join("held");
+            std::fs::rename(&dir, &hidden).unwrap();
+            for i in 1..UNREADABLE_LOOKS {
+                assert_eq!(s.look(&svc, Some("fortnite"), T0 + u64::from(i) * 3000), (None, false));
+                assert!(svc.auto_record().is_some(), "still set after {i} failed looks");
+            }
+            // Readable again before the limit: recording carries on.
+            std::fs::rename(&hidden, &dir).unwrap();
+            assert!(s.look(&svc, Some("fortnite"), T0 + 70_000).0.is_some());
+            std::fs::rename(&dir, &hidden).unwrap();
+            for i in 0..UNREADABLE_LOOKS {
+                s.look(&svc, Some("fortnite"), T0 + 80_000 + u64::from(i) * 3000);
+            }
+            assert!(
+                svc.auto_record().is_none(),
+                "stopped after {UNREADABLE_LOOKS} failed looks in a row"
+            );
         }
 
         #[test]

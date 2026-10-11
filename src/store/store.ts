@@ -640,7 +640,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     },
 
     /** "Record my next games" from a Games card: the newest comparison for
-     * the game found here with a side still short of runs (else a new one) is
+     * the game found here, when a side is still short of runs (else a new one), is
      * set to record while playing, and Proof opens on it. Returns its id, or
      * null when that failed (the op keeps why). */
     async measureGame(gameId: string): Promise<string | null> {
@@ -650,10 +650,12 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       const put = (op: Op<string>) => set((s) => ({ ...s, measureOps: { ...s.measureOps, [gameId]: op } }));
       put(RUNNING);
       try {
-        const room = (await backend.proofSessions())
+        // Only the newest comparison is carried on, as the Games card and
+        // Proof's tile read it; an older one with room would mix setups.
+        const newest = (await backend.proofSessions())
           .filter((c) => c.session.gameId === gameId && c.session.exe.toLowerCase() === exe.toLowerCase())
-          .filter((c) => c.beforeRuns < AUTO_RUNS || c.afterRuns < AUTO_RUNS)
           .sort((a, b) => b.session.createdUnixMs - a.session.createdUnixMs)[0];
+        const room = newest && (newest.beforeRuns < AUTO_RUNS || newest.afterRuns < AUTO_RUNS) ? newest : undefined;
         const sessionId = room?.session.sessionId ?? (await backend.proofBegin(exe, gameId, null)).sessionId;
         const side: Side = room && room.beforeRuns >= AUTO_RUNS ? "after" : "before";
         const current = tag("play");
@@ -741,8 +743,10 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
     /** Read the live processor, memory and GPU readings once. Reads only. The
      * newest answer wins; one already being read is not asked for again. */
-    async readLive() {
-      if (state.liveOp.status === "running") return;
+    /** One live reading. `fresh`: also while a poll is out, since that one
+     * may have been read before a change (the newer request wins). */
+    async readLive(fresh = false) {
+      if (state.liveOp.status === "running" && !fresh) return;
       const current = tag("live");
       set((s) => ({ ...s, liveOp: RUNNING }));
       try {

@@ -275,6 +275,35 @@ describe("App", () => {
     expect(within(tool).queryByText(/installed\./)).toBeNull();
   });
 
+  it("Tools' driver tool says so when it cannot read which driver Windows reports after the install", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    let installed = false;
+    vi.spyOn(base, "installGpuDriver").mockImplementation(async () => {
+      installed = true;
+      return { file: "600.10-desktop.exe", version: "600.10", restart: true, unixMs: 1_791_332_400_000, seconds: 40 };
+    });
+    // Right after the swap, the list of graphics drivers could not be read.
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const audit = await base.auditSystem();
+        if (!installed) return audit;
+        const gpuDrivers = { state: "unknown" as const, reason: "WMI did not answer" };
+        return { ...audit, env: { ...audit.env, hardware: { ...audit.env.hardware!, gpuDrivers } } };
+      },
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const tool = await screen.findByRole("region", { name: "Graphics driver" });
+    await userEvent.click(within(tool).getByRole("button", { name: "Choose the file and install" }));
+    expect(
+      await within(tool).findByText(
+        "NVIDIA's installer for 600.10 finished, but PeakTweaks could not read which driver Windows reports now. Restart Windows, then check the version above.",
+      ),
+    ).toBeTruthy();
+    expect(within(tool).queryByText(/installed\./)).toBeNull();
+  });
+
   it("Tools' driver tool says why a file was not installed", async () => {
     const backend = createMockBackend({
       gateOpen: true,
@@ -1078,6 +1107,20 @@ describe("review regressions", () => {
     await userEvent.clear(box);
     await userEvent.type(box, "zzz");
     expect(within(screen.getByRole("listbox")).getByText("No game by that name in the list.")).toBeTruthy();
+    expect(screen.getByText("No game matches that name.")).toBeTruthy();
+    // Opened without typing, no option is active: Enter picks nothing, and the
+    // first ArrowDown lands on the first game.
+    await userEvent.clear(box);
+    await userEvent.keyboard("{Escape}");
+    box.blur();
+    await userEvent.click(box);
+    expect(box.getAttribute("aria-activedescendant")).toBeNull();
+    await userEvent.keyboard("{Enter}");
+    expect(box.value).toBe("");
+    await userEvent.keyboard("{ArrowDown}");
+    const first = within(screen.getByRole("listbox")).getAllByRole("option")[0]!;
+    expect(box.getAttribute("aria-activedescendant")).toBe(first.id);
+    expect(first.getAttribute("aria-selected")).toBe("true");
     // Escape puts back what was there: nothing picked.
     await userEvent.keyboard("{Escape}");
     expect(box.value).toBe("");

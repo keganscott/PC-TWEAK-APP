@@ -723,6 +723,23 @@ describe("record while I play (proof/auto.rs)", () => {
     expect(store.getState().play?.autoRecord).toBeNull();
   });
 
+  it("a Games card carries on only the game's newest comparison, not an older one with room", async () => {
+    const { store } = await booted({ gateOpen: true });
+    const path = store.getState().audit!.env.gameInstalls!.find((g) => g.gameId === "fortnite")!.exe!;
+    const exe = path.slice(path.lastIndexOf("\\") + 1);
+    const older = (await store.actions.beginSession(exe, "fortnite", null))!.sessionId;
+    await store.actions.capture(older, "before", 30, 0);
+    await new Promise((r) => setTimeout(r, 5));
+    const newer = (await store.actions.beginSession(exe, "fortnite", null))!.sessionId;
+    for (const side of ["before", "after"] as const) {
+      for (let i = 0; i < 3; i += 1) await store.actions.capture(newer, side, 30, 0);
+    }
+    const started = await store.actions.measureGame("fortnite");
+    expect(started).not.toBe(older);
+    expect(started).not.toBe(newer);
+    expect(store.getState().play?.autoRecord).toMatchObject({ sessionId: started, side: "before", recorded: 0 });
+  });
+
   it("a Games card reuses the game's comparison while a side has room, then starts a new one", async () => {
     const { store } = await booted({ gateOpen: true });
     const first = await store.actions.measureGame("fortnite");

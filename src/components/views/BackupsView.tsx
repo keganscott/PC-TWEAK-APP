@@ -304,7 +304,7 @@ function Overview({
           </p>
         </div>
         <p className="mt-auto pt-3 text-xs text-ink-faint">
-          {newest ? `Newest #${newest.sequenceNumber}, made ${formatDateTime(newest.createdUnixMs!)}.` : "None with a date yet."}
+          {!points ? null : newest ? `Newest #${newest.sequenceNumber}, made ${formatDateTime(newest.createdUnixMs!)}.` : "None with a date yet."}
           {ours > 0 && ` PeakTweaks made ${ours === 1 ? "1 of them" : `${ours} of them`}.`}
         </p>
       </section>

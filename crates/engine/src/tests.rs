@@ -387,6 +387,19 @@ fn an_apply_that_cannot_be_put_back_says_so_and_undo_finishes_the_job() {
 }
 
 #[test]
+fn an_apply_that_failed_before_changing_anything_is_not_called_partly_made() {
+    let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1), ("B", 2)])));
+    let before = h.fake.snapshot();
+    // The very first write fails: nothing was changed, so nothing is left half done.
+    h.fake.fail_mutations_from(0);
+    let err = h.engine.apply("t").unwrap_err();
+    assert!(!matches!(err, EngineError::PartlyApplied { .. }), "{err:?}");
+    h.fake.clear_faults();
+    assert_eq!(h.fake.snapshot(), before);
+    assert_eq!(h.engine.list().unwrap()[0].state, TweakState::Default);
+}
+
+#[test]
 fn a_one_time_action_is_kept_in_the_history_and_undo_all_leaves_it_there() {
     let mut h = Harness::new(one(TestTweak::new("t", KEY, &[("A", 1)])));
     h.engine.apply("t").unwrap();

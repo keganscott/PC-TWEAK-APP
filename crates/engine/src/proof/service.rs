@@ -276,6 +276,35 @@ impl ProofService {
         }
     }
 
+    /// `capture`, with PeakTweaks' changes read from `applied_now` when it
+    /// starts and again when it ends. A run during which a change was made or
+    /// undone (in Tools, or Gaming Mode taking effect) would be stored under
+    /// the wrong list, so it is not kept and the error says why.
+    pub fn capture_checked(
+        &self,
+        session_id: &str,
+        side: Side,
+        seconds: u32,
+        delay_seconds: u32,
+        applied_now: &dyn Fn() -> Vec<String>,
+        progress: &dyn Fn(&str, &str),
+    ) -> Result<ProofRun> {
+        let before = applied_now();
+        let run = self.capture(session_id, side, seconds, delay_seconds, before.clone(), progress)?;
+        let mut after = applied_now();
+        let mut was = before;
+        after.sort();
+        was.sort();
+        if after != was {
+            self.store.discard_run(session_id, &run.run_id);
+            return Err(command_error(
+                "PeakTweaks' changes in effect were not the same at the end of the recording as at its start, \
+                 so the run was not kept; record it again",
+            ));
+        }
+        Ok(run)
+    }
+
     /// True while a capture is recording, so other work that would disturb
     /// the measurement (emptying the standby list) can wait for it.
     pub fn is_capturing(&self) -> bool {
@@ -915,6 +944,42 @@ mod tests {
         fn sample(&self) -> Probe<Vec<ThrottleReason>> {
             Probe::yes(self.0.clone())
         }
+    }
+
+    #[test]
+    fn a_run_during_which_the_changes_in_effect_moved_is_not_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let svc = service(d.path(), FakeCapture::new(|_, _| frames(10.0)));
+        let s = begin(&svc, Tier::Pro).unwrap();
+        // The same set in another order is the same set.
+        let reads = std::cell::Cell::new(0);
+        let steady = || {
+            reads.set(reads.get() + 1);
+            if reads.get() == 1 {
+                vec!["a".to_owned(), "b".to_owned()]
+            } else {
+                vec!["b".to_owned(), "a".to_owned()]
+            }
+        };
+        let run = svc
+            .capture_checked(&s.session_id, Side::Before, 30, 0, &steady, &quiet)
+            .unwrap();
+        assert_eq!(run.applied_tweaks, vec!["a", "b"]);
+
+        let calls = std::cell::Cell::new(0);
+        let moved = || {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                vec![]
+            } else {
+                vec!["input.mouseaccel".to_owned()]
+            }
+        };
+        let err = svc
+            .capture_checked(&s.session_id, Side::Before, 30, 0, &moved, &quiet)
+            .unwrap_err();
+        assert!(err.to_string().contains("was not kept"), "{err}");
+        assert_eq!(svc.runs(&s.session_id).unwrap().len(), 1, "only the steady run is kept");
     }
 
     #[test]

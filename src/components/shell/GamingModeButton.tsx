@@ -69,6 +69,7 @@ function sentence(m: ReturnType<typeof useGamingMode>): string {
     return "Off. Turn it on and pop-up notifications go off and Windows Search indexing pauses while a game runs.";
   }
   if (m.gateOpen === false) return "On, and waiting for a restore point: it changes nothing until there is one.";
+  if (m.gateOpen === null && !m.active) return "On. PeakTweaks has not read the restore point yet, and changes nothing without one.";
   if (m.active && m.gameName) {
     return `On now for ${m.gameName}. Pop-up notifications are off and Windows Search indexing is paused until it closes.`;
   }

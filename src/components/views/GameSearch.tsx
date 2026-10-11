@@ -45,16 +45,17 @@ export function GameSearch({
   const listId = useId();
   const [typed, setTyped] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
+  // -1: no option active yet, so Enter on a box just tabbed into picks nothing.
+  const [active, setActive] = useState(-1);
   const listRef = useRef<HTMLUListElement>(null);
   const matches = useMemo(() => matchGames(games, typed ?? ""), [games, typed]);
-  const current = matches[Math.min(active, matches.length - 1)];
+  const current = active < 0 ? undefined : matches[Math.min(active, matches.length - 1)];
   const optionId = (id: string) => `${listId}-${id}`;
 
   const close = () => {
     setOpen(false);
     setTyped(null);
-    setActive(0);
+    setActive(-1);
   };
   const pick = (g: GameInfo) => {
     close();
@@ -63,7 +64,8 @@ export function GameSearch({
   const move = (by: number) => {
     if (!open) setOpen(true);
     if (matches.length === 0) return;
-    const next = (Math.min(active, matches.length - 1) + by + matches.length) % matches.length;
+    const from = active < 0 ? (by > 0 ? -1 : 0) : Math.min(active, matches.length - 1);
+    const next = (from + by + matches.length) % matches.length;
     setActive(next);
     listRef.current?.querySelector(`[id="${CSS.escape(optionId(matches[next]!.id))}"]`)?.scrollIntoView?.({ block: "nearest" });
   };
@@ -115,6 +117,9 @@ export function GameSearch({
           chosen ? "border-violet font-bold" : "border-line-strong"
         }`}
       />
+      <p className="sr-only" role="status">
+        {open && matches.length === 0 ? "No game matches that name." : ""}
+      </p>
       {open && (
         <ul
           id={listId}
@@ -135,7 +140,7 @@ export function GameSearch({
                   key={g.id}
                   id={optionId(g.id)}
                   role="option"
-                  aria-selected={chosen?.id === g.id}
+                  aria-selected={isActive}
                   // Keep focus in the box so the pick lands before the blur closes the list.
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => pick(g)}

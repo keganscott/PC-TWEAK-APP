@@ -224,8 +224,11 @@ points at its row in docs/NOTES.md; a "works" or "doesn't" from you closes it.
 
 ## 6. Backups and Undo all
 
-1. Open **Backups**. **Applied now** lists what is in effect from step 5b, and
-   "Allow a restore point on demand" if step 4 made a restore point.
+1. Open **Backups**. Three tiles at the top count the changes in effect and the
+   restore points, and name the last change (N123); the restore point step 4
+   made should say **Made by PeakTweaks**. **Applied now** lists what is in
+   effect from step 5b, and "Allow a restore point on demand" if step 4 made a
+   restore point. The change record lists what you did today under **Today**.
 2. Click **Undo all** and confirm. **Applied now** should become empty.
 
 ## 7. Close and reopen

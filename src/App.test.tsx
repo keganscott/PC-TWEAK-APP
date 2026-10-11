@@ -1514,6 +1514,67 @@ describe("review regressions", () => {
     expect(within(card).queryByText(/could not be brought up to date/)).toBeNull();
   });
 
+  it("Backups opens on what is in effect, the restore points and the last change", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    // Windows lists the point PeakTweaks recorded making (#42 in the record) beside its own.
+    renderApp({
+      ...base,
+      auditSystem: async () => {
+        const audit = await base.auditSystem();
+        const restore = audit.env.restore!;
+        const points = restore.points.state === "yes" ? restore.points.value : [];
+        const made = { sequenceNumber: 42, description: "PeakTweaks: before changes", createdUnixMs: 1_800_000_000_000 };
+        return {
+          ...audit,
+          env: { ...audit.env, restore: { ...restore, points: { state: "yes", value: [...points, made] } } },
+        };
+      },
+    });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const card = (await screen.findAllByRole("listitem")).find((li) => li.textContent?.includes("Sample setting A"))!;
+    await userEvent.click(within(card).getByRole("button", { name: "Apply" }));
+    await within(card).findByText("Optimized");
+    await goTo("Backups");
+
+    const inEffect = await screen.findByRole("region", { name: "Changes in effect" });
+    const count = String((await screen.findByRole("region", { name: /Applied now/ })).querySelectorAll("li").length);
+    expect(within(inEffect).getByText(count)).toBeTruthy();
+    const points = screen.getByRole("region", { name: "Restore points" });
+    expect(within(points).getByText("2")).toBeTruthy();
+    expect(within(points).getByText(/Newest #42, made .+\. PeakTweaks made 1 of them\./)).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Last change" })).getByText("Applied Sample setting A.")).toBeTruthy();
+
+    const list = screen.getByRole("region", { name: /Windows restore points/ });
+    const row = (n: number) => within(list).getByText(`#${n}`).closest("li") as HTMLElement;
+    expect(within(row(42)).getByText("Made by PeakTweaks")).toBeTruthy();
+    expect(within(row(41)).queryByText("Made by PeakTweaks")).toBeNull();
+  });
+
+  it("Backups' change record shows the newest lines first and the older ones on request", async () => {
+    const base = createMockBackend({ gateOpen: true });
+    const start = 1_800_000_000_000;
+    const records = Array.from({ length: 20 }, (_, i) => ({
+      record: "commit" as const,
+      seq: i + 1,
+      txId: i + 1,
+      unixMs: start + i * 60_000,
+      tweakId: `fixture.${i + 1}`,
+      action: "apply" as const,
+    }));
+    renderApp({ ...base, listJournal: async () => ({ ...(await base.listJournal()), records, warnings: [] }) });
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Backups");
+    const card = await screen.findByRole("region", { name: /Change record/ });
+    const lines = () => within(card).getAllByText(/^Applied: /).map((l) => l.textContent);
+    expect(lines()).toHaveLength(15);
+    expect(lines()[0]).toBe("Applied: fixture.20");
+    await userEvent.click(within(card).getByRole("button", { name: "Show older (5 more)" }));
+    expect(lines()).toHaveLength(20);
+    expect(lines().at(-1)).toBe("Applied: fixture.1");
+    expect(within(card).queryByRole("button", { name: /^Show older/ })).toBeNull();
+  });
+
   it("Backups says when the offline undo files could not be updated at start-up", async () => {
     const base = createMockBackend({ gateOpen: true });
     renderApp({ ...base, listJournal: () => Promise.resolve(fx.journalView) });

@@ -68,7 +68,10 @@ export function GamesView() {
       />
       <div className="flex max-w-4xl flex-col gap-5 2xl:max-w-6xl">
         <Card>
-          <fieldset disabled={targetOp.status === "running"}>
+          {/* Not disabled while a pick saves: that would drop keyboard focus
+              (arrow keys on the tiles save at each press). Picks are tagged in
+              the store, so the last one wins. */}
+          <fieldset aria-busy={targetOp.status === "running"}>
             <legend className="mb-3 font-bold">Main game</legend>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
               {featured.map((g) => {
@@ -120,7 +123,6 @@ export function GamesView() {
                 games={others}
                 found={found}
                 chosen={others.find((g) => g.id === target) ?? null}
-                disabled={targetOp.status === "running"}
                 onPick={(id) => void selectTargetGame(id)}
               />
               {target !== null && (

@@ -965,6 +965,20 @@ describe("Starter scan (plan 6.4)", () => {
 });
 
 describe("review regressions", () => {
+  it("a view opened from a button inside another takes focus to its heading; the side menu keeps it", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await userEvent.click(await screen.findByRole("button", { name: /Review or undo/ }));
+    const backups = await screen.findByRole("heading", { name: "Backups", level: 1 });
+    expect(document.activeElement).toBe(backups);
+
+    const tools = within(screen.getByRole("navigation", { name: "Main" })).getByRole("button", { name: "Tools" });
+    await userEvent.click(tools);
+    await screen.findByRole("heading", { name: "Tools", level: 1 });
+    expect(document.activeElement).toBe(tools);
+  });
+
+
   it("the restore step shows success as soon as the engine confirms, even while the audit re-reads", async () => {
     let slowAudit = false;
     const base = createMockBackend();

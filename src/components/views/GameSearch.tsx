@@ -30,7 +30,6 @@ export function GameSearch({
   games,
   found,
   chosen,
-  disabled,
   onPick,
 }: {
   /** For the label outside. */
@@ -39,7 +38,6 @@ export function GameSearch({
   /** Ids of games found on this PC, marked in the list. */
   found: ReadonlySet<string>;
   chosen: GameInfo | null;
-  disabled: boolean;
   onPick: (id: string) => void;
 }) {
   const listId = useId();
@@ -101,7 +99,6 @@ export function GameSearch({
         aria-activedescendant={open && current ? optionId(current.id) : undefined}
         autoComplete="off"
         spellCheck={false}
-        disabled={disabled}
         placeholder="Search more games"
         value={typed ?? chosen?.name ?? ""}
         onChange={(e) => {

@@ -46,8 +46,21 @@ export function AppShell({
   // a view opened from far down another (a Games card's "Record my next
   // games") would open part way down.
   const main = useRef<HTMLElement>(null);
+  const shown = useRef(view);
   useLayoutEffect(() => {
     if (main.current) main.current.scrollTop = 0;
+    // A view opened from a button inside another one (Open Proof, See the
+    // result, the top bar's pill) takes keyboard focus to its heading, as the
+    // button is gone; one opened from the side menu leaves focus there.
+    if (shown.current === view) return;
+    shown.current = view;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected && active.closest("nav[aria-label='Main']")) return;
+    const heading = main.current?.querySelector<HTMLElement>("h1");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
   }, [view]);
   return (
     <NavContext.Provider value={onNavigate}>

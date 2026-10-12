@@ -62,11 +62,30 @@ pub fn run_limited(mut cmd: Command, what: &str, limit: Duration, poll: Duration
             Err(e) => return Err(fail(format!("could not wait for {what}: {e}"))),
         }
     };
+    // The pipes close when the child exits, unless a process it started
+    // inherited them and runs on (an installer handing over to its setup):
+    // then the output read so far is not waited for past `AFTER_EXIT`.
+    let deadline = Instant::now() + AFTER_EXIT;
     Ok(Output {
         exit_code: status.code(),
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        stdout: collect(out, deadline),
+        stderr: collect(err, deadline),
     })
+}
+
+/// How long the output readers may run on after the child has exited.
+const AFTER_EXIT: Duration = Duration::from_secs(5);
+
+/// The reader's text if it ends by `deadline`; otherwise it is left to end
+/// when the pipe closes, and nothing is waited for.
+fn collect(reader: std::thread::JoinHandle<String>, deadline: Instant) -> String {
+    while !reader.is_finished() {
+        if Instant::now() >= deadline {
+            return String::new();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    reader.join().unwrap_or_default()
 }
 
 impl Output {
@@ -80,5 +99,33 @@ impl Output {
             .take(6)
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_is_returned_when_the_child_exits() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo hi; echo oops >&2; exit 3"]);
+        let out = run_limited(cmd, "sh", Duration::from_secs(10), Duration::from_millis(10)).unwrap();
+        assert_eq!(
+            (out.exit_code, out.stdout.trim(), out.stderr.trim()),
+            (Some(3), "hi", "oops")
+        );
+    }
+
+    #[test]
+    fn a_grandchild_holding_the_pipes_does_not_hold_the_caller() {
+        // The child exits at once; the process it started keeps both pipes
+        // open for 30 seconds.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 30 & echo started"]);
+        let started = Instant::now();
+        let out = run_limited(cmd, "sh", Duration::from_secs(60), Duration::from_millis(10)).unwrap();
+        assert_eq!(out.exit_code, Some(0));
+        assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
     }
 }

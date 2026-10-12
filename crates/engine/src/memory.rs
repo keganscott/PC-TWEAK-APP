@@ -321,8 +321,11 @@ mod imp {
             free_before >> 20,
             free_after >> 20
         );
-        // Emptying the standby list moves its pages to the free list.
-        assert!(free_after <= out.after.available_bytes, "free is part of available");
+        // The free lists are part of physical memory. Not compared with
+        // `out.after.available_bytes`: that is read earlier, and pages keep
+        // reaching the free list after the purge returns (CI run 38192878811:
+        // 13859 MiB free read just after a smaller "available").
+        assert!(free_after <= out.after.total_bytes, "free lists fit in physical memory");
         eprintln!(
             "standby purge: cached {} -> {} MiB, available {} -> {} MiB, total {} MiB",
             out.before.cached_bytes >> 20,

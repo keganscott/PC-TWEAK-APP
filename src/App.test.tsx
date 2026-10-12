@@ -1173,6 +1173,17 @@ describe("review regressions", () => {
     expect(await within(cs2).findByText("PeakTweaks could not ask Steam to start the game.")).toBeTruthy();
   });
 
+  it("Proof lists each comparison with its game, its runs a side and where it stands", async () => {
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Proof");
+    const list = await screen.findByRole("navigation", { name: "Comparisons" });
+    const item = await within(list).findByRole("button", { name: /^Fortnite/ });
+    expect(within(item).getByText(/^Game\.exe · /)).toBeTruthy();
+    expect(within(item).getByText("Result ready")).toBeTruthy();
+    expect(item.textContent).toMatch(/Before\s*2\s*After\s*2/);
+  });
+
   it("Proof explains a comparison until one is open, and starts one from there", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

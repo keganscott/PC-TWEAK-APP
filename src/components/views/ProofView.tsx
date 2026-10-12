@@ -12,6 +12,7 @@ import { comparisonText } from "../../lib/report";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { AUTO_RUNS, otherLongWork } from "../../store/store";
 import { useNavigate } from "../shell/nav";
+import { gameHue, gameMark } from "./GameArt";
 import { ProofGames } from "./GameProof";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, Spinner, cx } from "../ui/primitives";
 
@@ -122,38 +123,110 @@ function HowItWorks({ hasSessions, onStart }: { hasSessions: boolean; onStart: (
   );
 }
 
+/** Where a comparison stands, for its line in the list. The engine compares
+ * once each side has two runs (proof/verdict.rs `MIN_RUNS_PER_SIDE`). */
+function sessionStage(beforeRuns: number, afterRuns: number, recording: boolean): { label: string; tone: "live" | "done" | "next" } {
+  if (recording) return { label: "Recording", tone: "live" };
+  if (beforeRuns >= 2 && afterRuns >= 2) return { label: "Result ready", tone: "done" };
+  if (afterRuns > 0) return { label: "After runs", tone: "next" };
+  if (beforeRuns >= 2) return { label: "Your change next", tone: "next" };
+  return { label: "Before runs", tone: "next" };
+}
+
 function SessionList({ sessions, selected, onSelect }: { sessions: ProofSessionSummary[]; selected: string | null; onSelect: (id: string) => void }) {
+  const installs = useStore((s) => s.audit?.env.gameInstalls ?? null);
+  const auto = useStore((s) => s.play?.autoRecord ?? null);
   if (sessions.length === 0) {
     return (
-      <Card>
-        <p className="text-sm text-ink-muted">No comparisons yet.</p>
-      </Card>
+      <div className="rounded-2xl border border-dashed border-line p-5 text-center">
+        <Scale aria-hidden className="mx-auto size-6 text-ink-faint" />
+        <p className="mt-2 text-sm text-ink-muted">No comparisons yet.</p>
+      </div>
     );
   }
+  const nameOf = (gameId: string | null) => (gameId ? (installs?.find((i) => i.gameId === gameId)?.name ?? null) : null);
   return (
     <nav aria-label="Comparisons">
+      <h2 className="mb-2 flex items-baseline justify-between text-xs font-bold tracking-widest text-ink-faint uppercase">
+        Your comparisons <span className="tabular-nums">{sessions.length}</span>
+      </h2>
       <ul className="flex flex-col gap-2">
-        {sessions.map(({ session, beforeRuns, afterRuns }) => (
-          <li key={session.sessionId}>
-            <button
-              type="button"
-              onClick={() => onSelect(session.sessionId)}
-              aria-current={selected === session.sessionId ? "true" : undefined}
-              className={cx(
-                "w-full rounded-lg border p-3 text-left text-sm",
-                selected === session.sessionId ? "border-accent bg-accent/10" : "border-line bg-surface-1 hover:bg-surface-2",
-              )}
-            >
-              <span className="block font-medium">{session.exe}</span>
-              <span className="block text-xs text-ink-muted">{formatDateTime(session.createdUnixMs)}</span>
-              <span className="mt-1 block text-xs text-ink-muted">
-                {beforeRuns} before · {afterRuns} after
-              </span>
-            </button>
-          </li>
-        ))}
+        {sessions.map(({ session, beforeRuns, afterRuns }) => {
+          const name = nameOf(session.gameId);
+          const isSelected = selected === session.sessionId;
+          const stage = sessionStage(beforeRuns, afterRuns, auto?.sessionId === session.sessionId && auto.recordingNow);
+          const hue = session.gameId ? gameHue(session.gameId) : null;
+          const markStyle =
+            hue === null
+              ? undefined
+              : {
+                  // copy-lint-allow: CSS colour stops, not text
+                  backgroundColor: `hsl(${hue} 60% 22%)`,
+                  // copy-lint-allow: CSS colour stops, not text
+                  borderColor: `hsl(${hue} 70% 45% / 0.6)`,
+                };
+          return (
+            <li key={session.sessionId}>
+              <button
+                type="button"
+                onClick={() => onSelect(session.sessionId)}
+                aria-current={isSelected ? "true" : undefined}
+                className={cx(
+                  "flex w-full gap-3 rounded-xl border p-3 text-left text-sm transition-colors",
+                  isSelected ? "border-accent bg-accent/10" : "border-line bg-surface-1 hover:bg-surface-2",
+                )}
+              >
+                <span
+                  aria-hidden
+                  className="grid size-10 shrink-0 place-items-center rounded-lg border border-line bg-surface-2 font-display text-[0.65rem] font-black tracking-tight"
+                  style={markStyle}
+                >
+                  {session.gameId ? gameMark(session.gameId, name ?? session.exe) : <Scale className="size-4 text-ink-muted" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold">{name ?? session.exe}</span>
+                  <span className="block truncate text-xs text-ink-muted">
+                    {name ? `${session.exe} · ` : ""}
+                    {formatDateTime(session.createdUnixMs)}
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+                    <RunPips label="Before" runs={beforeRuns} />
+                    <RunPips label="After" runs={afterRuns} />
+                  </span>
+                  <span
+                    className={cx(
+                      "mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[0.7rem] font-semibold",
+                      stage.tone === "live" && "bg-bad/15 text-bad",
+                      stage.tone === "done" && "bg-lime/15 text-lime",
+                      stage.tone === "next" && "bg-surface-2 text-ink-muted",
+                    )}
+                  >
+                    {stage.tone === "live" && <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-bad" />}
+                    {stage.label}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </nav>
+  );
+}
+
+/** A side's runs as dots against the suggested count, with the number. */
+function RunPips({ label, runs }: { label: string; runs: number }) {
+  const dots = Math.max(SUGGESTED_RUNS, Math.min(runs, 6));
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {label}
+      <span aria-hidden className="flex gap-0.5">
+        {Array.from({ length: dots }, (_, i) => (
+          <span key={i} className={cx("size-1.5 rounded-full", i < runs ? "bg-violet-soft" : "bg-line-strong")} />
+        ))}
+      </span>
+      <span className="tabular-nums">{runs}</span>
+    </span>
   );
 }
 

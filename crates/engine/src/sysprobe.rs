@@ -228,8 +228,15 @@ impl EnvProbe for SystemProbe {
             _ => {
                 let logical = hardware.cpu.value().map(|c| c.logical_processors);
                 let wmi = self.wmi.clone();
+                let fell_back = std::cell::Cell::new(false);
                 let b = crate::background::sample(
-                    &move || crate::background::snapshot_from(&wmi.query(NS_CIMV2, crate::background::WQL_PROCESSES)),
+                    &move || {
+                        crate::background::snapshot_via(
+                            &|q| wmi.query(NS_CIMV2, q),
+                            &crate::background::wall_clock_100ns,
+                            &fell_back,
+                        )
+                    },
                     self.background_wait,
                     logical,
                 );

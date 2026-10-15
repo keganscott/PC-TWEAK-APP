@@ -366,12 +366,23 @@ pub fn laptop_from(rows: &Result<Vec<WmiRow>>) -> Probe<bool> {
 }
 
 /// Physical GPUs from the adapters DXGI listed, biggest VRAM first.
+///
+/// A virtual display (Parsec, a VR headset's virtual monitor) is listed by DXGI
+/// as one more adapter with the description and memory of the GPU that draws
+/// it, under its own LUID: on Kegan's PC (field check 2026-10-15) one RTX 3060
+/// came back three times. Identical entries are therefore counted once, which
+/// would also merge two truly identical cards (NOTES N125).
 pub fn gpus_from(adapters: &Result<Vec<GpuAdapter>>) -> Probe<Vec<GpuAdapter>> {
     let adapters = match adapters {
         Ok(a) => a,
         Err(e) => return Probe::unknown(format!("cannot list graphics adapters: {e}")),
     };
-    let mut real: Vec<GpuAdapter> = adapters.iter().filter(|a| !a.is_software).cloned().collect();
+    let mut real: Vec<GpuAdapter> = Vec::new();
+    for a in adapters.iter().filter(|a| !a.is_software) {
+        if !real.contains(a) {
+            real.push(a.clone());
+        }
+    }
     if real.is_empty() {
         return Probe::no("no hardware graphics adapter was found");
     }
@@ -684,6 +695,19 @@ mod tests {
         );
         assert!(gpus_from(&Ok(vec![gpu("WARP", 0, true)])).is_no());
         assert!(gpus_from(&Err(EngineError::Internal { detail: "x".into() })).is_unknown());
+    }
+
+    /// Kegan's PC: one RTX 3060 plus Parsec's and Meta's virtual displays, which
+    /// DXGI lists as two more copies of the 3060.
+    #[test]
+    fn virtual_display_copies_of_a_gpu_count_once() {
+        let p = gpus_from(&Ok(vec![
+            gpu("NVIDIA GeForce RTX 3060", 12, false),
+            gpu("NVIDIA GeForce RTX 3060", 12, false),
+            gpu("NVIDIA GeForce RTX 3060", 12, false),
+            gpu("Microsoft Basic Render Driver", 0, true),
+        ]));
+        assert_eq!(p.value().unwrap().len(), 1);
     }
 
     fn cpu_probe(logical: u32) -> Probe<CpuInfo> {

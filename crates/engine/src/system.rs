@@ -1,0 +1,759 @@
+//! Changes that are not registry values: power plans, services, scheduled
+//! tasks, DNS servers, `netsh` TCP settings, NVIDIA profile settings, AMD
+//! graphics settings and whole files (a game's settings file).
+//!
+//! Same rules as the registry (`transaction.rs`): a tweak declares what it may
+//! change (`Tweak::system_targets`), `Transaction` reads the state before,
+//! journals it durably, then changes it, and revert puts the recorded state
+//! back. The `SystemBackend` trait is the only thing that touches Windows, so
+//! all of this runs in tests against `FakeSystem`.
+//!
+//! **Side effects** (`SideEffect`) are things done after a change commits, such
+//! as restarting a network adapter so it picks up new settings. They change no
+//! state of their own, so there is nothing to undo; each run is journalled
+//! with its outcome.
+
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::BTreeMap;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Mutex;
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use super::error::{EngineError, Result};
+
+/// What a non-registry change is about. String fields may be `*` in a declared
+/// target (`Tweak::system_targets`) for names that differ per PC, such as a
+/// network adapter's interface GUID; never for files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SysItem {
+    /// The active power plan. State: `Text(guid)`.
+    ActivePowerScheme,
+    /// A power plan PeakTweaks made as a copy of another. State: `Scheme` when
+    /// it exists, `Absent` when not.
+    PowerScheme { guid: String },
+    /// One setting of a power plan, plugged in (`ac`) or on battery. State:
+    /// `Dword(index)`.
+    PowerSetting {
+        scheme: String,
+        subgroup: String,
+        setting: String,
+        ac: bool,
+    },
+    /// Hibernation (`powercfg /hibernate`). State: `Bool`.
+    Hibernation,
+    /// A Windows service: start type and whether it runs. State: `Service`.
+    Service { name: String },
+    /// A scheduled task's enabled state. State: `Bool`.
+    ScheduledTask { path: String },
+    /// DNS servers of one network adapter, by interface GUID. State:
+    /// `List` (empty means automatic, from the router).
+    DnsServers { interface: String },
+    /// A network adapter's interface metric for IPv4 or IPv6, by interface
+    /// GUID: Windows sends traffic over the connected adapter with the lowest.
+    /// State: `Dword(metric)`, `Dword(0)` for Windows' automatic metric (from
+    /// the link speed), `Absent` when the protocol is not on the adapter.
+    InterfaceMetric { interface: String, ipv6: bool },
+    /// One `netsh interface tcp global` setting. State: `Text`.
+    TcpGlobal { name: String },
+    /// One NVIDIA driver profile setting (NvAPI DRS). `profile` is empty for
+    /// the base (global) profile. State: `Dword`, or `Absent` for the driver's
+    /// default.
+    NvidiaSetting { profile: String, setting: u32 },
+    /// One AMD graphics setting (ADLX, `adlx::Setting::key`) of the card with
+    /// Plug and Play id `gpu`. State: `Dword` (Anti-Lag 1 on / 0 off; a
+    /// vertical refresh mode), or `Absent` where the card lacks the setting.
+    AmdSetting { gpu: String, setting: String },
+    /// A Windows QoS policy in this computer's own policy store, the one
+    /// `New-NetQosPolicy` adds to, by name. State: `QosPolicy`, or `Absent`.
+    QosPolicy { name: String },
+    /// The refresh rate of one display, by its Windows device name
+    /// (`\\.\DISPLAY1`), at the resolution it has now. State: `Dword(hz)`.
+    RefreshRate { display: String },
+    /// A whole file. State: `File` (a copy kept with the backups) or `Absent`.
+    /// A tweak may declare one under the signed-in user's profile folder as
+    /// `<profile>\...` (`PROFILE_PREFIX`); the transaction makes it concrete.
+    File { path: String },
+}
+
+/// Same variant, and every field equal (text ignoring case), where a declared
+/// text field of exactly `*` matches any one value. The variant tag itself
+/// can never be `*`.
+fn fields_match<T: Serialize>(concrete: &T, pattern: &T) -> bool {
+    let (Ok(serde_json::Value::Object(c)), Ok(serde_json::Value::Object(p))) =
+        (serde_json::to_value(concrete), serde_json::to_value(pattern))
+    else {
+        return false;
+    };
+    c.len() == p.len()
+        && p.iter().all(|(k, pv)| match (pv, c.get(k)) {
+            (serde_json::Value::String(ps), Some(serde_json::Value::String(cs))) => {
+                ps == "*" || ps.eq_ignore_ascii_case(cs)
+            }
+            (pv, Some(cv)) => pv == cv,
+            (_, None) => false,
+        })
+}
+
+/// Starts a declared file path under the signed-in user's profile folder,
+/// which differs per PC and per account (`ContextResolver::profile_path`).
+pub const PROFILE_PREFIX: &str = "<profile>\\";
+
+impl SysItem {
+    /// Does this concrete item fall under the declared `pattern`? See
+    /// `fields_match`. A file path never matches by `*`.
+    pub fn matches(&self, pattern: &SysItem) -> bool {
+        if matches!(pattern, SysItem::File { path } if path.contains('*')) {
+            return false;
+        }
+        fields_match(self, pattern)
+    }
+
+    /// Registry values Windows keeps this item's state in, if any: exported to
+    /// `.reg` before every change (plan section 12), so the change can also be
+    /// put back by hand from Safe Mode. Items Windows does not keep in plain
+    /// registry values (scheduled tasks, TCP globals, NVIDIA settings) have
+    /// none; files have their own whole copy. VERIFY each path on a real PC.
+    pub fn registry_backing(&self) -> Vec<(String, &'static str)> {
+        const POWER: &str = r"SYSTEM\CurrentControlSet\Control\Power";
+        const SCHEMES: &str = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes";
+        match self {
+            Self::Service { name } => vec![
+                (format!(r"SYSTEM\CurrentControlSet\Services\{name}"), "Start"),
+                (format!(r"SYSTEM\CurrentControlSet\Services\{name}"), "DelayedAutostart"),
+            ],
+            Self::Hibernation => vec![(POWER.to_owned(), "HibernateEnabled")],
+            Self::DnsServers { interface } => vec![(
+                format!(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{{{interface}}}"),
+                "NameServer",
+            )],
+            // VERIFY (NOTES N83): where Windows keeps a metric set with
+            // Set-NetIPInterface; the legacy TCP/IP keys are exported.
+            Self::InterfaceMetric { interface, ipv6 } => vec![(
+                format!(
+                    r"SYSTEM\CurrentControlSet\Services\{}\Parameters\Interfaces\{{{interface}}}",
+                    if *ipv6 { "Tcpip6" } else { "Tcpip" }
+                ),
+                "InterfaceMetric",
+            )],
+            Self::ActivePowerScheme => vec![(SCHEMES.to_owned(), "ActivePowerScheme")],
+            Self::PowerSetting {
+                scheme,
+                subgroup,
+                setting,
+                ac,
+            } => vec![(
+                format!(r"{SCHEMES}\{scheme}\{subgroup}\{setting}"),
+                if *ac { "ACSettingIndex" } else { "DCSettingIndex" },
+            )],
+            // Where `New-NetQosPolicy` kept a policy, and the values it wrote,
+            // on Windows Server 2025 (run 37790684482, NOTES N91). Group
+            // Policy's own names for these differ, and Windows does not apply
+            // a policy from these values alone, so they are a record of the
+            // policy, not a way to make one.
+            Self::QosPolicy { name } => ["Version", "NetProfile", "Precedence", "AppName", "Protocol", "DSCP"]
+                .into_iter()
+                .map(|v| (format!(r"SOFTWARE\Policies\Microsoft\Windows\QoS\{name}"), v))
+                .collect(),
+            // Windows keeps display modes in the graphics driver's own
+            // configuration store, not in plain values one could put back.
+            Self::RefreshRate { .. }
+            | Self::PowerScheme { .. }
+            | Self::ScheduledTask { .. }
+            | Self::TcpGlobal { .. }
+            | Self::NvidiaSetting { .. }
+            | Self::AmdSetting { .. }
+            | Self::File { .. } => Vec::new(),
+        }
+    }
+
+    /// One line for the Backups list and error text.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::ActivePowerScheme => "active power plan".into(),
+            Self::PowerScheme { guid } => format!("power plan {guid}"),
+            Self::PowerSetting {
+                scheme,
+                subgroup,
+                setting,
+                ac,
+            } => format!(
+                "power plan {scheme} setting {subgroup}/{setting} ({})",
+                if *ac { "plugged in" } else { "on battery" }
+            ),
+            Self::Hibernation => "hibernation".into(),
+            Self::Service { name } => format!("service {name}"),
+            Self::ScheduledTask { path } => format!("scheduled task {path}"),
+            Self::DnsServers { interface } => format!("DNS servers of adapter {interface}"),
+            Self::InterfaceMetric { interface, ipv6 } => format!(
+                "{} interface metric of adapter {interface}",
+                if *ipv6 { "IPv6" } else { "IPv4" }
+            ),
+            Self::TcpGlobal { name } => format!("TCP setting {name}"),
+            Self::NvidiaSetting { profile, setting } => {
+                let p = if profile.is_empty() { "global" } else { profile };
+                format!("NVIDIA setting 0x{setting:08X} ({p} profile)")
+            }
+            Self::AmdSetting { gpu, setting } => {
+                let label = crate::adlx::Setting::from_key(setting).map_or(setting.as_str(), |s| s.label());
+                format!("AMD {label} of graphics card {gpu}")
+            }
+            Self::QosPolicy { name } => format!("QoS policy {name}"),
+            Self::RefreshRate { display } => format!("refresh rate of display {display}"),
+            Self::File { path } => format!("file {path}"),
+        }
+    }
+}
+
+/// How a service starts (`Services\<name>\Start`, as `sc config` names it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceStart {
+    Boot,
+    System,
+    Automatic,
+    /// Automatic, but some minutes after start-up.
+    DelayedAutomatic,
+    Manual,
+    Disabled,
+}
+
+/// The state of a `SysItem`, before or after a change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SysState {
+    /// The thing does not exist (a plan we have not made, a file, a setting at
+    /// the driver default).
+    Absent,
+    Bool {
+        on: bool,
+    },
+    Text {
+        text: String,
+    },
+    Dword {
+        value: u32,
+    },
+    List {
+        items: Vec<String>,
+    },
+    Service {
+        start: ServiceStart,
+        running: bool,
+    },
+    /// A power plan copied from `source`.
+    Scheme {
+        source: String,
+    },
+    /// A QoS policy for every program file named `program`, on every network
+    /// type, tagging its traffic with `dscp`.
+    QosPolicy {
+        program: String,
+        dscp: u8,
+    },
+    /// A file's whole content, kept as a copy with the backups (`backup`,
+    /// relative to the journal directory) and checked by its SHA-256.
+    File {
+        backup: String,
+        sha256: String,
+    },
+}
+
+/// Something done after a change commits, which changes nothing that needs
+/// undoing. Run after apply and after revert, and journalled with its outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "effect", rename_all = "snake_case")]
+pub enum SideEffect {
+    /// Turn a network adapter off and on so it reads its new settings. The
+    /// connection drops for a few seconds.
+    RestartAdapter { interface: String },
+    /// Have Windows re-read policy, so new QoS policies take effect.
+    RefreshPolicy,
+    /// Stop and start a service so it reads its new settings.
+    RestartService { name: String },
+}
+
+impl SideEffect {
+    /// Does this effect fall under the declared `pattern`? Like `SysItem::matches`.
+    pub fn matches(&self, pattern: &SideEffect) -> bool {
+        fields_match(self, pattern)
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Self::RestartAdapter { interface } => format!("restart network adapter {interface}"),
+            Self::RefreshPolicy => "refresh Windows policy".into(),
+            Self::RestartService { name } => format!("restart service {name}"),
+        }
+    }
+}
+
+/// A physical network adapter, as Windows lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct NetAdapter {
+    /// Lower-case interface GUID without braces; the name of its
+    /// `Tcpip\Parameters\Interfaces\{guid}` key.
+    pub guid: String,
+    /// The name Windows shows ("Ethernet", "Wi-Fi").
+    pub name: String,
+    /// Connected now.
+    pub up: bool,
+    pub wireless: bool,
+    /// A network cable (Ethernet). Neither this nor `wireless` for others,
+    /// such as Bluetooth.
+    pub wired: bool,
+    /// Its Plug and Play device instance id (`PCI\VEN_…\…`), the name of
+    /// its `Enum` key; empty when Windows gave none.
+    pub pnp_id: String,
+}
+
+/// What a PCI device is, for the devices PeakTweaks offers changes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceClass {
+    /// A graphics card (Windows' Display class).
+    Display,
+    /// A network adapter, cable or Wi-Fi (Windows' Net class).
+    Net,
+}
+
+/// A graphics card or network adapter on the PCI bus that is present now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PciDevice {
+    /// Windows' device instance id, `PCI\VEN_xxxx&DEV_xxxx&...\<instance>`:
+    /// the path of its key under `HKLM\SYSTEM\CurrentControlSet\Enum`.
+    pub instance_id: String,
+    /// The name Windows shows in Device Manager.
+    pub name: String,
+    pub class: DeviceClass,
+}
+
+/// A display connected to the desktop, as Windows lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Display {
+    /// Windows' device name, `\\.\DISPLAY1`: the name refresh rates are set by.
+    pub device: String,
+    /// The monitor's name as Windows shows it; may be generic.
+    pub name: String,
+    pub primary: bool,
+    pub width: u32,
+    pub height: u32,
+    pub current_hz: u32,
+    /// The highest rate Windows offers at the current resolution and colour
+    /// depth: the same list Settings > Display > Advanced display offers.
+    pub max_hz: u32,
+}
+
+/// The operations on Windows for non-registry changes, and no more.
+pub trait SystemBackend: Send + Sync {
+    /// Physical network adapters (no virtual switches or VPNs).
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>>;
+    /// Graphics cards and network adapters on the PCI bus, present now.
+    fn pci_devices(&self) -> Result<Vec<PciDevice>>;
+    /// AMD graphics cards as AMD's driver lists them; empty without one.
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>>;
+    /// Displays connected to the desktop now.
+    fn displays(&self) -> Result<Vec<Display>>;
+    /// The current state of `item`. File items are read with `read_file`.
+    fn read(&self, item: &SysItem) -> Result<SysState>;
+    /// Make `item` be `state`. File items are written with `write_file`.
+    fn write(&self, item: &SysItem, state: &SysState) -> Result<()>;
+    /// A file's bytes, or `None` when it does not exist.
+    fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>>;
+    /// Replace a file's bytes, or delete it with `None`.
+    fn write_file(&self, path: &str, bytes: Option<&[u8]>) -> Result<()>;
+    /// Run a side effect.
+    fn run(&self, effect: &SideEffect) -> Result<()>;
+}
+
+/// A backend that refuses everything, for builds and tests that do not
+/// provide one. A tweak that needs it fails with a plain message, before
+/// anything is changed (the read comes first).
+pub struct Unavailable;
+
+impl Unavailable {
+    fn refuse(what: String) -> EngineError {
+        EngineError::Internal {
+            detail: format!("this build cannot change the {what}"),
+        }
+    }
+}
+
+impl SystemBackend for Unavailable {
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
+        Err(Self::refuse("network adapters".into()))
+    }
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        Err(Self::refuse("devices".into()))
+    }
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        Err(Self::refuse("AMD graphics settings".into()))
+    }
+    fn displays(&self) -> Result<Vec<Display>> {
+        Err(Self::refuse("displays".into()))
+    }
+    fn read(&self, item: &SysItem) -> Result<SysState> {
+        Err(Self::refuse(item.describe()))
+    }
+    fn write(&self, item: &SysItem, _: &SysState) -> Result<()> {
+        Err(Self::refuse(item.describe()))
+    }
+    fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        Err(Self::refuse(format!("file {path}")))
+    }
+    fn write_file(&self, path: &str, _: Option<&[u8]>) -> Result<()> {
+        Err(Self::refuse(format!("file {path}")))
+    }
+    fn run(&self, effect: &SideEffect) -> Result<()> {
+        Err(Self::refuse(effect.describe()))
+    }
+}
+
+/// In-memory backend for tests. Items not set read as `Absent`.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+pub struct FakeSystem {
+    inner: Mutex<FakeInner>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+struct FakeInner {
+    states: BTreeMap<String, SysState>,
+    files: BTreeMap<String, Vec<u8>>,
+    effects: Vec<SideEffect>,
+    adapters: Vec<NetAdapter>,
+    devices: Vec<PciDevice>,
+    /// An NVIDIA card with its driver; without one, its settings are "not
+    /// available", as on the real backend.
+    nvidia: bool,
+    amd_gpus: Vec<crate::adlx::AmdGpu>,
+    displays: Vec<Display>,
+    fail_listing: bool,
+    fail_writes: bool,
+    fail_effects: bool,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn fake_key(item: &SysItem) -> String {
+    serde_json::to_string(item).unwrap_or_default().to_lowercase()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FakeSystem {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Set a state as if something outside PeakTweaks did.
+    pub fn set(&self, item: &SysItem, state: SysState) {
+        self.inner.lock().unwrap().states.insert(fake_key(item), state);
+    }
+    pub fn get(&self, item: &SysItem) -> SysState {
+        self.inner
+            .lock()
+            .unwrap()
+            .states
+            .get(&fake_key(item))
+            .cloned()
+            .unwrap_or(SysState::Absent)
+    }
+    pub fn set_file(&self, path: &str, bytes: &[u8]) {
+        self.inner
+            .lock()
+            .unwrap()
+            .files
+            .insert(path.to_lowercase(), bytes.to_vec());
+    }
+    pub fn file(&self, path: &str) -> Option<Vec<u8>> {
+        self.inner.lock().unwrap().files.get(&path.to_lowercase()).cloned()
+    }
+    /// Side effects run so far, oldest first.
+    pub fn effects(&self) -> Vec<SideEffect> {
+        self.inner.lock().unwrap().effects.clone()
+    }
+    pub fn set_adapters(&self, adapters: Vec<NetAdapter>) {
+        self.inner.lock().unwrap().adapters = adapters;
+    }
+    pub fn set_pci_devices(&self, devices: Vec<PciDevice>) {
+        self.inner.lock().unwrap().devices = devices;
+    }
+    pub fn set_nvidia(&self, present: bool) {
+        self.inner.lock().unwrap().nvidia = present;
+    }
+    pub fn set_amd_gpus(&self, gpus: Vec<crate::adlx::AmdGpu>) {
+        self.inner.lock().unwrap().amd_gpus = gpus;
+    }
+    /// Displays connected now; their refresh rates are read and set here.
+    pub fn set_displays(&self, displays: Vec<Display>) {
+        self.inner.lock().unwrap().displays = displays;
+    }
+    pub fn displays_now(&self) -> Vec<Display> {
+        self.inner.lock().unwrap().displays.clone()
+    }
+    /// Make listing devices fail, as when Windows' device query does.
+    pub fn fail_listing(&self, fail: bool) {
+        self.inner.lock().unwrap().fail_listing = fail;
+    }
+    fn check_graphics(&self, item: &SysItem) -> Result<()> {
+        if let SysItem::AmdSetting { gpu, .. } = item {
+            let g = self.inner.lock().unwrap();
+            if g.amd_gpus.is_empty() {
+                return Err(EngineError::Blocked {
+                    reason: crate::types::BlockedReason::new(
+                        crate::types::BlockedCode::HardwareUnsupported,
+                        "This PC has no AMD graphics card.",
+                    ),
+                });
+            }
+            if !g.amd_gpus.iter().any(|c| c.id == *gpu) {
+                return Err(EngineError::Internal {
+                    detail: format!("test: no AMD graphics card {gpu}"),
+                });
+            }
+        }
+        if matches!(item, SysItem::NvidiaSetting { .. }) && !self.inner.lock().unwrap().nvidia {
+            return Err(EngineError::Blocked {
+                reason: crate::types::BlockedReason::new(
+                    crate::types::BlockedCode::HardwareUnsupported,
+                    "This PC has no NVIDIA graphics card.",
+                ),
+            });
+        }
+        Ok(())
+    }
+    pub fn fail_writes(&self, fail: bool) {
+        self.inner.lock().unwrap().fail_writes = fail;
+    }
+    pub fn fail_effects(&self, fail: bool) {
+        self.inner.lock().unwrap().fail_effects = fail;
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl SystemBackend for FakeSystem {
+    fn network_adapters(&self) -> Result<Vec<NetAdapter>> {
+        Ok(self.inner.lock().unwrap().adapters.clone())
+    }
+    fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: AMD's driver did not answer".into(),
+            });
+        }
+        Ok(g.amd_gpus.clone())
+    }
+    fn pci_devices(&self) -> Result<Vec<PciDevice>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: Windows did not answer the device query".into(),
+            });
+        }
+        Ok(g.devices.clone())
+    }
+    fn displays(&self) -> Result<Vec<Display>> {
+        let g = self.inner.lock().unwrap();
+        if g.fail_listing {
+            return Err(EngineError::Internal {
+                detail: "test: Windows did not list the displays".into(),
+            });
+        }
+        Ok(g.displays.clone())
+    }
+    fn read(&self, item: &SysItem) -> Result<SysState> {
+        self.check_graphics(item)?;
+        if let SysItem::RefreshRate { display } = item {
+            let g = self.inner.lock().unwrap();
+            let d = g.displays.iter().find(|d| d.device.eq_ignore_ascii_case(display));
+            return Ok(d.map_or(SysState::Absent, |d| SysState::Dword { value: d.current_hz }));
+        }
+        Ok(self.get(item))
+    }
+    fn write(&self, item: &SysItem, state: &SysState) -> Result<()> {
+        self.check_graphics(item)?;
+        let mut g = self.inner.lock().unwrap();
+        if g.fail_writes {
+            return Err(EngineError::Internal {
+                detail: format!("test: cannot change the {}", item.describe()),
+            });
+        }
+        if let (SysItem::RefreshRate { display }, SysState::Dword { value }) = (item, state) {
+            let d = g.displays.iter_mut().find(|d| d.device.eq_ignore_ascii_case(display));
+            let d = d.ok_or_else(|| EngineError::Internal {
+                detail: format!("test: no display {display}"),
+            })?;
+            if *value > d.max_hz {
+                return Err(EngineError::Internal {
+                    detail: format!("test: {display} does not offer {value} Hz"),
+                });
+            }
+            d.current_hz = *value;
+            return Ok(());
+        }
+        match state {
+            SysState::Absent => g.states.remove(&fake_key(item)),
+            s => g.states.insert(fake_key(item), s.clone()),
+        };
+        Ok(())
+    }
+    fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.file(path))
+    }
+    fn write_file(&self, path: &str, bytes: Option<&[u8]>) -> Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        if g.fail_writes {
+            return Err(EngineError::Internal {
+                detail: format!("test: cannot write {path}"),
+            });
+        }
+        match bytes {
+            Some(b) => g.files.insert(path.to_lowercase(), b.to_vec()),
+            None => g.files.remove(&path.to_lowercase()),
+        };
+        Ok(())
+    }
+    fn run(&self, effect: &SideEffect) -> Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        g.effects.push(effect.clone());
+        if g.fail_effects {
+            return Err(EngineError::Internal {
+                detail: format!("test: could not {}", effect.describe()),
+            });
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Parsing tool output (pure, so tested on any OS)
+// ---------------------------------------------------------------------------
+
+/// A lower-case GUID without braces, if `s` is one.
+// Used by system_win.rs and the tests; dead on other OS builds.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn guid(s: &str) -> Option<String> {
+    let g = s.trim().trim_matches(|c| c == '{' || c == '}').to_ascii_lowercase();
+    let parts: Vec<&str> = g.split('-').collect();
+    let ok = parts.len() == 5
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(&parts)
+            .all(|(n, p)| p.len() == *n && p.bytes().all(|b| b.is_ascii_hexdigit()));
+    ok.then_some(g)
+}
+
+/// Every GUID that `powercfg /list` or `/getactivescheme` prints, in order.
+/// Labels are translated on other Windows languages; the GUIDs are not.
+// Used by system_win.rs and the tests; dead on other OS builds.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn guids_in(output: &str) -> Vec<String> {
+    output
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+        .filter_map(guid)
+        .collect()
+}
+
+/// The AC and DC indexes from `powercfg /query <scheme> <sub> <setting>`: the
+/// last two lines ending in a `0x` number. Labels are translated; the layout
+/// is not. `None` when the setting printed nothing (hidden settings).
+// Used by system_win.rs and the tests; dead on other OS builds.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn setting_indexes(output: &str) -> Option<(u32, u32)> {
+    let hex: Vec<u32> = output
+        .lines()
+        .filter_map(|l| l.trim().rsplit(' ').next())
+        .filter_map(|w| w.strip_prefix("0x"))
+        .filter_map(|h| u32::from_str_radix(h, 16).ok())
+        .collect();
+    // Possible-value lines come first; the current AC and DC are the last two.
+    (hex.len() >= 2).then(|| (hex[hex.len() - 2], hex[hex.len() - 1]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn power_scheme_guids_are_read_whatever_the_language() {
+        let active = "Power Scheme GUID: a42b1691-948d-4dd6-8212-9523b6693a8d  (Ultimate Performance (ExitLag))";
+        assert_eq!(guids_in(active), vec!["a42b1691-948d-4dd6-8212-9523b6693a8d"]);
+        let german = "GUID des Energieschemas: 381B4222-F694-41F0-9685-FF5BB260DF2E  (Ausbalanciert) *";
+        assert_eq!(guids_in(german), vec!["381b4222-f694-41f0-9685-ff5bb260df2e"]);
+        assert!(guids_in("no guid here").is_empty());
+        assert_eq!(
+            guid("{8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C}").as_deref(),
+            Some("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
+        );
+        assert_eq!(guid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635"), None);
+    }
+
+    /// Real output from Kegan's PC (2026-10-07), `powercfg /q SCHEME_CURRENT
+    /// SUB_PROCESSOR PROCTHROTTLEMIN`.
+    #[test]
+    fn setting_indexes_are_the_last_two_hex_lines() {
+        let out = "Power Scheme GUID: a42b1691-948d-4dd6-8212-9523b6693a8d  (Ultimate Performance (ExitLag))
+  Subgroup GUID: 54533251-82be-4824-96c1-47b60b740d00  (Processor power management)
+    GUID Alias: SUB_PROCESSOR
+    Power Setting GUID: 893dee8e-2bef-41e0-89c6-b55d0929964c  (Minimum processor state)
+      GUID Alias: PROCTHROTTLEMIN
+      Minimum Possible Setting: 0x00000000
+      Maximum Possible Setting: 0x00000064
+      Possible Settings increment: 0x00000001
+      Possible Settings units: %
+    Current AC Power Setting Index: 0x00000000
+    Current DC Power Setting Index: 0x00000005
+";
+        assert_eq!(setting_indexes(out), Some((0, 5)));
+        let hidden = "Power Scheme GUID: a42b1691-948d-4dd6-8212-9523b6693a8d  (x)\n";
+        assert_eq!(setting_indexes(hidden), None);
+    }
+
+    fn dns(i: &str) -> SysItem {
+        SysItem::DnsServers { interface: i.into() }
+    }
+
+    #[test]
+    fn a_star_field_matches_any_one_value_and_nothing_else_changes() {
+        assert!(dns("{AB-12}").matches(&dns("*")));
+        assert!(dns("{ab-12}").matches(&dns("{AB-12}")));
+        assert!(!dns("{AB-12}").matches(&dns("{AB-13}")));
+        assert!(
+            !SysItem::TcpGlobal { name: "x".into() }.matches(&dns("*")),
+            "other kind"
+        );
+        let ac = SysItem::PowerSetting {
+            scheme: "g".into(),
+            subgroup: "s".into(),
+            setting: "t".into(),
+            ac: true,
+        };
+        let dc_pattern = SysItem::PowerSetting {
+            scheme: "*".into(),
+            subgroup: "s".into(),
+            setting: "t".into(),
+            ac: false,
+        };
+        assert!(!ac.matches(&dc_pattern), "non-text fields must be equal");
+    }
+
+    #[test]
+    fn a_file_is_never_declared_by_wildcard() {
+        let f = SysItem::File {
+            path: r"C:\Games\x.ini".into(),
+        };
+        assert!(!f.matches(&SysItem::File { path: "*".into() }));
+        assert!(f.matches(&SysItem::File {
+            path: r"c:\games\X.ini".into()
+        }));
+    }
+}

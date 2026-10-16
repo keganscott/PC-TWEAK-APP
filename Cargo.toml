@@ -1,32 +1,18 @@
-[package]
-name = "peaktweaks"
+[workspace]
+resolver = "2"
+members = ["crates/engine", "crates/field-check", "src-tauri"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.77"
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
-
-[dependencies]
-tauri = { version = "2", features = [] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-winreg = "0.52"
-
-[dependencies.windows]
-version = "0.58"
-features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Security_Authorization",
-  "Win32_System_Diagnostics_ToolHelp",
-  "Win32_System_RemoteDesktop",
-  "Win32_System_Threading",
-  "Win32_UI_WindowsAndMessaging",
-]
+rust-version = "1.90"
+publish = false
 
 [profile.release]
 strip = true
 lto = true
 codegen-units = 1
-panic = "abort"
+# Unwind, not abort: the command layer and the proof sampler turn a panic on a
+# worker thread into an error the user sees. With abort those handlers could
+# never run and the window would just vanish mid-command.
+panic = "unwind"

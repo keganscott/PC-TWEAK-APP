@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PeakTweaks mockup B: Core</title>
+<link rel="stylesheet" href="fonts/local.css" />
+<style>
+  :root {
+    --g: #8dff3a;        /* signature lime-green */
+    --g2: #3ddc5a;       /* deeper green */
+    --g-dim: rgba(141,255,58,.16);
+    --g-line: rgba(141,255,58,.28);
+    --ink: #eaffdf;
+    --muted: #93b38a;
+    --faint: #5d7a56;
+    --panel: rgba(6, 22, 9, .72);
+    --red: #ff4d4d;
+    --amber: #ffc93d;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden; color: var(--ink);
+    font-family: "Inter", sans-serif; font-size: 14px;
+    background:
+      radial-gradient(42% 55% at 47% 44%, rgba(70, 200, 60, .26), transparent 70%),
+      radial-gradient(70% 90% at 50% 50%, #062210 0%, #020904 60%, #000 100%);
+    position: relative;
+  }
+  /* faint circuitry rings in the back, like the dashboard's tubes */
+  .bg { position: absolute; inset: 0; pointer-events: none; opacity: .5; }
+  .disp { font-family: "Exo 2", sans-serif; }
+  header { position: absolute; top: 30px; left: 44px; right: 44px; display: flex; align-items: center; justify-content: space-between; }
+  .logo { font-family: "Exo 2"; font-weight: 800; font-size: 22px; letter-spacing: .14em; display: flex; align-items: center; gap: 10px; }
+  .logo .mark { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #f4ffe0, var(--g) 45%, #1d6b14 100%); box-shadow: 0 0 18px rgba(141,255,58,.7); }
+  .logo span { color: var(--g); }
+  .status { display: flex; gap: 10px; }
+  .chip { font-family: "Exo 2"; font-weight: 600; font-size: 12.5px; letter-spacing: .12em; text-transform: uppercase; padding: 7px 14px; border: 1px solid var(--g-line); background: rgba(6,22,9,.6); color: var(--muted); clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+  .chip b { color: var(--g); font-weight: 700; }
+  /* blade menu */
+  .blades { position: absolute; left: 44px; top: 130px; display: flex; flex-direction: column; gap: 14px; }
+  .blade { width: 220px; height: 54px; border-radius: 27px; display: flex; align-items: center; gap: 14px; padding: 0 22px; font-family: "Exo 2"; font-weight: 700; font-size: 17px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); background: linear-gradient(180deg, rgba(20,60,22,.55), rgba(5,20,8,.75)); border: 1px solid rgba(141,255,58,.18); }
+  .blade svg { width: 20px; height: 20px; }
+  .blade.on { color: #0b1d06; background: linear-gradient(180deg, #c8ff8a, var(--g) 45%, #3cb222); border-color: #d9ffb0; box-shadow: 0 0 26px rgba(141,255,58,.45), inset 0 1px 0 rgba(255,255,255,.6); }
+  /* core */
+  .core { position: absolute; left: 330px; top: 110px; width: 560px; height: 560px; }
+  .core svg { position: absolute; inset: 0; }
+  .orb { position: absolute; left: 50%; top: 50%; width: 220px; height: 220px; transform: translate(-50%, -50%); border-radius: 50%;
+    background: radial-gradient(circle at 38% 32%, #fbfff2 0%, #d6ff9c 18%, var(--g) 42%, #2f9a1d 70%, #0c3a08 100%);
+    box-shadow: 0 0 60px 10px rgba(141,255,58,.45), 0 0 160px 40px rgba(61,220,90,.18), inset -14px -18px 40px rgba(0,40,0,.55); }
+  .orb-text { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: #0b2a06; }
+  .orb-text b { display: block; font-family: "Exo 2"; font-weight: 800; font-size: 64px; line-height: 1; }
+  .orb-text span { font-family: "Exo 2"; font-weight: 700; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; }
+  .orbit-label { position: absolute; font-family: "Exo 2"; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+  .orbit-label b { display: block; color: var(--ink); font-size: 18px; letter-spacing: .04em; font-weight: 700; text-transform: none; }
+  /* panels */
+  .panel { position: absolute; background: var(--panel); border: 1px solid var(--g-line); padding: 18px 20px; backdrop-filter: blur(6px);
+    clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px); }
+  .panel::before { content: ""; position: absolute; left: 0; top: 0; width: 60px; height: 2px; background: var(--g); box-shadow: 0 0 10px var(--g); }
+  .ph { font-family: "Exo 2"; font-weight: 700; font-size: 13px; letter-spacing: .18em; text-transform: uppercase; color: var(--g); display: flex; justify-content: space-between; align-items: center; }
+  .ph em { font-style: normal; color: var(--faint); font-weight: 600; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-top: 1px solid rgba(141,255,58,.1); }
+  .row:first-of-type { border-top: 0; }
+  .row b { font-weight: 600; }
+  .row p { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .badge { font-family: "Exo 2"; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; border: 1px solid; }
+  .badge.you { color: var(--amber); border-color: rgba(255,201,61,.4); }
+  .badge.ok { color: var(--g); border-color: var(--g-line); }
+  .badge.hw { color: #9ec7ff; border-color: rgba(158,199,255,.35); }
+  .cta { margin-top: 14px; display: flex; gap: 10px; }
+  .btn { flex: 1; height: 46px; border-radius: 23px; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: "Exo 2"; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; font-size: 14px; border: 1px solid var(--g-line); color: var(--ink); background: rgba(10,40,12,.7); }
+  .btn.pri { color: #0b1d06; background: linear-gradient(180deg, #d4ff9e, var(--g) 50%, #3cb222); border-color: #e2ffbf; box-shadow: 0 0 24px rgba(141,255,58,.4); }
+  .ab { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-family: "Exo 2"; font-weight: 800; font-size: 12px; color: #062006; background: radial-gradient(circle at 35% 30%, #eaffc9, #6fdc2c); box-shadow: 0 0 8px rgba(141,255,58,.6); }
+  .ab.b { background: radial-gradient(circle at 35% 30%, #ffd2d2, #e62e2e); color: #2a0303; box-shadow: 0 0 8px rgba(255,77,77,.6); }
+  .stats { position: absolute; left: 44px; right: 44px; bottom: 74px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .stat { position: relative; background: var(--panel); border: 1px solid var(--g-line); padding: 14px 16px;
+    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px); }
+  .stat i { font-style: normal; font-family: "Exo 2"; font-size: 11.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--faint); }
+  .stat b { display: block; font-family: "Exo 2"; font-size: 22px; font-weight: 700; margin-top: 6px; }
+  .stat span { color: var(--muted); font-size: 12.5px; }
+  .bar { height: 4px; background: rgba(141,255,58,.12); margin-top: 10px; border-radius: 2px; overflow: hidden; }
+  .bar div { height: 100%; background: linear-gradient(90deg, var(--g2), var(--g)); box-shadow: 0 0 8px var(--g); }
+  footer { position: absolute; left: 44px; right: 44px; bottom: 26px; display: flex; gap: 28px; align-items: center; font-family: "Exo 2"; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; font-size: 12.5px; color: var(--muted); }
+  footer .sp { margin-left: auto; color: var(--faint); font-size: 11px; }
+  footer > span { display: flex; align-items: center; gap: 8px; }
+</style>
+</head>
+<body>
+<svg class="bg" viewBox="0 0 1440 900" fill="none">
+  <g stroke="rgba(141,255,58,.14)" stroke-width="1.5">
+    <circle cx="610" cy="390" r="330"/>
+    <circle cx="610" cy="390" r="400" stroke-dasharray="2 10"/>
+    <path d="M0 640 C 300 560, 420 760, 760 700 S 1200 600, 1440 690"/>
+    <path d="M0 210 C 260 260, 380 120, 700 150 S 1200 260, 1440 190" stroke-dasharray="1 7"/>
+  </g>
+</svg>
+
+<header>
+  <div class="logo disp"><div class="mark"></div>PEAK<span>TWEAKS</span></div>
+  <div class="status">
+    <div class="chip">Restore point <b>#142 ready</b></div>
+    <div class="chip">Changes <b>2 applied</b></div>
+    <div class="chip">Starter <b>free</b></div>
+  </div>
+</header>
+
+<div class="blades">
+  <div class="blade on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 10.5 12 3l9 7.5V21H3z"/></svg>Home</div>
+  <div class="blade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/></svg>Games</div>
+  <div class="blade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Tools</div>
+  <div class="blade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Proof</div>
+  <div class="blade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>Backups</div>
+  <div class="blade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Settings</div>
+</div>
+
+<div class="core">
+  <svg viewBox="0 0 560 560" fill="none">
+    <circle cx="280" cy="280" r="190" stroke="rgba(141,255,58,.22)" stroke-width="2"/>
+    <circle cx="280" cy="280" r="190" stroke="#8dff3a" stroke-width="5" stroke-linecap="round" stroke-dasharray="290 900" transform="rotate(-120 280 280)" style="filter: drop-shadow(0 0 6px #8dff3a)"/>
+    <circle cx="280" cy="280" r="232" stroke="rgba(141,255,58,.12)" stroke-width="16" stroke-dasharray="40 12"/>
+    <circle cx="280" cy="280" r="150" stroke="rgba(141,255,58,.3)" stroke-width="1" stroke-dasharray="3 6"/>
+  </svg>
+  <div class="orb"></div>
+  <div class="orb-text"><b>3</b><span>worth a look</span></div>
+  <div class="orbit-label" style="left: 400px; top: 70px;">Rig class<b>Mid</b></div>
+  <div class="orbit-label" style="left: 30px; top: 92px;">Windows<b>11 Pro</b></div>
+  <div class="orbit-label" style="left: 6px; top: 420px;">Already fine<b>8 checks</b></div>
+  <div class="orbit-label" style="left: 430px; top: 440px;">Last check<b>18:04</b></div>
+</div>
+
+<div class="panel" style="right: 44px; top: 110px; width: 470px;">
+  <div class="ph">Worth a look <em>3</em></div>
+  <div class="row"><div><b>Display at 60 Hz of 165 Hz</b><p>Windows Settings &gt; Display &gt; Advanced display</p></div><span class="badge you">You</span></div>
+  <div class="row"><div><b>Memory below its rated speed</b><p>XMP / EXPO is a BIOS setting; PeakTweaks never writes the BIOS</p></div><span class="badge you">You</span></div>
+  <div class="row"><div><b>Fortnite is on a hard drive</b><p>D: &middot; the Windows drive is an SSD with room</p></div><span class="badge hw">Move</span></div>
+</div>
+
+<div class="panel" style="right: 44px; top: 400px; width: 470px;">
+  <div class="ph">Auto <em>Mid rig</em></div>
+  <p style="color: var(--muted); margin-top: 10px; line-height: 1.5;">Applies the safe set for this PC, then checks again. Every change is recorded first and can be undone.</p>
+  <div class="cta">
+    <div class="btn pri"><span class="ab">A</span>Run Auto</div>
+    <div class="btn">Review first</div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><i>Processor</i><b>Ryzen 7 7800X3D</b><span>8 cores &middot; 16 threads</span></div>
+  <div class="stat"><i>Graphics</i><b>RTX 4070</b><span>12 GB &middot; driver 581.80</span></div>
+  <div class="stat"><i>Memory</i><b>32 GB</b><span>4800 of 6000 MT/s</span><div class="bar"><div style="width: 80%"></div></div></div>
+  <div class="stat"><i>Display</i><b>60 Hz</b><span>of 165 Hz available</span><div class="bar"><div style="width: 36%"></div></div></div>
+  <div class="stat"><i>Windows drive</i><b>NVMe SSD</b><span>Samsung 990 Pro</span></div>
+</div>
+
+<footer>
+  <span><span class="ab">A</span>Select</span>
+  <span><span class="ab b">B</span>Back</span>
+  <span class="sp">Mockup &middot; sample data</span>
+</footer>
+</body>
+</html>

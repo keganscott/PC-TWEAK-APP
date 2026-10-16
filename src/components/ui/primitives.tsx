@@ -227,9 +227,9 @@ export function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="w-full max-w-lg rounded-2xl border border-line-strong bg-surface-1"
+        className="flex max-h-full w-full max-w-lg flex-col rounded-2xl border border-line-strong bg-surface-1"
       >
-        <div className="flex items-center justify-between border-b border-line px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-6 py-4">
           <h2 id={titleId} className="text-lg font-extrabold tracking-tight">
             {title}
           </h2>
@@ -237,8 +237,9 @@ export function Dialog({
             <X aria-hidden className="size-5" />
           </button>
         </div>
-        <div className="px-6 py-5 text-sm text-ink-muted">{children}</div>
-        {footer && <div className="flex items-center justify-end gap-2 border-t border-line px-6 py-4">{footer}</div>}
+        {/* A body taller than the window scrolls; the title and buttons stay in view. */}
+        <div className="min-h-0 overflow-y-auto px-6 py-5 text-sm text-ink-muted">{children}</div>
+        {footer && <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-6 py-4">{footer}</div>}
       </div>
     </div>
   );

@@ -72,8 +72,11 @@ async function settled(title, done, ms) {
   await driver.wait(async () => {
     const section = await driver.findElement(sectionOf(title));
     const t = await section.getText();
-    if (done.some((d) => t.includes(d)) && (await section.findElements(By.css("[aria-busy='true']"))).length === 0) {
-      return true;
+    // Once the result is on screen, an alert in it is part of the result
+    // (the connection check shows "Neither public server answered" as one
+    // when a runner blocks echoes), so only wait for the work to end.
+    if (done.some((d) => t.includes(d))) {
+      return (await section.findElements(By.css("[aria-busy='true']"))).length === 0;
     }
     const alerts = await section.findElements(By.css("[role='alert']"));
     if (alerts.length > 0) error = await alerts[0].getText();

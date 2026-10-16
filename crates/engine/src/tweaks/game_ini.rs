@@ -70,15 +70,17 @@ pub struct GameIniSetting {
 const FORTNITE_FILE: &str = r"<profile>\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini";
 const FORTNITE_SECTION: &str = "/Script/FortniteGame.FortGameUserSettings";
 
-/// Apex Legends' video settings. Path and key from PCGamingWiki and players'
-/// posted copies, not from EA or Respawn (VERIFY against a real file, NOTES
-/// N55).
+/// Apex Legends' video settings. V-Sync Disabled is EA's own advice ("What
+/// are the best settings for Apex Legends on PC?", help.ea.com, also in
+/// `src/lib/gameGuidance.ts`); the path and key are from PCGamingWiki and
+/// players' posted copies, not from EA or Respawn (VERIFY against a real
+/// file, NOTES N55).
 const APEX_FILE: &str = r"<profile>\Saved Games\Respawn\Apex\local\videoconfig.txt";
 
 /// The game settings tools, for each offered game (`env::KNOWN_GAMES`). Only
 /// settings the game's own menu offers, set to the value the menu writes, and
 /// only where the publisher's own advice backs the choice (V-Sync off: Epic's
-/// low-frame-rate guidance, plan section 8). Every one is behind the per-game
+/// low-frame-rate guidance, plan section 8, and EA's starting settings). Every one is behind the per-game
 /// anti-cheat gate (`per_game_block`, NOTES N75).
 pub fn offered() -> Vec<GameIniSetting> {
     all()

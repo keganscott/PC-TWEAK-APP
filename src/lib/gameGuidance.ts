@@ -211,6 +211,9 @@ export const GAME_GUIDANCE: Record<string, GameGuidance> = {
     ],
   },
   // Plan section 8: research against Mojang's documentation before any advice.
+  // Searched 2026-10-16: Mojang publishes system requirements
+  // (minecraft.net, "Minecraft Java Edition System Requirements") but no
+  // settings advice; the frame-rate tips found are the community wiki's.
   minecraft: {
     source: null,
     intro:

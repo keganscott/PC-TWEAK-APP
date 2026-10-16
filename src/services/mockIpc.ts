@@ -118,6 +118,8 @@ export function createMockBackend(options: MockOptions = {}): Backend {
   let seq = 100;
   const records: JournalRecord[] = clone(fx.journalView.records) as JournalRecord[];
   const sessions: ProofSessionSummary[] = clone(fx.proofSessions) as ProofSessionSummary[];
+  // Comparisons begun in the same millisecond still get their own id.
+  let sessionCount = 0;
   const runs = new Map<string, ProofRun[]>();
   // The seeded session holds the runs its summary and the sample comparison name,
   // with the figures that comparison was worked out from (contract.rs
@@ -524,7 +526,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
     proofBegin: (exe, gameId, gameBuild) =>
       reply("proofBegin", [exe, gameId, gameBuild], () => {
         const now = Date.now();
-        const session = { ...clone(fx.proofSessions[0]!.session), sessionId: `session-${now}`, createdUnixMs: now, exe, gameId, gameBuild };
+        const session = { ...clone(fx.proofSessions[0]!.session), sessionId: `session-${now}-${(sessionCount += 1)}`, createdUnixMs: now, exe, gameId, gameBuild };
         sessions.unshift({ session, beforeRuns: 0, afterRuns: 0 });
         return clone(session);
       }),

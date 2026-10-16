@@ -1,4 +1,4 @@
-import { Cpu, Gpu, MemoryStick, Sparkles, Thermometer, type LucideIcon } from "lucide-react";
+import { Cpu, Gpu, MemoryStick, Sparkles, Thermometer, Timer, type LucideIcon } from "lucide-react";
 import { useId, useMemo, type ReactNode } from "react";
 
 import type { GpuLive } from "../../generated/GpuLive";
@@ -59,6 +59,7 @@ export function LiveDashboard() {
             </Card>
           )}
           <MemoryCard live={live} history={history} />
+          <TimerCard live={live} />
         </ul>
       )}
     </section>
@@ -142,6 +143,37 @@ function MemoryCard({ live, history }: { live: LiveReadings; history: LiveReadin
       <div className="mt-auto pt-3">
         <CleanMemoryButton />
       </div>
+    </Card>
+  );
+}
+
+/**
+ * Windows' timer resolution (NOTES N133): how often Windows wakes programs
+ * that asked to be woken. While a known game runs, PeakTweaks holds the
+ * finest (see Tools > System-wide timer requests for the Windows 11 half).
+ */
+function TimerCard({ live }: { live: LiveReadings }) {
+  const timer = yes(live.timer);
+  return (
+    <Card label="Timer" icon={Timer}>
+      {timer ? (
+        <>
+          <p className="mt-3 text-2xl font-extrabold tabular-nums">
+            {timer.currentMs} <span className="text-sm font-bold text-ink-muted">ms now</span>
+          </p>
+          <dl className="mt-2 grid gap-1 text-xs">
+            <Stat term="Finest this PC offers" value={`${timer.finestMs} ms`} />
+          </dl>
+          <p className="mt-3 text-xs text-ink-muted">
+            How often Windows wakes programs that asked to be woken. While a game PeakTweaks knows runs, it holds the
+            finest.
+          </p>
+        </>
+      ) : (
+        <p className="mt-3 text-xs text-ink-muted">
+          {live.timer.state === "unknown" ? `Not read: ${live.timer.reason}.` : "Not read."}
+        </p>
+      )}
     </Card>
   );
 }

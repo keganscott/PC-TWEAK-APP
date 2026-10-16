@@ -57,6 +57,15 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | E5 | Multi-Internet | Several connections at once, failover | Without servers, only failover: prefer the cable over Wi-Fi (interface metric), warn when a game runs on Wi-Fi |
 | E6 | RAM Cleaner | Frees memory | One-shot: empty the standby list and trim working sets (Windows' memory-list API); nothing to undo |
 
+## Added beyond Hone and ExitLag
+
+| Tool | What it changes | How PeakTweaks builds it |
+|---|---|---|
+| Multiplane overlay (MPO) off (`display.mpo`) | `SOFTWARE\Microsoft\Windows\Dwm` `OverlayTestMode` 5, so the desktop window manager composes every window instead of handing some straight to the graphics card; NVIDIA's support guidance uses this switch for screen flicker | ValueTweak; needs a restart; VERIFY against a real PC (N129) |
+| Foreground program priority (`scheduling.foreground`) | `SYSTEM\CurrentControlSet\Control\PriorityControl` `Win32PrioritySeparation` 38: short, variable processor turns with the program in front favoured most | ValueTweak; needs a restart; VERIFY (N130) |
+| Aggressive processor boost in the PeakTweaks power plan (part of `power.plan`, H7) | The plan copy's `be337238-0d82-4146-a960-4f3749d470c7` (Processor performance boost mode) set to 2, Aggressive, plugged in only | A fifth setting on the plan copy; VERIFY the value list (N131) |
+| Processor idle states off (`power.idle`, Advanced) | The plan copy's `5d76a2ca-e8c0-402f-a133-2158492d58ad` (Processor idle disable) set to 1, plugged in only, so cores stay out of deep idle states while on the PeakTweaks plan | Its own tool on the plan copy; needs the plan first; VERIFY the GUID (N132) |
+
 ## Not built, even though another app has it
 
 These are in plan section 12 ("never do"). Kegan's approval covers Hone and ExitLag features; if either app has one of these, it still needs Kegan to change section 12 explicitly first.

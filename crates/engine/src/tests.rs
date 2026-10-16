@@ -1641,6 +1641,88 @@ fn a_value_tweak_already_set_on_the_pc_is_listed_as_done_and_round_trips() {
 }
 
 #[test]
+fn the_multiplane_overlay_tool_writes_one_value_and_undo_removes_it() {
+    use crate::registry::RegistryBackend;
+    use crate::tweaks::registry_values::MULTIPLANE_OVERLAY;
+    let fake = Arc::new(FakeRegistry::new());
+    let dwm = r"SOFTWARE\Microsoft\Windows\Dwm";
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(
+        &fake,
+        dir.path(),
+        vec![Box::new(MULTIPLANE_OVERLAY)],
+        true,
+        Tier::Ultimate,
+    );
+    let state = |e: &mut crate::engine::Engine| e.list().unwrap().remove(0).state;
+    let value = |fake: &FakeRegistry| {
+        fake.read_value_for_test(Hive::LocalMachine, dwm, "OverlayTestMode")
+            .and_then(|v| v.as_dword())
+    };
+
+    // Nothing written: Windows uses the overlay, the tool is offered.
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("display.mpo").unwrap();
+    assert_eq!(value(&fake), Some(5));
+    assert!(matches!(state(&mut engine), TweakState::Applied));
+    engine.revert("display.mpo").unwrap();
+    assert_eq!(value(&fake), None, "undo removes the switch it wrote");
+    assert!(matches!(state(&mut engine), TweakState::Default));
+
+    // A PC that already has the switch reads as already done, and Apply
+    // there is a no-op that writes no journal entry.
+    fake.create_key(Hive::LocalMachine, dwm).unwrap();
+    fake.write_value(Hive::LocalMachine, dwm, "OverlayTestMode", &RawValue::dword(5))
+        .unwrap();
+    assert!(matches!(state(&mut engine), TweakState::Foreign));
+}
+
+#[test]
+fn the_foreground_priority_tool_writes_one_value_and_undo_removes_it() {
+    use crate::registry::RegistryBackend;
+    use crate::tweaks::registry_values::FOREGROUND_QUANTUM;
+    let fake = Arc::new(FakeRegistry::new());
+    let key = r"SYSTEM\CurrentControlSet\Control\PriorityControl";
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(
+        &fake,
+        dir.path(),
+        vec![Box::new(FOREGROUND_QUANTUM)],
+        true,
+        Tier::Ultimate,
+    );
+    let state = |e: &mut crate::engine::Engine| e.list().unwrap().remove(0).state;
+    let value = |fake: &FakeRegistry| {
+        fake.read_value_for_test(Hive::LocalMachine, key, "Win32PrioritySeparation")
+            .and_then(|v| v.as_dword())
+    };
+
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), Some(38));
+    assert!(matches!(state(&mut engine), TweakState::Applied));
+    engine.revert("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), None, "undo removes the value it wrote");
+    assert!(matches!(state(&mut engine), TweakState::Default));
+
+    // Windows' own workstation default (0x24 on some builds, from memory)
+    // is not ours: it reads as not set, and Apply replaces it, backed up.
+    fake.create_key(Hive::LocalMachine, key).unwrap();
+    fake.write_value(
+        Hive::LocalMachine,
+        key,
+        "Win32PrioritySeparation",
+        &RawValue::dword(0x24),
+    )
+    .unwrap();
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), Some(38));
+    engine.revert("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), Some(0x24), "undo puts Windows' value back");
+}
+
+#[test]
 fn the_sticky_keys_tool_clears_only_the_shortcut_and_keeps_the_users_own_settings() {
     use crate::registry::RegistryBackend;
     use crate::tweaks::registry_values::ACCESSIBILITY_SHORTCUTS;
@@ -3919,6 +4001,45 @@ mod power_tools {
         h.engine.revert(PLAN_ID).unwrap();
         assert_eq!(h.sys.get(&SysItem::ActivePowerScheme), text(BALANCED));
         assert_eq!(h.sys.get(&ours()), SysState::Absent);
+    }
+
+    fn idle_item() -> SysItem {
+        SysItem::PowerSetting {
+            scheme: PEAKTWEAKS.into(),
+            subgroup: "54533251-82be-4824-96c1-47b60b740d00".into(),
+            setting: "5d76a2ca-e8c0-402f-a133-2158492d58ad".into(),
+            ac: true,
+        }
+    }
+
+    #[test]
+    fn processor_idle_needs_the_peaktweaks_plan_first() {
+        let mut h = pc(PLAN_SETTINGS.len());
+        assert!(matches!(status(&h, IDLE_ID), TweakState::Blocked { .. }));
+        assert!(h.engine.apply(IDLE_ID).is_err());
+        assert_eq!(h.sys.get(&idle_item()), SysState::Absent);
+    }
+
+    #[test]
+    fn processor_idle_turns_off_on_the_plan_and_undo_puts_it_back() {
+        let mut h = pc(PLAN_SETTINGS.len());
+        h.engine.apply(PLAN_ID).unwrap();
+        h.sys.set(&idle_item(), SysState::Dword { value: 0 });
+        assert_eq!(status(&h, IDLE_ID), TweakState::Default);
+
+        h.engine.apply(IDLE_ID).unwrap();
+        assert_eq!(h.sys.get(&idle_item()), SysState::Dword { value: 1 });
+        assert_eq!(status(&h, IDLE_ID), TweakState::Applied);
+
+        h.engine.revert(IDLE_ID).unwrap();
+        assert_eq!(h.sys.get(&idle_item()), SysState::Dword { value: 0 });
+        assert_eq!(status(&h, IDLE_ID), TweakState::Default);
+
+        // Undoing the plan deletes the copy, idle setting and all.
+        h.engine.apply(IDLE_ID).unwrap();
+        h.engine.revert(PLAN_ID).unwrap();
+        assert_eq!(h.sys.get(&ours()), SysState::Absent);
+        assert!(matches!(status(&h, IDLE_ID), TweakState::Blocked { .. }));
     }
 
     #[test]

@@ -22,6 +22,7 @@
   "names_description": "Names of Windows and graphics driver features that contain a claim word but say nothing about a result. They are removed from the text before the words are checked, so the same word anywhere else is still caught.",
   "names": [
     "Customer Experience Improvement Program",
-    "Anti-Lag"
+    "Anti-Lag",
+    "Processor performance boost mode"
   ]
 }

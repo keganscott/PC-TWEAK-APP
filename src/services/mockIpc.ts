@@ -462,6 +462,7 @@ export function createMockBackend(options: MockOptions = {}): Backend {
               },
             ],
           },
+          timer: { state: "yes", value: { currentMs: 15.625, finestMs: 0.5 } },
           unixMs: Date.now(),
         };
       }),

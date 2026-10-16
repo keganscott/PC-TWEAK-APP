@@ -38,8 +38,29 @@ pub struct LiveReadings {
     /// Every NVIDIA GPU. No when there is none, Unknown when NVML could not
     /// be read (for example, no NVIDIA driver).
     pub gpus: Probe<Vec<GpuLive>>,
+    /// Windows' timer resolution now, and the finest it offers
+    /// (`play::timer_intervals`, NOTES N133). While a known game runs
+    /// PeakTweaks holds the finest (H2), so this reads 0.5 ms then.
+    pub timer: Probe<TimerReading>,
     #[ts(type = "number")]
     pub unix_ms: u64,
+}
+
+/// Windows' timer resolution, in milliseconds.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerReading {
+    /// The interval in effect now.
+    pub current_ms: f64,
+    /// The finest interval Windows offers on this PC.
+    pub finest_ms: f64,
+}
+
+/// One timer interval from 100 ns units to milliseconds, to a tenth of a
+/// microsecond (Windows' own intervals are exact in these units).
+pub fn timer_ms(units: u32) -> f64 {
+    (f64::from(units) / 10.0).round() / 1000.0
 }
 
 /// One ACPI thermal zone's temperature.
@@ -132,6 +153,7 @@ pub fn read() -> LiveReadings {
             Err(e) => Probe::unknown(e.to_string()),
         },
         gpus: imp::gpus(),
+        timer: imp::timer(),
         unix_ms,
     }
 }
@@ -372,6 +394,16 @@ mod imp {
     pub fn gpus() -> Probe<Vec<GpuLive>> {
         crate::proof::nvml::shared().live()
     }
+
+    pub fn timer() -> Probe<TimerReading> {
+        match crate::play::timer_intervals() {
+            Ok(t) => Probe::yes(TimerReading {
+                current_ms: timer_ms(t.current),
+                finest_ms: timer_ms(t.finest),
+            }),
+            Err(e) => Probe::unknown(e.to_string()),
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -396,11 +428,23 @@ mod imp {
     pub fn gpus() -> Probe<Vec<GpuLive>> {
         Probe::unknown("live readings are only taken on Windows")
     }
+    pub fn timer() -> Probe<TimerReading> {
+        Probe::unknown("live readings are only taken on Windows")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timer_intervals_read_in_milliseconds() {
+        // Windows' usual figures, in 100 ns units.
+        assert_eq!(timer_ms(156_250), 15.625);
+        assert_eq!(timer_ms(5_000), 0.5);
+        assert_eq!(timer_ms(10_000), 1.0);
+        assert_eq!(timer_ms(0), 0.0);
+    }
 
     #[test]
     fn busy_share_counts_idle_inside_kernel_time() {

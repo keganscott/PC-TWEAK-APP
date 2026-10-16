@@ -3,6 +3,7 @@ import type { GpuLive } from "./GpuLive";
 import type { MemoryUse } from "./MemoryUse";
 import type { Probe } from "./Probe";
 import type { ThermalZone } from "./ThermalZone";
+import type { TimerReading } from "./TimerReading";
 
 export type LiveReadings = { 
 /**
@@ -34,4 +35,10 @@ memory: Probe<MemoryUse>,
  * Every NVIDIA GPU. No when there is none, Unknown when NVML could not
  * be read (for example, no NVIDIA driver).
  */
-gpus: Probe<Array<GpuLive>>, unixMs: number, };
+gpus: Probe<Array<GpuLive>>, 
+/**
+ * Windows' timer resolution now, and the finest it offers
+ * (`play::timer_intervals`, NOTES N133). While a known game runs
+ * PeakTweaks holds the finest (H2), so this reads 0.5 ms then.
+ */
+timer: Probe<TimerReading>, unixMs: number, };

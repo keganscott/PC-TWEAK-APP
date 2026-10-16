@@ -251,6 +251,11 @@ is confusing.
 
 ## 9. The field-check report
 
+**Shortcut:** double-click `scripts\test-on-pc.cmd`. After one admin prompt it
+runs this report, the restore point, a game capture and the in-app checks in
+one window, asking before anything that changes the PC, and leaves one zip on
+the Desktop.
+
 This collects the raw readings behind steps 3 and 4 in one file. Open PowerShell
 **as administrator** in the folder with `peaktweaks-field-check.exe` and run:
 

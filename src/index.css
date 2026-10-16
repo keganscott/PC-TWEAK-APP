@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/* Design tokens: Kegan's palette (black #000000, violet #7E3BED, white
+   #FFFFFF, lime #C6FF34; docs/design/mockups-2026-10-06, round 3). Violet
+   carries actions and "worth a look"; lime means ready / done; white is the
+   type. Red is kept for errors only. Status is never shown by colour alone:
+   every status colour is paired with an icon and a word in StatusBadge.
+   Text colours are chosen for at least 4.5:1 on every surface below. */
+@theme {
+  --color-black: #000000;
+  --color-white: #ffffff;
+  --color-violet: #7e3bed;
+  --color-violet-strong: #6c2fd6;
+  --color-violet-soft: #a77bf5;
+  --color-lime: #c6ff34;
+  --color-lime-strong: #b3ee1c;
+  --color-surface-0: #000000;
+  --color-surface-1: #0a0a0c;
+  --color-surface-2: #121216;
+  --color-surface-3: #1a1a1f;
+  --color-line: #222228;
+  --color-line-strong: #34343c;
+  --color-ink: #ffffff;
+  --color-ink-muted: #a6a6b0;
+  --color-ink-faint: #8a8a94;
+  --color-accent: #7e3bed;
+  --color-accent-strong: #6c2fd6;
+  --color-ok: #c6ff34;
+  --color-warn: #a77bf5;
+  --color-bad: #ff5c7a;
+  --color-info: #d6d6de;
+  --color-sample: #ffb020;
+  --font-sans: "Plus Jakarta Sans Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Exo 2", "Plus Jakarta Sans Variable", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  /* Gaming Mode's button (GamingModeButton.tsx): a ring that turns and a
+     glow that breathes while it is on, a burst when it comes on, and a sheen
+     while a game runs. Reduced motion stops them (below); the on look is the
+     lime fill and border, not the movement. */
+  --animate-gm-spin: gm-spin 2.8s linear infinite;
+  --animate-gm-glow: gm-glow 2.2s ease-in-out infinite;
+  --animate-gm-burst: gm-burst 0.8s ease-out forwards;
+  --animate-gm-sheen: gm-sheen 2.6s ease-in-out infinite;
+  /* One pass of the sheen, when a one-time action finishes. */
+  --animate-sweep-once: gm-sheen 1.2s ease-out 1 forwards;
+
+  @keyframes gm-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes gm-glow {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 0 rgb(198 255 52 / 0.45),
+        0 0 16px 2px rgb(126 59 237 / 0.35);
+    }
+    50% {
+      box-shadow:
+        0 0 0 5px rgb(198 255 52 / 0),
+        0 0 30px 8px rgb(126 59 237 / 0.6);
+    }
+  }
+  @keyframes gm-burst {
+    from {
+      transform: scale(0.7);
+      opacity: 0.9;
+    }
+    to {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+  @keyframes gm-sheen {
+    0% {
+      transform: translateX(-120%) skewX(-20deg);
+    }
+    60%,
+    100% {
+      transform: translateX(320%) skewX(-20deg);
+    }
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-surface-0 text-ink font-sans antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-lime);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-violet);
+    color: var(--color-white);
+  }
+}
+
+/* The two flat textures from the palette sheet: fine diagonal lines on black,
+   and violet diamond facets (drawn in Facets.tsx). */
+@utility texture-lines {
+  background-image: repeating-linear-gradient(135deg, rgb(255 255 255 / 0.045) 0 1px, transparent 1px 7px);
+}
+
+@utility scrollbar-quiet {
+  scrollbar-color: var(--color-line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Printing a scan (plan 6.4: a plain-language scan parents can print). Light
+   colours on paper, no app chrome or controls, and the page flows instead of
+   scrolling inside the window. */
+@media print {
+  :root {
+    --color-surface-0: #ffffff;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #f2f4f7;
+    --color-surface-3: #e6e9ee;
+    --color-line: #b9c2cf;
+    --color-line-strong: #8d97a5;
+    --color-ink: #000000;
+    --color-ink-muted: #2b3440;
+    --color-ink-faint: #4a5563;
+    /* Badges keep their fills (black on lime, white on violet); only text
+       colours that sat on black change. */
+    --color-warn: #6c2fd6;
+    --color-violet-soft: #6c2fd6;
+    --color-bad: #a3241f;
+    --color-info: #1d5a99;
+    --color-sample: #6b2fa0;
+  }
+  html,
+  body,
+  #root {
+    height: auto;
+  }
+  nav[aria-label="Main"],
+  #execution-bus,
+  button {
+    display: none !important;
+  }
+}

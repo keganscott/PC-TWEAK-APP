@@ -1,0 +1,69 @@
+[package]
+name = "peaktweaks-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Exposes the in-memory registry, TrustedDir::insecure_for_tests and dev stubs
+# to other crates' tests. Never enabled in a release build.
+test-support = []
+# Development-only stubs: an open restore gate and a paid license. Off by default.
+dev-stubs = []
+# The tester build for trying the app on a real PC before licensing exists:
+# every plan unlocked, everything else (restore gate included) real. Never in a
+# release; the UI labels it (docs/TEST-ON-YOUR-PC.md).
+tester = []
+# Embed the pinned PresentMon binary (vendor/presentmon, fetched by
+# scripts/fetch-presentmon.ps1) so the app stays one portable executable.
+bundle-presentmon = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ts-rs = { version = "12", default-features = false, features = ["serde-compat"] }
+
+# Registry and Win32 access. Pinned until Phase 3 compiles (plan R22).
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+wmi = { version = "0.14", default-features = false }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Gdi",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_NetworkManagement_WiFi",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_Cryptography_Sip",
+  "Win32_Security_WinTrust",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Ole",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Restore",
+  "Win32_System_Services",
+  "Win32_System_SystemInformation",
+  "Win32_System_TaskScheduler",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"

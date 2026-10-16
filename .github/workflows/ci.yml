@@ -1,0 +1,581 @@
+name: ci
+
+# A branch with a pull request is tested once, by the pull_request event; a
+# push trigger on the same branch ran every job twice per push (NOTES N74).
+# Other branches can be run by hand from the Actions tab.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # The commit the build number names (vite.config.ts): on a pull request the
+  # checkout is a temporary merge commit, so name the branch's own head.
+  PEAKTWEAKS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  # The real gate: the app only ever runs on Windows.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # Keep in step with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # The pinned, Intel-signed PresentMon that release builds embed. The script
+      # refuses anything whose hash, size or signature differs from PINNED.json.
+      - name: Fetch and verify PresentMon
+        shell: pwsh
+        run: ./scripts/fetch-presentmon.ps1
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo check
+        run: cargo check --workspace --all-targets
+
+      - name: cargo test
+        run: cargo test --workspace
+        env:
+          # Real fsyncs on NTFS make each case slow; the Linux job runs the full 300.
+          PROPTEST_CASES: "60"
+
+      # The tests above regenerate src/generated (ts-rs bindings and the JSON
+      # fixtures). Anything they changed or added means the committed copy is stale.
+      - name: Generated TypeScript is up to date
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain -- src/generated
+          if ($changes) {
+            Write-Host $changes
+            git diff -- src/generated
+            throw "src/generated is stale: run 'cargo test -p peaktweaks-engine' and commit the result"
+          }
+
+      - name: npm ci
+        run: npm ci
+
+      - name: tsc --noEmit
+        run: npm run typecheck
+
+      # No user-facing text may promise a result (scripts/claim-words.json, shared
+      # with the Rust copy lints). Runs on whatever frontend is in src/.
+      - name: UI copy makes no efficacy claims
+        run: |
+          npm run test:scripts
+          npm run lint:copy
+
+      - name: vite build
+        run: npm run build
+
+      - name: tauri build (no bundle)
+        run: npx tauri build --no-bundle
+
+      - name: Check the manifest was embedded once and asks for admin
+        shell: pwsh
+        run: |
+          $exe = "target\release\peaktweaks.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not built" }
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          $admin = ([regex]::Matches($text, 'requireAdministrator')).Count
+          $cc6 = ([regex]::Matches($text, 'Microsoft\.Windows\.Common-Controls')).Count
+          Write-Host "requireAdministrator x$admin, Common-Controls x$cc6"
+          if ($admin -lt 1) { throw "manifest does not request requireAdministrator" }
+          if ($cc6 -lt 1) { throw "manifest lost the Common Controls v6 dependency" }
+
+      # Starts the real exe. On a GitHub runner the token is already elevated and
+      # UAC is off, so this does NOT prove the UAC prompt; it proves the process
+      # starts, the engine initialises (elevation check, user resolution, the
+      # protected ProgramData directory), and nothing crashes for 20 seconds.
+      - name: Smoke test - launch, engine starts, storage is locked down
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:ProgramData 'PeakTweaks'
+          if (Test-Path $dir) { throw "$dir already exists on a fresh runner" }
+          $startupLog = Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log'
+          $p = Start-Process -FilePath 'target\release\peaktweaks.exe' -PassThru
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          # Wait for evidence, not a fixed time: run 37077991777 needed more than
+          # 20 s to reach engine start (first launch of a new exe on a fresh
+          # runner). The engine creating its storage, or recording why it could
+          # not, is the evidence; how long it took is printed.
+          while (-not (Test-Path $dir) -and -not (Test-Path $startupLog) -and -not $p.HasExited -and $sw.Elapsed.TotalSeconds -lt 120) {
+            Start-Sleep -Milliseconds 250
+          }
+          Write-Host "engine start evidence after $([int]$sw.Elapsed.TotalMilliseconds) ms"
+          # The app stays open when its engine fails (it shows the reason), so
+          # "still running" alone does not prove the engine started.
+          if (Test-Path $startupLog) { Get-Content $startupLog | Write-Host; throw "the engine failed to start" }
+          if (-not (Test-Path $dir)) { throw "engine did not create $dir within 120 s" }
+          $rest = 20 - $sw.Elapsed.TotalSeconds
+          if ($rest -gt 0) { Start-Sleep -Seconds ([math]::Ceiling($rest)) }
+          if ($p.HasExited) { throw "peaktweaks.exe exited early with code $($p.ExitCode)" }
+          Write-Host "still running after $([int]$sw.Elapsed.TotalSeconds) s (pid $($p.Id))"
+          $acl = (icacls $dir) -join "`n"
+          Write-Host $acl
+          Stop-Process -Id $p.Id -Force
+          if ($acl -match 'Users|Everyone|Authenticated') { throw "storage directory grants access to a non-admin group" }
+          if ($acl -notmatch 'SYSTEM') { throw "expected SYSTEM in the storage ACL" }
+          if ($acl -notmatch 'Administrators') { throw "expected Administrators in the storage ACL" }
+
+      # The e2e step below rebuilds target\release\peaktweaks.exe as a test
+      # variant; keep the shipped one for the network check at the end.
+      - name: Keep a copy of the shipped exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'shipped') | Out-Null
+          Copy-Item target\release\peaktweaks.exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe')
+
+      # Checks the assumptions the capture code makes against the real program,
+      # then captures real frames from a browser window running an animation and
+      # pushes them through our tool, parser and statistics.
+      - name: PresentMon reality check
+        shell: pwsh
+        run: |
+          $pm = (Resolve-Path vendor\presentmon\PresentMon-x64.exe).Path
+          $pin = Get-Content vendor\presentmon\PINNED.json -Raw | ConvertFrom-Json
+          $help = (& $pm --help 2>&1 | Out-String)
+          Write-Host ($help.Split("`n") | Select-Object -First 6 | Out-String)
+          if ($help -notmatch [regex]::Escape("PresentMon $($pin.version)")) { throw "the version banner does not say PresentMon $($pin.version)" }
+          foreach ($f in '--process_name','--output_file','--delay','--timed','--terminate_after_timed','--no_console_stats','--session_name','--stop_existing_session') {
+            if ($help -notmatch [regex]::Escape($f)) { throw "PresentMon --help does not list $f" }
+          }
+          Write-Host "all flags we use are listed by the real program"
+
+          $page = Join-Path $env:RUNNER_TEMP 'anim.html'
+          Set-Content $page '<body style="margin:0"><canvas id=c width=800 height=600></canvas><script>const x=c.getContext("2d");let t=0;function f(){t++;x.fillStyle="hsl("+(t%360)+",80%,50%)";x.fillRect(0,0,800,600);requestAnimationFrame(f)}f()</script>'
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $edge)) { Write-Host "Edge not found; skipping the real-frames check"; return }
+          $proc = Start-Process $edge -ArgumentList "--user-data-dir=$env:RUNNER_TEMP\edge-ci","--no-first-run","--no-default-browser-check","--new-window","file:///$($page.Replace('\','/'))" -PassThru
+          Start-Sleep -Seconds 6
+
+          # Which processes present frames on this runner? Ask PresentMon itself.
+          $diag = Join-Path $env:RUNNER_TEMP 'pm-all.csv'
+          Write-Host "--- PresentMon, no process filter, 8 s"
+          & $pm --output_file $diag --timed 8 --terminate_after_timed --no_console_stats --session_name PeakTweaksDiag --stop_existing_session 2>&1 | Out-String | Write-Host
+          $target = 'msedge.exe'
+          if (Test-Path $diag) {
+            Write-Host "CSV header:"; Get-Content $diag -TotalCount 1
+            $rows = @(Import-Csv $diag)
+            Write-Host "rows: $($rows.Count)"
+            $top = @($rows | Group-Object Application | Sort-Object Count -Descending | Select-Object -First 5)
+            $top | ForEach-Object { Write-Host ("  {0,-32} {1} frames" -f $_.Name, $_.Count) }
+            $best = $top | Where-Object { $_.Count -ge 60 -and $_.Name -match '^[A-Za-z0-9._ +()-]+\.exe$' } | Select-Object -First 1
+            if ($best) { $target = $best.Name }
+          } else {
+            Write-Host "no CSV was written: nothing on this runner presented frames while PresentMon watched"
+          }
+          Write-Host "target for the end-to-end test: $target"
+          $env:PEAKTWEAKS_REAL_CAPTURE_EXE = $target
+          try { cargo test --workspace real_presentmon_captures_real_frames -- --nocapture --test-threads=1 }
+          finally { Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force }
+
+      # Evidence steps run last so the end of the job log holds them.
+      # Evidence, not just pass/fail: what the real probes and the real restore
+      # operations do on a Windows runner. (Runners are Windows Server, where
+      # System Restore does not exist, so the restore calls should fail cleanly.)
+      # Also the state of every tool in the catalogue, read as the Tools
+      # screen reads it; none may fail to read.
+      - name: Live probes on this runner
+        run: cargo test --workspace -- --nocapture --test-threads=1 live_probe_report spi_getmouse_order every_tool_reads_its_state_on_this_pc reaches_the_desktop_shell_or_says_why
+
+      - name: Real restore operations on this runner
+        run: cargo test --workspace the_real_operations_fail_cleanly -- --nocapture --test-threads=1
+
+      # These two pass even when they cannot do their job (no permission to create
+      # a local user; no way to make WMI slow), and say NOT VERIFIED when so. The
+      # output is what tells which happened.
+      - name: Storage ownership and WMI timeout on this runner
+        run: cargo test --workspace -- --nocapture --test-threads=1 a_directory_owned_by_a_standard_user a_caller_is_released_at_its_timeout
+
+      # The one-time actions in Tools (catalogue E6, H28, H29) against the real
+      # Windows: the standby list is emptied for real and its before and after
+      # printed; the junk areas are only measured, never cleared; defrag runs
+      # analysis only (/A), which changes nothing. A test that prints SKIPPED
+      # did not run its check.
+      - name: One-time actions on this runner
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 the_standby_list_empties_on_this_pc measures_the_real_areas_on_this_pc defrag_runs_from_system32_on_this_pc windows_and_system32_are_real_folders
+
+      # The driver tool's signature check (gpu_install.rs) against real files:
+      # an unsigned one, the pinned PresentMon (signed by Intel, so refused as
+      # not NVIDIA's) and a copy of it with one byte changed. No driver is
+      # installed: the runner has no NVIDIA card.
+      - name: Driver file signature check on this runner
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_unsigned_file_is_refused a_signed_program_names_its_signer_and_is_not_nvidias a_changed_signed_program_is_refused
+
+      # The power plan, hibernation, telemetry service and telemetry task tools
+      # (catalogue H7, H10, H14) applied and undone for real through the
+      # engine, printing this runner's settings before, during and after. The test changes nothing
+      # unless PEAKTWEAKS_REAL_SYSTEM_CHANGES is 1, which only this step sets.
+      - name: Power and service tools on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        shell: pwsh
+        run: |
+          # The runner image ships with these already off, so the tools would
+          # be skipped as already optimized (run 37717494960). Turn them on
+          # first so apply and undo run for real; the runner is thrown away.
+          foreach ($p in @(
+              '\Microsoft\Windows\Customer Experience Improvement Program\Consolidator',
+              '\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip',
+              '\Microsoft\Windows\Application Experience\ProgramDataUpdater',
+              '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector',
+              '\Microsoft\Windows\Autochk\Proxy')) {
+            $i = $p.LastIndexOf('\')
+            $t = Enable-ScheduledTask -TaskPath $p.Substring(0, $i + 1) -TaskName $p.Substring($i + 1) -ErrorAction SilentlyContinue
+            Write-Host "prepared $p : $(if ($t) { $t.State } else { 'not on this runner' })"
+          }
+          Set-Service DiagTrack -StartupType Manual -ErrorAction Continue
+          Write-Host "prepared DiagTrack: $((Get-Service DiagTrack -ErrorAction SilentlyContinue).StartType)"
+          powercfg /hibernate on
+          Write-Host "prepared hibernation: powercfg exit code $LASTEXITCODE"
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 power_and_service_tools_apply_and_undo_on_this_pc reads_scheduled_tasks_through_the_task_scheduler_on_this_pc
+
+      # Catalogue step 5: the running programs and the timer read (and the
+      # timer held for a moment) by the game watcher's own code, and Gaming
+      # Mode made and put back through the engine for real (same gate as above).
+      - name: Game watcher and Gaming Mode on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        shell: pwsh
+        run: |
+          # Gaming Mode stops Windows Search only when it runs; start it if
+          # this runner has it, so that change is made and put back too.
+          if (Get-Service WSearch -ErrorAction SilentlyContinue) {
+            Set-Service WSearch -StartupType Manual -ErrorAction Continue
+            Start-Service WSearch -ErrorAction Continue
+          }
+          Write-Host "prepared WSearch: $((Get-Service WSearch -ErrorAction SilentlyContinue).Status)"
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 lists_running_programs_and_reads_the_timer_on_this_pc gaming_mode_starts_and_ends_on_this_pc a_look_at_the_graphics_card_answers_on_this_pc reads_the_program_in_front_on_this_pc
+
+      # Startup apps (catalogue H12): this runner's list read from the real
+      # registry and Startup folders, and a test entry turned off and back on
+      # through the engine (same gate as above).
+      - name: Startup apps on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 startup_apps_turn_off_and_back_on_on_this_pc
+
+      # Every tool that only writes registry values, applied and undone one at
+      # a time through the engine on this runner's real registry, then all
+      # together with Undo all; after each undo every value it may write must
+      # hold what it held before (same gate as above). Tools this runner cannot
+      # take are named as skipped.
+      - name: Every registry tool applied and undone on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        shell: pwsh
+        run: |
+          # The runner image already has four of these set the tools' way, so
+          # they would be skipped as already optimized (run 37818812213). Set
+          # them the other way first; the runner is thrown away.
+          reg add 'HKCU\Software\Microsoft\GameBar' /v AutoGameModeEnabled /t REG_DWORD /d 0 /f
+          reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\kernel' /v GlobalTimerResolutionRequests /t REG_DWORD /d 0 /f
+          reg add 'HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power' /v HiberbootEnabled /t REG_DWORD /d 1 /f
+          reg add 'HKCU\Control Panel\Desktop\WindowMetrics' /v MinAnimate /t REG_SZ /d 1 /f
+          reg add 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' /v TaskbarAnimations /t REG_DWORD /d 1 /f
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_registry_tool_applies_and_undoes_on_this_pc
+
+      # Every tool that changes something other than registry values and
+      # restarts nothing (services, power plan, TCP settings, DNS servers,
+      # ...), applied and undone through the engine; after each undo every
+      # item the apply recorded must read as recorded before it (same gate).
+      - name: Every system tool applied and undone on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        shell: pwsh
+        run: |
+          # Start Windows Search if this runner has it, so the search
+          # indexing tool has something to turn off and put back.
+          if (Get-Service WSearch -ErrorAction SilentlyContinue) {
+            Set-Service WSearch -StartupType Manual -ErrorAction Continue
+            Start-Service WSearch -ErrorAction Continue
+          }
+          Write-Host "prepared WSearch: $((Get-Service WSearch -ErrorAction SilentlyContinue).Status)"
+          cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 every_system_tool_applies_and_undoes_on_this_pc
+
+      # Prefer the cable over Wi-Fi (catalogue E5): the runner's adapter metric
+      # set by hand and put back (same gate). The runner has no Wi-Fi, so the
+      # tool itself is not offered there. Read only: the devices MSI mode
+      # (H6) would list, NVIDIA's settings (H20) through NvAPI and AMD's (H21)
+      # through ADLX, which on a runner without such a card must say so rather
+      # than fail. The connection check (E4) echoes this PC and then runs in
+      # full; a cloud runner may drop echoes to the internet, so its figures
+      # are printed, not judged. Network adapter settings (H24): each adapter's
+      # driver key and setting states are read, and adapter power saving is
+      # turned off and back (no adapter restart, so the runner stays online).
+      # TCP settings (H23): what netsh and PowerShell report, and auto-tuning
+      # and ECN set to another value and back (RSS only read). Game traffic
+      # priority (H26): a QoS policy for a program that does not exist, added
+      # through the engine's backend as the tool adds it (New-NetQosPolicy),
+      # must be active with DSCP 46, then is removed. DNS servers (H25): the
+      # tool applied and undone through the engine; each connected adapter
+      # must read Cloudflare's servers, then its own again (DHCP included).
+      - name: Network adapter metric and settings, TCP settings, QoS policy, DNS servers, connection check, MSI mode devices, NVIDIA and AMD settings on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 an_interface_metric_is_set_and_put_back_on_this_pc msi_mode_lists_this_pcs_devices nvidia_settings_read_or_say_there_is_no_nvidia_card reading_a_setting_answers_without_crashing amd_cards_are_listed_or_there_are_none listing_amd_cards_answers_without_crashing this_pc_answers_its_own_echoes the_connection_check_runs_on_this_pc network_adapter_settings_read_on_this_pc tcp_settings_are_set_and_put_back_on_this_pc a_qos_policy_is_added_and_removed_on_this_pc dns_servers_are_set_and_put_back_on_this_pc
+
+      # The per-game tools (catalogue H3, H31, H19) applied and undone for real
+      # through the engine: csrss and a game's priority under HKLM IFEO, and
+      # fullscreen optimizations for a made-up game path under HKCU, with the
+      # fullscreen .reg backup imported by reg.exe. Gated like the steps above.
+      - name: Per-game tools on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 per_game_tools_apply_and_undo_on_this_pc
+
+      # The only code that writes the real registry, on the real registry: the
+      # RegistryBackend contract, engine apply/revert, and reg.exe import of the
+      # .reg backups (scratch keys under HKCU only).
+      # Runs even when cargo test failed: its output is what explains a failure.
+      - name: Real registry write path on this runner
+        if: ${{ !cancelled() }}
+        run: cargo test -p peaktweaks-engine registry::contract_tests -- --nocapture --test-threads=1
+
+      # The field-check tool (docs/FIELD_CHECK.md) is what Kegan runs on a real PC.
+      # Here it runs read-only on the runner, so a release never ships a tool
+      # that cannot even start.
+      - name: Field check (read-only) on this runner
+        shell: pwsh
+        run: |
+          cargo build --release -p peaktweaks-field-check
+          $out = Join-Path $env:RUNNER_TEMP 'field-check'
+          & target\release\peaktweaks-field-check.exe --out $out --nvml-seconds 2
+          if ($LASTEXITCODE -ne 0) { throw "field check exited with $LASTEXITCODE" }
+          $r = Get-Content (Join-Path $out 'report.json') -Raw | ConvertFrom-Json
+          foreach ($p in $r.PSObject.Properties) {
+            if ($null -ne $p.Value.ok) { Write-Host ("{0,-24} ok={1} {2}" -f $p.Name, $p.Value.ok, $p.Value.error) }
+          }
+          if (-not $r.audit.ok) { throw "the audit section failed in the field check" }
+          # Windows' own names next to the codes we hard-code (N43, N22).
+          Write-Host "--- powercfg /list (N43: GUIDs in power.rs)"
+          Write-Host $r.powercfgList.result.stdout
+          Write-Host "--- MSFT_PhysicalDisk raw rows (N22: MediaType codes in hardware.rs)"
+          Write-Host ($r.wmiPhysicalDisks.result | ConvertTo-Json -Depth 5 -Compress)
+          Write-Host "--- Get-PhysicalDisk, the same disks with Windows' names for MediaType"
+          Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, MediaType, BusType | Format-Table -AutoSize | Out-String | Write-Host
+          Copy-Item (Join-Path $out 'report.json') field-check-report.json
+
+      # The real app, end to end: release exe, its WebView2 window, the real engine,
+      # this machine. tauri-driver speaks WebDriver; msedgedriver must match the
+      # WebView2 runtime's version.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: peaktweaks-field-check
+          path: |
+            target/release/peaktweaks-field-check.exe
+            field-check-report.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: peaktweaks-exe
+          path: target/release/peaktweaks.exe
+          if-no-files-found: error
+
+      # The real app, end to end: its WebView2 window, the real engine, this
+      # machine, driven through WebDriver. WebView2 ignores the debugging flags
+      # msedgedriver passes in the environment (NOTES.md N46), so this rebuilds a
+      # test variant, AFTER the shipped exe was uploaded above, that differs in
+      # two ways: --remote-debugging-port in the window's browser arguments, and
+      # a capability without allow-revert-all so the IPC boundary check has a
+      # registered command to see refused (command_audit.rs keeps it in sync).
+      - name: Real app UI end to end (WebDriver)
+        shell: pwsh
+        run: |
+          npx tauri build --no-bundle --config e2e-tauri/tauri.e2e.conf.json
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $v = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          if (-not $v) { $v = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion }
+          Write-Host "WebView2 version: $v"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          $ok = $false
+          foreach ($host_ in 'https://msedgedriver.microsoft.com', 'https://msedgedriver.azureedge.net') {
+            try { Invoke-WebRequest "$host_/$v/edgedriver_win64.zip" -OutFile $zip -UseBasicParsing; $ok = $true; break } catch { Write-Host "no driver at $host_ ($_)" }
+          }
+          if (-not $ok) { throw "could not download msedgedriver $v" }
+          $dir = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          Expand-Archive $zip -DestinationPath $dir -Force
+          $exe = (Resolve-Path target\release\peaktweaks.exe).Path
+          $app = Start-Process $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          do { Start-Sleep -Seconds 2; try { $null = Invoke-WebRequest http://127.0.0.1:9222/json/version -UseBasicParsing; $up = $true } catch { $up = $false } } until ($up -or (Get-Date) -gt $deadline)
+          if (-not $up) { throw "the test build opened no WebView2 debugging port" }
+          $log = Join-Path $env:RUNNER_TEMP 'msedgedriver.log'
+          $drv = Start-Process (Join-Path $dir 'msedgedriver.exe') -ArgumentList '--port=4444', '--verbose', "--log-path=$log" -PassThru
+          Start-Sleep -Seconds 3
+          try {
+            $env:DEBUGGER_ADDRESS = '127.0.0.1:9222'
+            node e2e-tauri/real-app.mjs $exe
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content $log -ErrorAction SilentlyContinue | Select-String -Pattern 'ERROR|SEVERE' | Select-Object -First 30 | ForEach-Object { $_.Line } | Write-Host
+              Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
+              throw "real-app checks failed"
+            }
+          }
+          finally {
+            Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      # Agent brief Phase 3 "done when": Apply and Undo through the real UI on
+      # the real registry, then registry and journal must agree; then Home's
+      # "Apply the safe set" and "Undo these" through the real UI. A third
+      # build, with dev-stubs (open restore gate, Pro licence: a runner has no
+      # System Restore and every catalogue change is Pro). Never uploaded; the
+      # shipped exe was uploaded and copied aside above.
+      - name: Apply and Undo end to end on the real registry
+        shell: pwsh
+        run: |
+          npx tauri build --no-bundle --features dev-stubs --config e2e-tauri/tauri.e2e.conf.json
+          # The previous step's WebView2 may still hold debugging port 9222.
+          Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $exe = (Resolve-Path target\release\peaktweaks.exe).Path
+          $app = Start-Process $exe -PassThru
+          $deadline = (Get-Date).AddSeconds(60)
+          do { Start-Sleep -Seconds 2; try { $null = Invoke-WebRequest http://127.0.0.1:9222/json/version -UseBasicParsing; $up = $true } catch { $up = $false } } until ($up -or (Get-Date) -gt $deadline)
+          if (-not $up) { throw "the dev-stubs test build opened no WebView2 debugging port" }
+          $drv = Start-Process (Join-Path $env:RUNNER_TEMP 'edgedriver\msedgedriver.exe') -ArgumentList '--port=4444' -PassThru
+          Start-Sleep -Seconds 3
+          try {
+            $env:DEBUGGER_ADDRESS = '127.0.0.1:9222'
+            node e2e-tauri/apply-undo.mjs
+            if ($LASTEXITCODE -ne 0) {
+              Get-Content (Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log') -ErrorAction SilentlyContinue | Write-Host
+              throw "apply/undo checks failed"
+            }
+          }
+          finally {
+            Stop-Process -Id $drv.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      # The tester build Kegan runs on his own PC (docs/TEST-ON-YOUR-PC.md): the
+      # release configuration plus the `tester` feature (every plan unlocked;
+      # the real restore gate, journal and allowlists unchanged; labelled in the
+      # UI). Built last so it cannot replace the exes the steps above test, then
+      # launched once to show the engine starts.
+      - name: Tester build for a real PC
+        shell: pwsh
+        run: |
+          npx tauri build --no-bundle --features tester
+          $out = Join-Path $env:RUNNER_TEMP 'tester'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $exe = Join-Path $out 'peaktweaks-tester.exe'
+          Copy-Item target\release\peaktweaks.exe $exe
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          if (-not $text.Contains('requireAdministrator')) { throw "the tester exe does not ask for admin" }
+          $startupLog = Join-Path $env:LOCALAPPDATA 'PeakTweaks\startup-error.log'
+          $before = if (Test-Path $startupLog) { (Get-Item $startupLog).Length } else { 0 }
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 20
+          $after = if (Test-Path $startupLog) { (Get-Item $startupLog).Length } else { 0 }
+          if ($after -ne $before) { Get-Content $startupLog | Write-Host; throw "the tester build's engine failed to start" }
+          if ($p.HasExited) { throw "peaktweaks-tester.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "tester build started and ran for 20 s: $exe"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: peaktweaks-tester-exe
+          path: ${{ runner.temp }}/tester/peaktweaks-tester.exe
+          if-no-files-found: error
+
+      # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
+      # Windows' own connection audit log, a positive control, then 150 s of the
+      # shipped exe and every process it starts. Fails on any network connection
+      # by peaktweaks.exe; reports WebView2's own (NOTES.md N40). Last, so its
+      # report is at the end of the log.
+      - name: The app opens no network connections
+        shell: pwsh
+        run: ./scripts/check-no-outbound.ps1 -Exe (Join-Path $env:RUNNER_TEMP 'shipped\peaktweaks.exe') -Seconds 150
+
+  # Fast cross-OS check: the engine's journal and transaction logic runs against
+  # the in-memory registry, so it is tested on Linux too.
+  engine-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (engine only)
+        run: cargo test -p peaktweaks-engine
+      # The tester build's licence (docs/TEST-ON-YOUR-PC.md) only unlocks plans.
+      - name: cargo test (engine, tester feature)
+        run: cargo test -p peaktweaks-engine --features tester tester
+      # Plan 6.4: the default (Starter) build has no networking crate.
+      - name: No networking crates in the default build
+        run: ./scripts/check-no-network-deps.sh
+
+      - name: Generated TypeScript is up to date
+        run: |
+          if [ -n "$(git status --porcelain -- src/generated)" ]; then
+            git status --porcelain -- src/generated
+            git diff -- src/generated
+            echo "src/generated is stale" >&2
+            exit 1
+          fi
+
+  # The UI: types, unit and component tests, copy lint, and a browser smoke test
+  # with an accessibility scan against the SAMPLE build (plan section 7).
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Types
+        run: npm run typecheck
+      - name: Unit and component tests
+        run: npm test
+      - name: UI copy makes no efficacy claims
+        run: |
+          npm run test:scripts
+          npm run lint:copy
+      - name: Release build contains no SAMPLE data
+        run: |
+          npx vite build
+          if grep -l "Sample setting" dist/assets/*.js; then echo "the SAMPLE mock leaked into the release bundle" >&2; exit 1; fi
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Browser smoke test and accessibility scan
+        run: npm run e2e
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results

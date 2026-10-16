@@ -4003,6 +4003,45 @@ mod power_tools {
         assert_eq!(h.sys.get(&ours()), SysState::Absent);
     }
 
+    fn idle_item() -> SysItem {
+        SysItem::PowerSetting {
+            scheme: PEAKTWEAKS.into(),
+            subgroup: "54533251-82be-4824-96c1-47b60b740d00".into(),
+            setting: "5d76a2ca-e8c0-402f-a133-2158492d58ad".into(),
+            ac: true,
+        }
+    }
+
+    #[test]
+    fn processor_idle_needs_the_peaktweaks_plan_first() {
+        let mut h = pc(PLAN_SETTINGS.len());
+        assert!(matches!(status(&h, IDLE_ID), TweakState::Blocked { .. }));
+        assert!(h.engine.apply(IDLE_ID).is_err());
+        assert_eq!(h.sys.get(&idle_item()), SysState::Absent);
+    }
+
+    #[test]
+    fn processor_idle_turns_off_on_the_plan_and_undo_puts_it_back() {
+        let mut h = pc(PLAN_SETTINGS.len());
+        h.engine.apply(PLAN_ID).unwrap();
+        h.sys.set(&idle_item(), SysState::Dword { value: 0 });
+        assert_eq!(status(&h, IDLE_ID), TweakState::Default);
+
+        h.engine.apply(IDLE_ID).unwrap();
+        assert_eq!(h.sys.get(&idle_item()), SysState::Dword { value: 1 });
+        assert_eq!(status(&h, IDLE_ID), TweakState::Applied);
+
+        h.engine.revert(IDLE_ID).unwrap();
+        assert_eq!(h.sys.get(&idle_item()), SysState::Dword { value: 0 });
+        assert_eq!(status(&h, IDLE_ID), TweakState::Default);
+
+        // Undoing the plan deletes the copy, idle setting and all.
+        h.engine.apply(IDLE_ID).unwrap();
+        h.engine.revert(PLAN_ID).unwrap();
+        assert_eq!(h.sys.get(&ours()), SysState::Absent);
+        assert!(matches!(status(&h, IDLE_ID), TweakState::Blocked { .. }));
+    }
+
     #[test]
     fn hibernation_is_turned_off_and_undo_turns_it_back_on() {
         let mut h = pc(0);

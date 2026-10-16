@@ -39,7 +39,10 @@ use crate::error::{EngineError, Result};
 use crate::power::PEAKTWEAKS;
 use crate::system::{SysItem, SysState};
 use crate::transaction::Transaction;
-use crate::types::{ExecutionContext, Impact, RegRoot, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState};
+use crate::types::{
+    BlockedCode, BlockedReason, ExecutionContext, Impact, RegRoot, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata,
+    TweakState,
+};
 
 const SETTINGS_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Power\PowerSettings";
 
@@ -185,6 +188,101 @@ impl Tweak for PowerPlan {
     }
 }
 
+/// Processor idle states (the C-states a core drops into between bursts of
+/// work), turned off on the PeakTweaks power plan, plugged in only. Waking
+/// from a deep idle state takes time a game can feel as uneven frame times,
+/// so tuners switch idle off on a desktop and take the heat instead; that is
+/// the trade this tool's card states plainly. It lives on PeakTweaks' own
+/// plan copy, so Undo of the plan removes it too, and battery behaviour is
+/// never touched. VERIFY: the setting GUID and that 1 turns idle off
+/// (Microsoft's power-settings reference as recalled; NOTES N132).
+const IDLE_DISABLE: &str = "5d76a2ca-e8c0-402f-a133-2158492d58ad";
+
+fn idle_setting() -> SysItem {
+    SysItem::PowerSetting {
+        scheme: PEAKTWEAKS.to_owned(),
+        subgroup: SUB_PROCESSOR.to_owned(),
+        setting: IDLE_DISABLE.to_owned(),
+        ac: true,
+    }
+}
+
+pub struct ProcessorIdle;
+
+pub const IDLE_ID: &str = "power.idle";
+
+fn plan_first() -> BlockedReason {
+    BlockedReason::new(
+        BlockedCode::ConflictingTweak,
+        "Make the PeakTweaks power plan first (Tools > Power), then this setting can be added to it.",
+    )
+}
+
+impl Tweak for ProcessorIdle {
+    fn id(&self) -> &str {
+        IDLE_ID
+    }
+
+    fn metadata(&self) -> TweakMetadata {
+        TweakMetadata {
+            id: Cow::Borrowed(IDLE_ID),
+            name: Cow::Borrowed("Processor idle states"),
+            summary: Cow::Borrowed(
+                "Stops the processor dropping into its idle states while plugged in, on the PeakTweaks power \
+                 plan. A core coming back from a deep idle state is not instant; with idle off it stays ready \
+                 instead. Undo sets the plan back to letting the processor idle.",
+            ),
+            target: Cow::Owned(format!(
+                "Power plan {PEAKTWEAKS}, plugged in: processor idle disable ({IDLE_DISABLE}) = 1"
+            )),
+            category: Cow::Borrowed("power"),
+            tier: Tier::Pro,
+            safety: SafetyTier::Extreme,
+            impact: Impact::Moderate,
+            tradeoff: Some(Cow::Borrowed(
+                "The processor runs hotter and uses more electricity at all times while plugged in, and fans may run more.",
+            )),
+            requires_reboot: false,
+        }
+    }
+
+    fn execution_context(&self) -> ExecutionContext {
+        ExecutionContext::Service
+    }
+
+    fn touches(&self) -> Vec<RegTarget> {
+        Vec::new()
+    }
+
+    fn system_targets(&self) -> Vec<SysItem> {
+        vec![idle_setting()]
+    }
+
+    fn read_state(&self, res: &ContextResolver, has_journal_entry: bool) -> Result<TweakState> {
+        if matches!(res.read_system(&scheme())?, SysState::Absent) {
+            return Ok(TweakState::Blocked { reason: plan_first() });
+        }
+        Ok(match res.read_system(&idle_setting())? {
+            SysState::Dword { value: 1 } if has_journal_entry => TweakState::Applied,
+            SysState::Dword { value: 1 } => TweakState::Foreign,
+            SysState::Dword { .. } => TweakState::Default,
+            _ => TweakState::Blocked {
+                reason: BlockedReason::new(
+                    BlockedCode::HardwareUnsupported,
+                    "Windows on this PC has no processor idle setting to change.",
+                ),
+            },
+        })
+    }
+
+    fn apply(&self, tx: &mut Transaction) -> Result<()> {
+        if matches!(tx.resolver().read_system(&scheme())?, SysState::Absent) {
+            return Err(EngineError::Blocked { reason: plan_first() });
+        }
+        tx.set_system(idle_setting(), SysState::Dword { value: 1 })
+    }
+}
+
 pub struct Hibernation;
 
 pub const HIBERNATION_ID: &str = "power.hibernation";
@@ -244,5 +342,5 @@ impl Tweak for Hibernation {
 }
 
 pub fn all() -> Vec<Box<dyn Tweak>> {
-    vec![Box::new(PowerPlan), Box::new(Hibernation)]
+    vec![Box::new(PowerPlan), Box::new(ProcessorIdle), Box::new(Hibernation)]
 }

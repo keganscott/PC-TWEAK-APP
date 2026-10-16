@@ -343,6 +343,14 @@ function DevicesSection({ gateOpen }: { gateOpen: boolean | null }) {
           {list.devices.map((d) => (
             <li key={d.tweak.id}>
               <TweakCard tweak={d.tweak} gateOpen={gateOpen} />
+              <p className="mt-1.5 px-1 text-xs text-ink-faint">
+                Interrupts:{" "}
+                {d.interrupts.state === "yes"
+                  ? d.interrupts.value
+                  : d.interrupts.state === "unknown"
+                    ? `not read (${d.interrupts.reason})`
+                    : "not read"}
+              </p>
             </li>
           ))}
         </ul>

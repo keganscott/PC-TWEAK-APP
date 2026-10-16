@@ -1966,7 +1966,11 @@ export const msiDevices = {
         },
         "blocked": null
       },
-      "class": "display"
+      "class": "display",
+      "interrupts": {
+        "state": "yes",
+        "value": "Windows chooses"
+      }
     },
     {
       "tweak": {
@@ -1986,7 +1990,11 @@ export const msiDevices = {
         },
         "blocked": null
       },
-      "class": "net"
+      "class": "net",
+      "interrupts": {
+        "state": "yes",
+        "value": "Windows chooses"
+      }
     }
   ],
   "problem": null

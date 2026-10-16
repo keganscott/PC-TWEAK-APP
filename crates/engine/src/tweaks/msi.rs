@@ -32,7 +32,48 @@ use crate::types::{ExecutionContext, Impact, RegRoot, RegTarget, SafetyTier, Tie
 pub const ID_PREFIX: &str = "msi.";
 const ENUM_PCI: &str = r"SYSTEM\CurrentControlSet\Enum\PCI";
 const MSI_KEY: &str = r"Device Parameters\Interrupt Management\MessageSignaledInterruptProperties";
+const AFFINITY_KEY: &str = r"Device Parameters\Interrupt Management\Affinity Policy";
 pub const VALUE: &str = "MSISupported";
+
+/// Which processors a device's interrupts go to, in plain words, from its
+/// `Affinity Policy` key (NOTES N138): nothing set means Windows chooses.
+/// The policy number is Windows' own (`DevicePolicy`); the processor list
+/// is the first eight bytes of `AssignmentSetOverride`, a bit per logical
+/// processor. What each policy number makes Windows do is VERIFY (N138),
+/// so the number is shown, not named.
+pub fn policy_text(policy: Option<u32>, mask: Option<&[u8]>) -> String {
+    match policy {
+        None => "Windows chooses".to_string(),
+        Some(p) => match mask {
+            Some(m) => format!("Policy {p} · processors {}", processor_list(m)),
+            None => format!("Policy {p}"),
+        },
+    }
+}
+
+/// The processors a mask names: `0, 1, 4`, the rest counted when many.
+fn processor_list(mask: &[u8]) -> String {
+    let mut named: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for (byte, &b) in mask.iter().enumerate().take(8) {
+        for bit in 0..8 {
+            if b & (1 << bit) != 0 {
+                total += 1;
+                if named.len() < 8 {
+                    named.push((byte * 8 + bit).to_string());
+                }
+            }
+        }
+    }
+    if total == 0 {
+        return "none named".to_string();
+    }
+    if total > named.len() {
+        format!("{} and {} more", named.join(", "), total - named.len())
+    } else {
+        named.join(", ")
+    }
+}
 
 /// Letters, digits and `& _ - .` only: nothing that could step out of the
 /// device's own key.
@@ -110,6 +151,23 @@ impl MsiMode {
     fn msi_key(&self) -> String {
         format!(r"{}\{MSI_KEY}", self.device_key())
     }
+
+    /// The device's interrupt policy as `policy_text` words (reads only).
+    pub fn interrupt_reading(&self, res: &ContextResolver) -> crate::probe::Probe<String> {
+        let key = format!(r"{}\{AFFINITY_KEY}", self.device_key());
+        let read = (|| -> Result<String> {
+            let policy = res.read_dword(RegRoot::LocalMachine, &key, "DevicePolicy")?;
+            let mask = res
+                .read_raw(RegRoot::LocalMachine, &key, "AssignmentSetOverride")?
+                .filter(|v| v.vtype == 3)
+                .map(|v| v.bytes);
+            Ok(policy_text(policy, mask.as_deref()))
+        })();
+        match read {
+            Ok(text) => crate::probe::Probe::yes(text),
+            Err(e) => crate::probe::Probe::unknown(e.to_string()),
+        }
+    }
 }
 
 impl Tweak for MsiMode {
@@ -177,6 +235,39 @@ impl Tweak for MsiMode {
 pub struct MsiDevice {
     pub tweak: TweakView,
     pub class: DeviceClass,
+    /// Which processors its interrupts go to, in words (`policy_text`);
+    /// Unknown with the reason when the key could not be read.
+    pub interrupts: crate::probe::Probe<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_policy_set_reads_as_windows_chooses() {
+        assert_eq!(policy_text(None, None), "Windows chooses");
+        assert_eq!(policy_text(None, Some(&[0xFF])), "Windows chooses");
+    }
+
+    #[test]
+    fn a_policy_with_a_mask_names_the_processors() {
+        // Bits 0, 1 and 9 set.
+        assert_eq!(
+            policy_text(Some(4), Some(&[0b11, 0b10])),
+            "Policy 4 · processors 0, 1, 9"
+        );
+        assert_eq!(policy_text(Some(4), Some(&[0])), "Policy 4 · processors none named");
+        assert_eq!(policy_text(Some(3), None), "Policy 3");
+    }
+
+    #[test]
+    fn a_long_mask_counts_the_rest() {
+        assert_eq!(
+            policy_text(Some(1), Some(&[0xFF, 0xFF])),
+            "Policy 1 · processors 0, 1, 2, 3, 4, 5, 6, 7 and 8 more"
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize, TS)]

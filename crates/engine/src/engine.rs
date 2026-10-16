@@ -559,6 +559,7 @@ impl Engine {
         let mut devices: Vec<MsiDevice> = modes
             .iter()
             .map(|(m, class)| MsiDevice {
+                interrupts: m.interrupt_reading(&self.resolver),
                 tweak: self.view_of(m),
                 class: *class,
             })

@@ -19,6 +19,7 @@ export function GameBundleSection({ gameId, name }: { gameId: string; name: stri
   const plan = useMemo(() => planGameBundle(gameId, tweaks), [gameId, tweaks]);
   const known = plan.toApply.length + plan.inPlace.length + plan.notHere.length;
   if (known === 0) return null;
+  const qos = tweaks.find((t) => t.id === "network.qos.games");
   const done = plan.toApply.length === 0 && plan.inPlace.length > 0;
   return (
     <div className="mt-4 border-t border-line pt-3">
@@ -43,6 +44,40 @@ export function GameBundleSection({ gameId, name }: { gameId: string; name: stri
           : `Review ${plan.toApply.length} ${plan.toApply.length === 1 ? "change" : "changes"}`}
       </Button>
       {open && <GameBundleReview gameId={gameId} name={name} gateOpen={gateOpen} onClose={() => setOpen(false)} />}
+      {qos && <QosRow qosId={qos.id} gateOpen={gateOpen} />}
+    </div>
+  );
+}
+
+/**
+ * The shared game-traffic priority beside the setup: one Windows rule per
+ * game found on this PC. It covers every game at once, so it keeps its own
+ * switch here (and in Tools > Network) instead of joining the review.
+ */
+function QosRow({ qosId, gateOpen }: { qosId: string; gateOpen: boolean | null }) {
+  const qos = useStore((s) => s.tweaks.find((t) => t.id === qosId));
+  const op = useStore((s) => s.tweakOps[qosId]);
+  const { applyTweak, revertTweak } = useActions();
+  if (!qos) return null;
+  const s = qos.state.status;
+  const on = s === "applied" || s === "foreign";
+  const blocked = Boolean(qos.blocked) || s === "blocked" || s === "unknown";
+  const running = op?.status === "running";
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <span className="text-sm">
+        Game traffic priority:{" "}
+        <span className="font-bold">{blocked ? "Not offered yet" : on ? "On" : "Off"}</span>
+      </span>
+      <Button
+        variant="secondary"
+        busy={running}
+        disabled={blocked || gateOpen === false || running}
+        onClick={() => void (on ? revertTweak(qosId) : applyTweak(qosId))}
+      >
+        {on ? "Undo" : "Apply"}
+      </Button>
+      <span className="text-xs text-ink-faint">One Windows rule per game found here; also in Tools.</span>
     </div>
   );
 }

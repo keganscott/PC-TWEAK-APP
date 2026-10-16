@@ -88,7 +88,7 @@ export interface PresetPlan {
  * priority, fullscreen optimizations, the high-performance graphics chip,
  * and the game's own V-Sync setting where PeakTweaks has one. The shared
  * game-traffic priority (`network.qos.games`) covers every game at once, so
- * it stays in Tools, not in a single game's setup.
+ * it is not in the review; the Games card shows it beside the setup instead.
  */
 export function gameToolIds(gameId: string): string[] {
   return [

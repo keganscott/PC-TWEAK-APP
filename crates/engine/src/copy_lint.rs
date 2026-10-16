@@ -1,4 +1,4 @@
-//! Test support: one definition of "copy that promises a result", shared with
+//! One definition of "copy that promises a result", shared with
 //! the UI copy lint (`scripts/check-ui-copy.mjs`) through
 //! `scripts/claim-words.json`, so the engine and the UI cannot drift apart.
 
@@ -51,6 +51,7 @@ fn matches_at_word_start(haystack: &str, word: &str) -> bool {
     })
 }
 
+#[cfg(test)]
 /// Double-quoted string literals on lines that are not `//` comments. Good
 /// enough for this crate's copy, which never puts quotes inside a literal.
 pub fn string_literals(src: &str) -> Vec<String> {

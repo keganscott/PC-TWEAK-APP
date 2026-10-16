@@ -23,6 +23,18 @@ cpuMhz: Probe<number>,
  */
 cpuCores: Probe<Array<number>>, 
 /**
+ * Share of processor time spent in deferred procedure calls over the
+ * same window, all processors, to a tenth of a percent. Driver work
+ * queued by interrupts runs here; a share that stays high is a driver
+ * asking for attention (NOTES N136).
+ */
+cpuDpcPercent: Probe<number>, 
+/**
+ * Share of processor time spent answering hardware interrupts over the
+ * same window, all processors, to a tenth of a percent.
+ */
+cpuInterruptPercent: Probe<number>, 
+/**
  * Windows' ACPI thermal zones (`Thermal Zone Information`). Set by the
  * motherboard's firmware; on many PCs none is the processor itself.
  */

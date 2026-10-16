@@ -2933,7 +2933,7 @@ mod adapter_tools {
     use crate::registry::Hive;
     use crate::system::{NetAdapter, SideEffect};
     use crate::tweaks::adapter_props::{
-        AdapterSetting, ENERGY_EFFICIENT_ETHERNET, FLOW_CONTROL, INTERRUPT_MODERATION, POWER_SAVING,
+        AdapterSetting, ENERGY_EFFICIENT_ETHERNET, FLOW_CONTROL, INTERRUPT_MODERATION, POWER_SAVING, RECEIVE_COALESCING,
     };
     use crate::types::{BlockedCode, RawValue, RegRoot};
 
@@ -3063,6 +3063,45 @@ mod adapter_tools {
         assert_eq!(h.fake.snapshot(), before);
         assert_eq!(h.sys.effects(), [restart(CABLE), restart(CABLE)]);
         assert_eq!(state(&h, &INTERRUPT_MODERATION), TweakState::Default);
+    }
+
+    #[test]
+    fn receive_coalescing_turns_off_both_families_and_undo_puts_them_back() {
+        // The cable adapter's driver has both keywords, on; Wi-Fi has only
+        // the IPv4 one, already off; Bluetooth has neither.
+        let h = Harness::new(vec![Box::new(RECEIVE_COALESCING)]);
+        h.sys.set_adapters(vec![
+            adapter(CABLE, "Ethernet", CABLE_PNP),
+            adapter(WIFI, "Wi-Fi", WIFI_PNP),
+            adapter(BLUETOOTH, "Bluetooth Network Connection", BT_PNP),
+        ]);
+        install(&h, CABLE_PNP, "0001", CABLE);
+        install(&h, WIFI_PNP, "0002", WIFI);
+        install(&h, BT_PNP, "0003", BLUETOOTH);
+        offer(&h, "0001", "*RscIPv4", &["0", "1"], "1");
+        store(&h, "0001", "*RscIPv4", RawValue::sz("1"));
+        offer(&h, "0001", "*RscIPv6", &["0", "1"], "1");
+        store(&h, "0001", "*RscIPv6", RawValue::sz("1"));
+        offer(&h, "0002", "*RscIPv4", &["0", "1"], "1");
+        store(&h, "0002", "*RscIPv4", RawValue::sz("0"));
+        let before = h.fake.snapshot();
+        let mut h = h;
+        assert_eq!(state(&h, &RECEIVE_COALESCING), TweakState::Default);
+
+        h.engine.apply(RECEIVE_COALESCING.id).unwrap();
+        assert_eq!(stored(&h, "0001", "*RscIPv4"), Some(RawValue::sz("0")));
+        assert_eq!(stored(&h, "0001", "*RscIPv6"), Some(RawValue::sz("0")));
+        assert_eq!(
+            stored(&h, "0002", "*RscIPv6"),
+            None,
+            "Wi-Fi's driver has no IPv6 keyword"
+        );
+        assert_eq!(h.sys.effects(), [restart(CABLE)], "Wi-Fi was already off");
+        assert_eq!(state(&h, &RECEIVE_COALESCING), TweakState::Applied);
+
+        h.engine.revert(RECEIVE_COALESCING.id).unwrap();
+        assert_eq!(h.fake.snapshot(), before);
+        assert_eq!(state(&h, &RECEIVE_COALESCING), TweakState::Default);
     }
 
     #[test]

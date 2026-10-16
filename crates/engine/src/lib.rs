@@ -36,6 +36,7 @@ pub mod power;
 pub mod probe;
 pub mod proc;
 pub mod profile;
+pub mod profile_pack;
 pub mod proof;
 pub mod reg_export;
 pub mod registry;
@@ -45,6 +46,7 @@ pub mod secure_dir;
 pub mod security;
 pub mod settings;
 pub mod settings_file;
+pub mod signed;
 pub mod startup;
 pub mod support;
 pub mod sysdirs;
@@ -73,7 +75,6 @@ pub mod system_win;
 
 #[cfg(test)]
 mod contract;
-#[cfg(test)]
 mod copy_lint;
 #[cfg(test)]
 mod model_tests;

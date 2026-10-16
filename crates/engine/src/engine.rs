@@ -1049,6 +1049,11 @@ impl Engine {
         let dir = super::secure_dir::TrustedDir::ensure_program_data()?;
         // Before anything reads or writes the journal: one engine at a time.
         let instance = crate::instance::InstanceLock::acquire(&dir)?;
+        // Signed profile packs in the protected folder (none load until this
+        // build trusts a key, NOTES N138).
+        let mut tweaks = tweaks;
+        let packs = crate::profile_pack::offered(&dir.path().join("packs"), &tweaks);
+        tweaks.extend(packs.tools.into_iter().map(|t| Box::new(t) as Box<dyn Tweak>));
         let resolver = ContextResolver::detect(elevated)?;
         let journal = Journal::open(&dir)?;
         let proof = Arc::new(build_proof_service(&dir));

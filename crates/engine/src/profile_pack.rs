@@ -15,9 +15,9 @@
 //!
 //! Packs are read from `ProgramData\PeakTweaks\packs`, which only
 //! administrators can write (`secure_dir`). This build trusts no key yet
-//! (`PACK_KEYS` is empty, NOTES N134), so no pack loads outside tests. Not
+//! (`PACK_KEYS` is empty, NOTES N138), so no pack loads outside tests. Not
 //! built: the signed updater that fetches packs, and "unverified for this
-//! version", which needs the installed game's build number (N134).
+//! version", which needs the installed game's build number (N138).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -31,7 +31,7 @@ use crate::types::SafetyTier;
 pub const PURPOSE: &str = "profile-pack";
 
 /// Public keys whose packs this build loads. Empty until a production key is
-/// made and its private half kept off this public repository (NOTES N134).
+/// made and its private half kept off this public repository (NOTES N138).
 pub const PACK_KEYS: &[TrustedKey] = &[];
 
 /// Settings files may only be under these folders of the user's profile.

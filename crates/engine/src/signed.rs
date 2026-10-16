@@ -12,7 +12,7 @@
 //! signature made for one purpose (a licence) never passes as another (a
 //! pack). Verification is strict (`verify_strict`: no small-order keys, no
 //! malleable signatures). Only the public half of a key is ever in this
-//! repository; the private half stays with whoever signs (NOTES N134).
+//! repository; the private half stays with whoever signs (NOTES N138).
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;

@@ -1,4 +1,4 @@
-//! Sign a profile pack (`profile_pack.rs`, NOTES N134).
+//! Sign a profile pack (`profile_pack.rs`, NOTES N138).
 //!
 //! ```text
 //! cargo run -p peaktweaks-engine --example sign_pack -- <seed file> <key id> <pack.json> <out.ptpack>

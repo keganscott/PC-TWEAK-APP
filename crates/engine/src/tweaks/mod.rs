@@ -52,6 +52,9 @@ pub fn catalogue() -> Vec<Box<dyn Tweak>> {
     for t in gpu_pref::HighPerformanceGpu::offered() {
         all.push(Box::new(t));
     }
+    for t in game_ini::offered() {
+        all.push(Box::new(t));
+    }
     all
 }
 

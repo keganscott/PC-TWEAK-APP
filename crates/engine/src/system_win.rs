@@ -1747,6 +1747,116 @@ mod tests {
         assert!(!tried.is_empty(), "no system tool could be tried here");
     }
 
+    /// Game settings files (catalogue H30, NOTES N55) in this user's real
+    /// profile folder, through the engine: for each game settings tool, a
+    /// sample settings file is put where the game keeps its own (only where
+    /// that folder does not exist yet, so a real game's file is never
+    /// touched), the tool is applied (exactly its line must change) and
+    /// undone (the file must be byte for byte as before), and the folders the
+    /// test made are removed. The anti-cheat gate is lifted for the test only.
+    /// Run only with PEAKTWEAKS_REAL_SYSTEM_CHANGES=1.
+    #[test]
+    fn game_settings_files_change_and_come_back_in_this_users_profile() {
+        use crate::tweaks::game_ini;
+        use crate::types::TweakState;
+
+        if std::env::var("PEAKTWEAKS_REAL_SYSTEM_CHANGES").as_deref() != Ok("1") {
+            println!("SKIPPED: set PEAKTWEAKS_REAL_SYSTEM_CHANGES=1 to write files in this user's profile folder");
+            return;
+        }
+        // Each tool, a sample file, and the line it must change: (from, to).
+        let samples: &[(&str, &str, (&str, &str))] = &[
+            (
+                "game.fortnite.vsync",
+                "[/Script/FortniteGame.FortGameUserSettings]\r\nbUseVSync=True\r\nFrameRateLimit=0.000000\r\n",
+                ("bUseVSync=True", "bUseVSync=False"),
+            ),
+            (
+                "game.apex.vsync",
+                "\"VideoConfig\"\r\n{\r\n\t\"setting.mat_vsync_mode\"\t\t\"1\"\r\n\t\"setting.defaultres\"\t\t\"1920\"\r\n}\r\n",
+                (
+                    "\"setting.mat_vsync_mode\"\t\t\"1\"",
+                    "\"setting.mat_vsync_mode\"\t\t\"0\"",
+                ),
+            ),
+        ];
+        let mut tried = 0;
+        for (id, sample, line) in samples {
+            let mut tool = game_ini::all()
+                .into_iter()
+                .find(|t| t.id == *id)
+                .expect("a game settings tool");
+            tool.cleared = true;
+            let declared = tool.file;
+            let dir = tempfile::tempdir().unwrap();
+            let (res, mut engine) = real_engine(dir.path(), vec![Box::new(tool)]);
+            let path = std::path::PathBuf::from(res.profile_path(declared).unwrap());
+            let home = std::env::var("USERPROFILE").unwrap();
+            println!(
+                "{id}: profile folder from ProfileList {}, USERPROFILE {home}",
+                res.user_profile_dir().unwrap()
+            );
+            assert!(path.starts_with(&home), "{} is not under {home}", path.display());
+
+            // The highest folder on the way that does not exist yet: the test
+            // makes it and removes it. None: the game's folder is here, so
+            // this PC has the game and the test leaves it alone.
+            let mut made = None;
+            let mut p = path.parent().unwrap();
+            while !p.exists() {
+                made = Some(p.to_path_buf());
+                p = p.parent().unwrap();
+            }
+            let Some(made) = made else {
+                println!(
+                    "{id}: skipped, {} already exists here",
+                    path.parent().unwrap().display()
+                );
+                continue;
+            };
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, sample).unwrap();
+
+            let state = |engine: &crate::engine::Engine| {
+                engine
+                    .list()
+                    .unwrap()
+                    .into_iter()
+                    .find(|v| v.metadata.id == *id)
+                    .unwrap()
+                    .state
+            };
+            let result = (|| -> std::result::Result<(), String> {
+                if state(&engine) != TweakState::Default {
+                    return Err(format!("read {:?} before Apply", state(&engine)));
+                }
+                engine.apply(id).map_err(|e| format!("apply: {e}"))?;
+                let after = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+                println!("{id}: {} after Apply: {after:?}", path.display());
+                if after != sample.replace(line.0, line.1) {
+                    return Err(format!("file after Apply: {after:?}"));
+                }
+                if state(&engine) != TweakState::Applied {
+                    return Err(format!("read {:?} after Apply", state(&engine)));
+                }
+                engine.revert(id).map_err(|e| format!("undo: {e}"))?;
+                if std::fs::read(&path).unwrap() != sample.as_bytes() {
+                    return Err("file not as before after Undo".into());
+                }
+                Ok(())
+            })();
+            std::fs::remove_dir_all(&made).unwrap();
+            result.unwrap_or_else(|e| panic!("{id}: {e}"));
+            println!("{id}: applied and undone, the file read back byte for byte");
+            tried += 1;
+        }
+        println!(
+            "{tried} of {} game settings tools applied and undone here",
+            samples.len()
+        );
+        assert!(tried > 0, "no game settings tool could be tried here");
+    }
+
     /// DNS servers (catalogue H25) on this PC, through the engine: each
     /// connected adapter's servers are read, the tool is applied (every one
     /// with IPv4 must then read 1.1.1.1, 1.0.0.1) and undone (every one must

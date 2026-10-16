@@ -280,6 +280,14 @@ jobs:
           PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
         run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 startup_apps_turn_off_and_back_on_on_this_pc
 
+      # Game settings files (catalogue H30): Fortnite's and Apex's tools apply
+      # and undo on sample files put in this runner's real profile folder,
+      # where each game keeps its own (same gate as above).
+      - name: Game settings files on this runner
+        env:
+          PEAKTWEAKS_REAL_SYSTEM_CHANGES: "1"
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 game_settings_files_change_and_come_back_in_this_users_profile
+
       # Every tool that only writes registry values, applied and undone one at
       # a time through the engine on this runner's real registry, then all
       # together with Undo all; after each undo every value it may write must

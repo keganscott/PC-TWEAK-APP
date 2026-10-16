@@ -43,7 +43,7 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | H27 | Explorer and quality-of-life (file extensions, classic context menu, web results off in Start, wallpaper quality 100) | `Explorer\Advanced`, `CLSID` override, `Search`, `Desktop\JPEGImportQuality` | ValueTweak |
 | H28 | Boost-Ups: junk cleaner (temp, Windows Update cache, thumbnail and DirectX shader caches, crash dumps) | File deletion | Cleanup action: shows sizes, asks once, cannot be undone (says so), journalled as an action |
 | H29 | Boost-Ups: drive optimisation | Windows' own `defrag /O` (TRIM on SSD) | Runs Windows' tool; nothing to undo |
-| H30 | Per-game "pro settings" (Fortnite, Valorant, CS2, Apex, Minecraft) | The game's own settings file | File undo type (backup of the whole file); `ini.rs` exists (N55) |
+| H30 | Per-game "pro settings" (Fortnite, Valorant, CS2, Apex, Minecraft) | The game's own settings file | File undo type (backup of the whole file); built for Fortnite and Apex (V-Sync off, `ini.rs`, `vdf.rs`, N55), behind the anti-cheat gate; ARC Raiders, CS2, Valorant not built (N128) |
 | H31 | Game process priority | `Image File Execution Options\<game exe>\PerfOptions` | Generalise the Fortnite tweak to every installed known game |
 
 ## ExitLag

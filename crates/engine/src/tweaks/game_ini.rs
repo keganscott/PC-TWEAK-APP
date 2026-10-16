@@ -1,8 +1,9 @@
 //! Phase 6 (plan section 8): a game's own settings, changed in the file the
 //! game saves them to, the same lines its settings menu writes.
 //!
-//! One tool is a few `Key=Value` lines in one INI file under the signed-in
-//! user's profile folder. The file is read and replaced only through held
+//! One tool is a few lines in one settings file under the signed-in user's
+//! profile folder: `Key=Value` lines of an INI file (Unreal Engine games), or
+//! `"key" "value"` lines of a Valve KeyValues file (`vdf.rs`; Apex Legends). The file is read and replaced only through held
 //! folders (`settings_file.rs`, DECISIONS 15.25), every other byte is kept
 //! (`ini.rs`), and the whole file is copied and journalled before the change,
 //! so Undo puts back exactly what was there. A game that has not saved its
@@ -22,12 +23,24 @@ use crate::types::{
     BlockedCode, BlockedReason, ExecutionContext, Impact, PredicateOutcome, RegTarget, SafetyTier, SystemEnv, Tier,
     Tweak, TweakMetadata, TweakState,
 };
+use crate::vdf;
 
 use super::ifeo_priority::per_game_block;
+
+/// How the settings file is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileFormat {
+    /// `[Section]` and `Key=Value` lines (`ini.rs`).
+    Ini,
+    /// One outer `"Name" { "key" "value" ... }` block (`vdf.rs`); edits'
+    /// `section` is unused and left empty.
+    KeyValues,
+}
 
 /// One line the tool sets.
 #[derive(Debug, Clone, Copy)]
 pub struct IniEdit {
+    /// The INI section; empty for a KeyValues file.
     pub section: &'static str,
     pub key: &'static str,
     pub value: &'static str,
@@ -40,11 +53,75 @@ pub struct GameIniSetting {
     pub summary: &'static str,
     /// Declared as `<profile>\...` (`system::PROFILE_PREFIX`).
     pub file: &'static str,
+    pub format: FileFormat,
     pub edits: &'static [IniEdit],
     pub safety: SafetyTier,
     pub tradeoff: Option<&'static str>,
     /// Tests only: as if the game's anti-cheat were cleared.
     pub cleared: bool,
+}
+
+/// Fortnite's settings file. Path from Epic's help article "How do I fix my
+/// settings not saving in Fortnite?" (`%localappdata%\FortniteGame\Saved\
+/// Config\WindowsClient\GameUserSettings.ini`, the same article tells
+/// players to untick Read-only on it). The section and key names are from
+/// copies of the file people have posted, not from Epic (VERIFY against a
+/// real file, NOTES N55).
+const FORTNITE_FILE: &str = r"<profile>\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini";
+const FORTNITE_SECTION: &str = "/Script/FortniteGame.FortGameUserSettings";
+
+/// Apex Legends' video settings. Path and key from PCGamingWiki and players'
+/// posted copies, not from EA or Respawn (VERIFY against a real file, NOTES
+/// N55).
+const APEX_FILE: &str = r"<profile>\Saved Games\Respawn\Apex\local\videoconfig.txt";
+
+/// The game settings tools, for each offered game (`env::KNOWN_GAMES`). Only
+/// settings the game's own menu offers, set to the value the menu writes, and
+/// only where the publisher's own advice backs the choice (V-Sync off: Epic's
+/// low-frame-rate guidance, plan section 8). Every one is behind the per-game
+/// anti-cheat gate (`per_game_block`, NOTES N75).
+pub fn offered() -> Vec<GameIniSetting> {
+    all()
+        .into_iter()
+        .filter(|t| crate::env::is_offered(t.game_id))
+        .collect()
+}
+
+pub(crate) fn all() -> Vec<GameIniSetting> {
+    vec![
+        GameIniSetting {
+            id: "game.fortnite.vsync",
+            game_id: "fortnite",
+            name: "Fortnite: V-Sync off",
+            summary: "Sets Fortnite's own V-Sync option to off in its settings file, the same line its Video menu writes. Close Fortnite first: it writes its settings back when it closes. Undo puts the whole file back as it was.",
+            file: FORTNITE_FILE,
+            format: FileFormat::Ini,
+            edits: &[IniEdit {
+                section: FORTNITE_SECTION,
+                key: "bUseVSync",
+                value: "False",
+            }],
+            safety: SafetyTier::Safe,
+            tradeoff: Some("Without V-Sync the picture can tear when the frame rate and the screen's refresh rate differ."),
+            cleared: false,
+        },
+        GameIniSetting {
+            id: "game.apex.vsync",
+            game_id: "apex",
+            name: "Apex Legends: V-Sync off",
+            summary: "Sets Apex Legends' own V-Sync option to off (0) in its video settings file. Close the game first. Undo puts the whole file back as it was.",
+            file: APEX_FILE,
+            format: FileFormat::KeyValues,
+            edits: &[IniEdit {
+                section: "",
+                key: "setting.mat_vsync_mode",
+                value: "0",
+            }],
+            safety: SafetyTier::Safe,
+            tradeoff: Some("Without V-Sync the picture can tear when the frame rate and the screen's refresh rate differ."),
+            cleared: false,
+        },
+    ]
 }
 
 /// What the file says, as far as this tool is concerned.
@@ -71,14 +148,29 @@ impl GameIniSetting {
         .with_trigger(self.game_id)
     }
 
+    fn get(&self, text: &str, e: &IniEdit) -> Result<Option<String>> {
+        match self.format {
+            FileFormat::Ini => ini::get(text, e.section, e.key),
+            FileFormat::KeyValues => vdf::get(text, e.key),
+        }
+    }
+
+    fn set(&self, text: &str, e: &IniEdit) -> Result<String> {
+        match self.format {
+            FileFormat::Ini => ini::set(text, e.section, e.key, e.value),
+            FileFormat::KeyValues => vdf::set(text, e.key, e.value),
+        }
+    }
+
     fn current(&self, res: &ContextResolver, path: &str) -> Result<Current> {
         let Some(bytes) = res.read_file(path)? else {
             return Ok(Current::NoFile);
         };
+        // Either format is text; `ini.rs` keeps its encoding and BOM.
         let ini = ini::decode(&bytes)?;
         let mut ours = true;
         for e in self.edits {
-            let now = ini::get(&ini.text, e.section, e.key)?;
+            let now = self.get(&ini.text, e)?;
             // Unreal reads True and true alike.
             ours &= now.is_some_and(|v| v.trim().eq_ignore_ascii_case(e.value));
         }
@@ -95,7 +187,10 @@ impl Tweak for GameIniSetting {
         let lines: Vec<String> = self
             .edits
             .iter()
-            .map(|e| format!("[{}] {}={}", e.section, e.key, e.value))
+            .map(|e| match self.format {
+                FileFormat::Ini => format!("[{}] {}={}", e.section, e.key, e.value),
+                FileFormat::KeyValues => format!("\"{}\" \"{}\"", e.key, e.value),
+            })
             .collect();
         TweakMetadata {
             id: self.id.into(),
@@ -161,7 +256,7 @@ impl Tweak for GameIniSetting {
             Current::File { ini, ours: false } => ini,
         };
         for e in self.edits {
-            ini.text = ini::set(&ini.text, e.section, e.key, e.value)?;
+            ini.text = self.set(&ini.text, e)?;
         }
         tx.write_file(&path, &ini::encode(&ini))
     }
@@ -183,6 +278,7 @@ mod tests {
             name: "Test game V-Sync off",
             summary: "SAMPLE",
             file: FILE,
+            format: FileFormat::Ini,
             edits: &[IniEdit {
                 section: SECTION,
                 key: "bUseVSync",
@@ -264,6 +360,80 @@ mod tests {
             .set_file(ON_DISK, b"[/Script/Game.GameUserSettings]\nbUseVSync=True\n");
         assert!(matches!(state(&h), TweakState::Unknown { .. }));
         assert!(h.engine.apply("game.ini.test").is_err());
+    }
+
+    fn cleared(mut t: GameIniSetting) -> GameIniSetting {
+        t.cleared = true;
+        t
+    }
+
+    fn by_id(id: &str) -> GameIniSetting {
+        all().into_iter().find(|t| t.id == id).unwrap()
+    }
+
+    fn state_of(h: &Harness, id: &str) -> TweakState {
+        h.engine
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.metadata.id == id)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn apex_vsync_changes_one_value_in_its_keyvalues_file_and_undo_puts_it_back() {
+        let mut h = Harness::new(vec![Box::new(cleared(by_id("game.apex.vsync")))]);
+        set_profile_dir(&h.fake, r"C:\Users\Kegan");
+        let on_disk = r"C:\Users\Kegan\Saved Games\Respawn\Apex\local\videoconfig.txt";
+        let original = "\"VideoConfig\"\r\n{\r\n\t\"setting.mat_vsync_mode\"\t\t\"1\"\r\n\t\"setting.defaultres\"\t\t\"1920\"\r\n}\r\n";
+        h.sys.set_file(on_disk, original.as_bytes());
+        assert_eq!(state_of(&h, "game.apex.vsync"), TweakState::Default);
+
+        h.engine.apply("game.apex.vsync").unwrap();
+        let after = String::from_utf8(h.sys.file(on_disk).unwrap()).unwrap();
+        assert_eq!(
+            after,
+            original.replace("\"1\"\r\n\t\"setting.defaultres", "\"0\"\r\n\t\"setting.defaultres")
+        );
+        assert_eq!(state_of(&h, "game.apex.vsync"), TweakState::Applied);
+
+        h.engine.revert("game.apex.vsync").unwrap();
+        assert_eq!(h.sys.file(on_disk).unwrap(), original.as_bytes());
+    }
+
+    #[test]
+    fn fortnite_vsync_writes_fortnites_own_line() {
+        let mut h = Harness::new(vec![Box::new(cleared(by_id("game.fortnite.vsync")))]);
+        set_profile_dir(&h.fake, r"C:\Users\Kegan");
+        let on_disk = r"C:\Users\Kegan\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini";
+        let original = "[/Script/FortniteGame.FortGameUserSettings]\r\nbUseVSync=True\r\nFrameRateLimit=0.000000\r\n";
+        h.sys.set_file(on_disk, original.as_bytes());
+        h.engine.apply("game.fortnite.vsync").unwrap();
+        assert_eq!(
+            String::from_utf8(h.sys.file(on_disk).unwrap()).unwrap(),
+            original.replace("bUseVSync=True", "bUseVSync=False")
+        );
+        h.engine.revert("game.fortnite.vsync").unwrap();
+        assert_eq!(h.sys.file(on_disk).unwrap(), original.as_bytes());
+    }
+
+    #[test]
+    fn the_game_settings_tools_stay_behind_the_anti_cheat_gate() {
+        for t in all() {
+            assert!(!t.cleared, "{}", t.id);
+            assert!(t.file.starts_with(crate::system::PROFILE_PREFIX), "{}", t.id);
+            if crate::games::anti_cheat_block(t.game_id).is_some() {
+                let env = SystemEnv::default();
+                assert!(
+                    matches!(t.evaluate_predicate(&env), PredicateOutcome::Block(r) if r.code == BlockedCode::AntiCheatEligibility),
+                    "{}",
+                    t.id
+                );
+            }
+        }
+        let ids: Vec<&str> = offered().iter().map(|t| t.id).collect();
+        assert!(ids.contains(&"game.fortnite.vsync") && ids.contains(&"game.apex.vsync"));
     }
 
     #[test]

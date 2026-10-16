@@ -289,6 +289,31 @@ Read-only unless a flag below says otherwise. Run from an elevated PowerShell.
             run_tool("powercfg.exe", &["/getactivescheme"])
         });
 
+        // N129-N132: the pro latency stack's facts on this PC, read-only:
+        // the MPO and foreground-priority values as they stand, and the
+        // PeakTweaks plan's own settings (boost mode, idle, parking) in
+        // Windows' words. The plan query fails when the plan is not there;
+        // the failure is the reading.
+        section(&mut report, "latencyStack", || {
+            let mut m = Map::new();
+            m.insert(
+                "dwm".into(),
+                reg_values(r"SOFTWARE\Microsoft\Windows\Dwm", &["OverlayTestMode"]),
+            );
+            m.insert(
+                "priorityControl".into(),
+                reg_values(
+                    r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+                    &["Win32PrioritySeparation"],
+                ),
+            );
+            m.insert(
+                "peaktweaksPlan".into(),
+                run_tool("powercfg.exe", &["/query", peaktweaks_engine::power::PEAKTWEAKS])?,
+            );
+            Ok(Value::Object(m))
+        });
+
         // N22: the raw rows behind the memory and disk readings.
         let wmi = WmiWorker::start();
         section(&mut report, "wmiPhysicalMemory", || {

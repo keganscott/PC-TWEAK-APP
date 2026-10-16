@@ -1,7 +1,7 @@
 //! Power: the PeakTweaks power plan (CATALOGUE H7) and hibernation off (H10).
 //!
 //! **Power plan.** Apply copies the active plan to a plan of PeakTweaks' own
-//! (fixed GUID `power::PEAKTWEAKS`, named "PeakTweaks"), sets four of its
+//! (fixed GUID `power::PEAKTWEAKS`, named "PeakTweaks"), sets five of its
 //! plugged-in settings, and makes it the active plan. Battery settings are
 //! not touched, so a laptop on battery behaves as before. Undo switches back
 //! to the plan that was active and deletes the copy. Copying the user's own
@@ -14,6 +14,9 @@
 //! - core parking minimum cores 100 (no cores parked; hidden in Control Panel);
 //! - USB selective suspend off;
 //! - PCI Express link state power management off.
+//! - processor performance boost mode 2, Aggressive (the processor asks for
+//!   its boost speeds without waiting; VERIFY the value list against
+//!   Microsoft's power-settings reference, NOTES N131).
 //!
 //! A setting whose definition Windows does not have (`Control\Power\
 //! PowerSettings\<subgroup>\<setting>`, absent on some editions and virtual
@@ -69,6 +72,12 @@ pub const PLAN_SETTINGS: &[(&str, &str, u32, &str)] = &[
         "ee12f906-d277-404b-b6da-e5fa1a576df5",
         0,
         "PCI Express link state power management off",
+    ),
+    (
+        SUB_PROCESSOR,
+        "be337238-0d82-4146-a960-4f3749d470c7",
+        2,
+        "processor performance boost mode aggressive",
     ),
 ];
 

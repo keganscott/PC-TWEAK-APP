@@ -1678,6 +1678,51 @@ fn the_multiplane_overlay_tool_writes_one_value_and_undo_removes_it() {
 }
 
 #[test]
+fn the_foreground_priority_tool_writes_one_value_and_undo_removes_it() {
+    use crate::registry::RegistryBackend;
+    use crate::tweaks::registry_values::FOREGROUND_QUANTUM;
+    let fake = Arc::new(FakeRegistry::new());
+    let key = r"SYSTEM\CurrentControlSet\Control\PriorityControl";
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(
+        &fake,
+        dir.path(),
+        vec![Box::new(FOREGROUND_QUANTUM)],
+        true,
+        Tier::Ultimate,
+    );
+    let state = |e: &mut crate::engine::Engine| e.list().unwrap().remove(0).state;
+    let value = |fake: &FakeRegistry| {
+        fake.read_value_for_test(Hive::LocalMachine, key, "Win32PrioritySeparation")
+            .and_then(|v| v.as_dword())
+    };
+
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), Some(38));
+    assert!(matches!(state(&mut engine), TweakState::Applied));
+    engine.revert("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), None, "undo removes the value it wrote");
+    assert!(matches!(state(&mut engine), TweakState::Default));
+
+    // Windows' own workstation default (0x24 on some builds, from memory)
+    // is not ours: it reads as not set, and Apply replaces it, backed up.
+    fake.create_key(Hive::LocalMachine, key).unwrap();
+    fake.write_value(
+        Hive::LocalMachine,
+        key,
+        "Win32PrioritySeparation",
+        &RawValue::dword(0x24),
+    )
+    .unwrap();
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), Some(38));
+    engine.revert("scheduling.foreground").unwrap();
+    assert_eq!(value(&fake), Some(0x24), "undo puts Windows' value back");
+}
+
+#[test]
 fn the_sticky_keys_tool_clears_only_the_shortcut_and_keeps_the_users_own_settings() {
     use crate::registry::RegistryBackend;
     use crate::tweaks::registry_values::ACCESSIBILITY_SHORTCUTS;

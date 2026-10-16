@@ -62,6 +62,8 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | Tool | What it changes | How PeakTweaks builds it |
 |---|---|---|
 | Multiplane overlay (MPO) off (`display.mpo`) | `SOFTWARE\Microsoft\Windows\Dwm` `OverlayTestMode` 5, so the desktop window manager composes every window instead of handing some straight to the graphics card; NVIDIA's support guidance uses this switch for screen flicker | ValueTweak; needs a restart; VERIFY against a real PC (N129) |
+| Foreground program priority (`scheduling.foreground`) | `SYSTEM\CurrentControlSet\Control\PriorityControl` `Win32PrioritySeparation` 38: short, variable processor turns with the program in front favoured most | ValueTweak; needs a restart; VERIFY (N130) |
+| Aggressive processor boost in the PeakTweaks power plan (part of `power.plan`, H7) | The plan copy's `be337238-0d82-4146-a960-4f3749d470c7` (Processor performance boost mode) set to 2, Aggressive, plugged in only | A fifth setting on the plan copy; VERIFY the value list (N131) |
 
 ## Not built, even though another app has it
 

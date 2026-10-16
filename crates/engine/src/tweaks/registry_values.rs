@@ -308,6 +308,7 @@ const WINDOW_METRICS: &str = r"Control Panel\Desktop\WindowMetrics";
 const MOUSE_CLASS: &str = r"SYSTEM\CurrentControlSet\Services\mouclass\Parameters";
 const KEYBOARD_CLASS: &str = r"SYSTEM\CurrentControlSet\Services\kbdclass\Parameters";
 const SESSION_POWER: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\Power";
+const PRIORITY_CONTROL: &str = r"SYSTEM\CurrentControlSet\Control\PriorityControl";
 const KERNEL: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\kernel";
 
 /// Settings > Gaming > Game Mode. On by default since Windows 10 1903, so an
@@ -468,6 +469,28 @@ pub const SYSTEM_RESPONSIVENESS: ValueTweak = ValueTweak {
     ),
     requires_reboot: true,
     settings: &[dword(MMCSS, "SystemResponsiveness", 10)],
+};
+
+/// How long the processor runs one program before switching, and how much
+/// more of it the program in front gets. Windows' workstation default
+/// already favours the front program; 38 (0x26) is the strongest form of
+/// that choice (short, variable quanta, the front program favoured most),
+/// the value Microsoft's tuning guidance gives for interactive use
+/// (VERIFY: the bit layout is from Windows Internals as recalled, not
+/// checked against a primary source here; NOTES N130). Read when Windows
+/// starts, so it takes effect after a restart.
+pub const FOREGROUND_QUANTUM: ValueTweak = ValueTweak {
+    id: "scheduling.foreground",
+    name: "Foreground program priority",
+    summary: "Gives the program in front the largest share of processor time Windows offers: shorter turns \
+              on the processor, with the front program's turns lengthened most. Windows already favours the \
+              front program; this picks the strongest form of that setting.",
+    category: "scheduling",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Moderate,
+    tradeoff: Some("Background programs get shorter, less favoured turns while a game is in front."),
+    requires_reboot: true,
+    settings: &[dword(PRIORITY_CONTROL, "Win32PrioritySeparation", 38)],
 };
 
 /// Multimedia Class Scheduler: network packet limit while media plays.
@@ -818,6 +841,7 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
         Box::new(POWER_THROTTLING_OFF),
         Box::new(SYSTEM_RESPONSIVENESS),
         Box::new(GAMES_TASK),
+        Box::new(FOREGROUND_QUANTUM),
         Box::new(NETWORK_THROTTLING),
         Box::new(TIMER_REQUESTS),
         Box::new(INPUT_QUEUE),

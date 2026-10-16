@@ -966,6 +966,35 @@ impl Engine {
         }
     }
 
+    /// Write the support bundle (NOTES N137) into the data folder and say
+    /// where it is: the audit, the tools and their states, the change
+    /// record, the settings, the play history and one live reading, as
+    /// JSON files in one zip. Reads only; nothing is changed or sent.
+    pub fn support_bundle(&mut self) -> Result<crate::support::SupportBundle> {
+        fn pretty<T: Serialize>(v: &T) -> Result<String> {
+            serde_json::to_string_pretty(v).map_err(|e| EngineError::Internal { detail: e.to_string() })
+        }
+        let entries: Vec<(String, String)> = vec![
+            ("audit.json".into(), pretty(&self.audit())?),
+            ("tools.json".into(), pretty(&self.list()?)?),
+            ("changes.json".into(), pretty(&self.journal_view())?),
+            ("settings.json".into(), pretty(&self.settings())?),
+            ("play-history.json".into(), pretty(&self.play_history())?),
+            ("live.json".into(), pretty(&crate::live::read())?),
+        ];
+        let now = now_ms();
+        let zip = crate::support::zip_stored(&entries, now)?;
+        let path = self.journal.root().join(crate::support::bundle_name(now));
+        std::fs::write(&path, &zip).map_err(|e| EngineError::Internal {
+            detail: format!("the support bundle could not be written: {e}"),
+        })?;
+        Ok(crate::support::SupportBundle {
+            path: path.to_string_lossy().into_owned(),
+            entries: entries.into_iter().map(|(n, _)| n).collect(),
+            bytes: zip.len() as u64,
+        })
+    }
+
     /// Bring the offline undo files in line with the journal. Run at start-up:
     /// an apply that a crash cut short is outstanding in the journal but never
     /// reached the commit that would have added it. A failure does not stop

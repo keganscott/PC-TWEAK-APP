@@ -24,6 +24,7 @@ import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
 import type { GpuDriverInstall } from "../generated/GpuDriverInstall";
 import type { JournalView } from "../generated/JournalView";
+import type { SupportBundle } from "../generated/SupportBundle";
 import type { MsiDeviceList } from "../generated/MsiDeviceList";
 import type { NetworkCheck } from "../generated/NetworkCheck";
 import type { PlayStatus } from "../generated/PlayStatus";
@@ -135,6 +136,8 @@ export interface State {
   /** MSI mode per device (H6), once the Advanced devices section has asked. */
   msi: MsiDeviceList | null;
   msiOp: Op;
+  /** The last support bundle written, for its card in Backups (N137). */
+  supportOp: Op<SupportBundle>;
   /** Home's live readings: the newest answer, kept while the next is read. */
   live: LiveReadings | null;
   liveOp: Op;
@@ -185,6 +188,7 @@ export function initialState(sample: boolean): State {
     startupOp: IDLE,
     msi: null,
     msiOp: IDLE,
+    supportOp: IDLE,
     live: null,
     liveHistory: [],
     liveOp: IDLE,
@@ -601,6 +605,19 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       }
       // The engine keeps a line in the change record whether it worked or not.
       await refreshJournal();
+    },
+
+    /** Write the support bundle (one zip in the data folder). Changes
+     * nothing, sends nothing; the card in Backups shows where it is. */
+    async exportSupportBundle() {
+      if (state.supportOp.status === "running") return;
+      set((s) => ({ ...s, supportOp: RUNNING }));
+      try {
+        const result = await backend.exportSupportBundle();
+        set((s) => ({ ...s, supportOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, supportOp: failed(e) }));
+      }
     },
 
     /** Echoes to the router and two public DNS servers. Changes nothing and

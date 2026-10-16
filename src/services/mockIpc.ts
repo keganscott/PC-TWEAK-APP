@@ -399,6 +399,12 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         warnings: clone(fx.journalView.warnings),
         offlineError: null,
       })),
+    exportSupportBundle: () =>
+      reply("exportSupportBundle", [], () => ({
+        path: String.raw`C:\ProgramData\PeakTweaks\peaktweaks-support-sample.zip`,
+        entries: ["audit.json", "tools.json", "changes.json", "settings.json", "play-history.json", "live.json"],
+        bytes: 48_211,
+      })),
     purgeStandbyMemory: () =>
       reply("purgeStandbyMemory", [], () => {
         emit("standby", "Emptying the standby list");
@@ -447,6 +453,8 @@ export function createMockBackend(options: MockOptions = {}): Backend {
           cpuBusyPercent: { state: "yes", value: wobble(23) },
           cpuMhz: { state: "yes", value: 4200 + wobble(0) * 25 },
           cpuCores: { state: "yes", value: [41, 12, 30, 8, 22, 5, 64, 17, 9, 3, 26, 14].map((c, i) => Math.max(0, c + ((live * (i + 3)) % 11) - 5)) },
+          cpuDpcPercent: { state: "yes", value: 0.4 },
+          cpuInterruptPercent: { state: "yes", value: 0.3 },
           thermalZones: { state: "yes", value: [{ name: "\\_TZ.THRM", celsius: 44 + (((live * 3) % 5) - 2) / 2 }] },
           memory: { state: "yes", value: { totalBytes: 16 * 2 ** 30, availableBytes: 6.9 * 2 ** 30, cachedBytes: cached } },
           gpus: {

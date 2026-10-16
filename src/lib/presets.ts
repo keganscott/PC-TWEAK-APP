@@ -83,11 +83,37 @@ export interface PresetPlan {
   notHere: TweakView[];
 }
 
+/**
+ * The per-game tools that make up one game's pro setup (NOTES N134): start
+ * priority, fullscreen optimizations, the high-performance graphics chip,
+ * and the game's own V-Sync setting where PeakTweaks has one. The shared
+ * game-traffic priority (`network.qos.games`) covers every game at once, so
+ * it stays in Tools, not in a single game's setup.
+ */
+export function gameToolIds(gameId: string): string[] {
+  return [
+    `priority.ifeo.${gameId}`,
+    `gaming.fullscreen.${gameId}`,
+    `gpu.choice.${gameId}`,
+    `game.${gameId}.vsync`,
+  ];
+}
+
+/** Sort one game's pro setup by what applying it would do to each tool. */
+export function planGameBundle(gameId: string, tweaks: readonly TweakView[]): PresetPlan {
+  const ids = new Set(gameToolIds(gameId));
+  return sortPlan((t) => ids.has(t.id), tweaks);
+}
+
 /** Sort a preset's changes by what applying it would do to each. */
 export function planPreset(preset: Preset, tweaks: readonly TweakView[]): PresetPlan {
+  return sortPlan(preset.holds, tweaks);
+}
+
+function sortPlan(holds: (t: TweakView) => boolean, tweaks: readonly TweakView[]): PresetPlan {
   const plan: PresetPlan = { toApply: [], inPlace: [], notHere: [] };
   for (const t of tweaks) {
-    if (!preset.holds(t)) continue;
+    if (!holds(t)) continue;
     const s = t.state.status;
     if (s === "applied" || s === "foreign") plan.inPlace.push(t);
     else if (t.blocked || s === "blocked" || s === "unknown") plan.notHere.push(t);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TweakView } from "../generated/TweakView";
-import { PRESETS, planPreset } from "./presets";
+import { gameToolIds, planGameBundle, PRESETS, planPreset } from "./presets";
 
 function tool(id: string, over: Partial<TweakView> = {}): TweakView {
   return {
@@ -42,5 +42,31 @@ describe("the Competitive preset", () => {
     expect(plan.toApply.map((t) => t.id)).toEqual(["display.mpo"]);
     expect(plan.inPlace.map((t) => t.id)).toEqual(["scheduling.foreground"]);
     expect(plan.notHere.map((t) => t.id)).toEqual(["power.plan"]);
+  });
+});
+
+describe("a game's pro setup", () => {
+  it("names the game's own tools, and no other game's", () => {
+    expect(gameToolIds("fortnite")).toEqual([
+      "priority.ifeo.fortnite",
+      "gaming.fullscreen.fortnite",
+      "gpu.choice.fortnite",
+      "game.fortnite.vsync",
+    ]);
+  });
+
+  it("sorts only that game's tools", () => {
+    const plan = planGameBundle("fortnite", [
+      tool("priority.ifeo.fortnite"),
+      tool("gaming.fullscreen.fortnite", { state: { status: "foreign" } }),
+      tool("gpu.choice.fortnite", {
+        blocked: { code: "antiCheatEligibility", message: "x", trigger: null },
+      } as unknown as Partial<TweakView>),
+      tool("priority.ifeo.apex"),
+      tool("display.mpo"),
+    ]);
+    expect(plan.toApply.map((t) => t.id)).toEqual(["priority.ifeo.fortnite"]);
+    expect(plan.inPlace.map((t) => t.id)).toEqual(["gaming.fullscreen.fortnite"]);
+    expect(plan.notHere.map((t) => t.id)).toEqual(["gpu.choice.fortnite"]);
   });
 });

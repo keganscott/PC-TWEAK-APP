@@ -14,6 +14,7 @@ import { playedReports, reportSummary } from "../../lib/playReport";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
 import type { Op } from "../../store/store";
 import { GameArt } from "./GameArt";
+import { GameBundleSection } from "./GameBundle";
 import { GameProofActions, useGameProof } from "./GameProof";
 import { GameSearch } from "./GameSearch";
 import { Button, Card, cx, ErrorCallout, PageHeader, SampleBadge, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
@@ -365,6 +366,7 @@ function GameCard({
             </div>
           )}
           {played.length > 0 && <Played reports={played} />}
+          <GameBundleSection gameId={readiness.gameId} name={name} />
           {choice && (
             <p className="mt-1 text-sm text-ink-muted">
               Graphics chip: {choice.preference.state === "yes" ? CHOICE[choice.preference.value] : "could not tell"}.

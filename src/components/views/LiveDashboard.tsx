@@ -68,6 +68,9 @@ export function LiveDashboard() {
 
 const yes = <T,>(p: Probe<T> | undefined): T | null => (p?.state === "yes" ? p.value : null);
 
+/** A tenth-of-a-percent reading, or no text when it was not read. */
+const pct = (p: Probe<number>): string | null => (p.state === "yes" ? `${formatNumber(p.value, 1)}%` : null);
+
 function ProcessorCard({ live, history }: { live: LiveReadings; history: LiveReadings[] }) {
   const series = useMemo(() => history.map((r) => yes(r.cpuBusyPercent)), [history]);
   const mhz = yes(live.cpuMhz);
@@ -79,6 +82,8 @@ function ProcessorCard({ live, history }: { live: LiveReadings; history: LiveRea
         <dl className="grid min-w-0 gap-1 text-xs">
           <Stat term="Speed" value={mhz === null ? null : `${formatNumber(mhz / 1000, 2)} GHz`} />
           <Stat term="Logical processors" value={cores === null ? null : String(cores.length)} />
+          <Stat term="Interrupts" value={pct(live.cpuInterruptPercent)} />
+          <Stat term="Driver calls (DPC)" value={pct(live.cpuDpcPercent)} />
         </dl>
       </div>
       <Sparkline label="Processor busy" series={series} />

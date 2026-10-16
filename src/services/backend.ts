@@ -32,6 +32,7 @@ import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
 import type { StandbyPurge } from "../generated/StandbyPurge";
 import type { StartupList } from "../generated/StartupList";
+import type { SupportBundle } from "../generated/SupportBundle";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 
@@ -53,6 +54,8 @@ export interface Backend {
   revertTweak(id: string): Promise<JournalEntry[]>;
   revertAll(): Promise<RevertResult[]>;
   listJournal(): Promise<JournalView>;
+  /** Write the support bundle (one zip in the data folder); sends nothing. */
+  exportSupportBundle(): Promise<SupportBundle>;
   purgeStandbyMemory(): Promise<StandbyPurge>;
   cleanupMeasure(): Promise<AreaSize[]>;
   cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;

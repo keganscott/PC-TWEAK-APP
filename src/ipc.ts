@@ -36,6 +36,7 @@ import type { Settings } from "./generated/Settings";
 import type { Side } from "./generated/Side";
 import type { StartupList } from "./generated/StartupList";
 import type { StandbyPurge } from "./generated/StandbyPurge";
+import type { SupportBundle } from "./generated/SupportBundle";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
 
@@ -112,6 +113,8 @@ export const engine = {
   revertTweak: (id: string) => call<JournalEntry[]>("revert_tweak", { id }),
   revertAll: () => call<RevertResult[]>("revert_all"),
   listJournal: () => call<JournalView>("list_journal"),
+  /** Write the support bundle (one zip in the data folder) and say where it is. Reads only; sends nothing. */
+  exportSupportBundle: () => call<SupportBundle>("export_support_bundle"),
   /** Empty Windows' standby list (catalogue E6). Changes no setting; nothing to undo. */
   purgeStandbyMemory: () => call<StandbyPurge>("purge_standby_memory"),
   /** What each junk-file area holds that a cleanup would delete now (catalogue H28). Reads only. */

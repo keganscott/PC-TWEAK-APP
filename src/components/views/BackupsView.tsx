@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowRightLeft, Check, ClipboardCopy, History, Layers, LifeBuoy, ShieldCheck, Undo2, type LucideIcon } from "lucide-react";
+import { Archive, ArrowRightLeft, Check, ClipboardCopy, History, Layers, LifeBuoy, ShieldCheck, Undo2, type LucideIcon } from "lucide-react";
 
 import type { ActionDone } from "../../generated/ActionDone";
 import type { AppliedChange } from "../../generated/AppliedChange";
@@ -24,9 +24,10 @@ export function BackupsView() {
   const journal = useStore((s) => s.journal);
   const restore = useStore((s) => s.audit?.env.restore ?? null);
   const revertAllOp = useStore((s) => s.revertAllOp);
+  const supportOp = useStore((s) => s.supportOp);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
-  const { revertAll } = useActions();
+  const { revertAll, exportSupportBundle } = useActions();
   const [confirming, setConfirming] = useState(false);
   const hardware = useStore((s) => s.audit?.env.hardware ?? null);
   // "copied", or the text itself when the clipboard refused it, so it can
@@ -72,6 +73,15 @@ export function BackupsView() {
               {copy?.copied ? "Copied" : "Copy summary"}
             </Button>
             <Button
+              variant="secondary"
+              icon={<Archive aria-hidden className="size-4" />}
+              title="One zip file with this PC's readings and the change record, to send when something looks wrong. It is saved on this PC and goes nowhere by itself."
+              busy={supportOp.status === "running"}
+              onClick={() => void exportSupportBundle()}
+            >
+              Save support bundle
+            </Button>
+            <Button
               variant="danger"
               icon={<Undo2 aria-hidden className="size-4" />}
               disabled={applied.length === 0}
@@ -95,6 +105,16 @@ export function BackupsView() {
             />
           </Callout>
         )}
+        {supportOp.status === "done" && (
+          <Callout tone="ok" title="Support bundle saved.">
+            <p>
+              {supportOp.value.path} ({formatBytes(supportOp.value.bytes)}):{" "}
+              {supportOp.value.entries.join(", ")}. Send that file when something looks wrong; it stays on this PC
+              until you do.
+            </p>
+          </Callout>
+        )}
+        {supportOp.status === "failed" && <ErrorCallout text={explain(supportOp.error)} technical={technical} />}
         {revertAllOp.status === "failed" && <ErrorCallout text={explain(revertAllOp.error)} technical={technical} />}
         {revertAllOp.status === "done" && revertAllOp.value.some((r) => !r.ok) && (
           <Callout tone="warn" title="Some changes could not be undone.">

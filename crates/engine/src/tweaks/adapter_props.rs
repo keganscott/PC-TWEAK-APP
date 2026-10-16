@@ -61,6 +61,10 @@ pub struct AdapterSetting {
     pub summary: &'static str,
     /// The value's name in the driver key.
     pub value_name: &'static str,
+    /// A second keyword set the same way where the driver has it (Receive
+    /// Segment Coalescing has one per address family); an adapter without it
+    /// is changed by the first alone.
+    pub extra_value_name: Option<&'static str>,
     pub wanted: Wanted,
     /// For "No network adapter here has …".
     pub what: &'static str,
@@ -100,6 +104,24 @@ fn as_text(v: &RawValue) -> Option<String> {
 }
 
 impl AdapterSetting {
+    /// Every keyword this tool sets, the first first.
+    fn keywords(&self) -> Vec<&'static str> {
+        let mut out = vec![self.value_name];
+        if let Some(extra) = self.extra_value_name {
+            out.push(extra);
+        }
+        out
+    }
+
+    /// The driver offers `value` among its own choices for `name`.
+    fn offered(res: &ContextResolver, key: &str, name: &str, value: &str) -> Result<bool> {
+        let choices = format!(r"{key}\Ndi\params\{name}\enum");
+        Ok(res
+            .value_names(RegRoot::LocalMachine, &choices)?
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(value)))
+    }
+
     /// The adapters whose driver has this setting, or why there are none.
     fn targets(&self, res: &ContextResolver) -> Result<Vec<Target>> {
         let mut out = Vec::new();
@@ -108,12 +130,7 @@ impl AdapterSetting {
                 continue;
             };
             let has = match self.wanted {
-                Wanted::Keyword(value) => {
-                    let choices = format!(r"{key}\Ndi\params\{}\enum", self.value_name);
-                    res.value_names(RegRoot::LocalMachine, &choices)?
-                        .iter()
-                        .any(|n| n.eq_ignore_ascii_case(value))
-                }
+                Wanted::Keyword(value) => Self::offered(res, &key, self.value_name, value)?,
                 Wanted::Bits(_) => true,
             };
             if has {
@@ -131,24 +148,41 @@ impl AdapterSetting {
         Ok(out)
     }
 
-    /// Is this adapter set as the tool sets it?
+    /// Is this adapter set as the tool sets it, for every keyword its
+    /// driver has?
     fn is_set(&self, res: &ContextResolver, t: &Target) -> Result<bool> {
-        let stored = res.read_raw(RegRoot::LocalMachine, &t.key, self.value_name)?;
-        Ok(match self.wanted {
+        match self.wanted {
             Wanted::Keyword(value) => {
-                let now = match stored {
-                    Some(v) => as_text(&v),
-                    // Not stored: the driver's default.
-                    None => res.read_string(
-                        RegRoot::LocalMachine,
-                        &format!(r"{}\Ndi\params\{}", t.key, self.value_name),
-                        "default",
-                    )?,
-                };
-                now.is_some_and(|n| n.trim().eq_ignore_ascii_case(value))
+                for name in self.keywords() {
+                    if !Self::offered(res, &t.key, name, value)? {
+                        continue;
+                    }
+                    if !self.keyword_is(res, t, name, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
             }
-            Wanted::Bits(bits) => stored.and_then(|v| v.as_dword()).is_some_and(|d| d & bits == bits),
-        })
+            Wanted::Bits(bits) => {
+                let stored = res.read_raw(RegRoot::LocalMachine, &t.key, self.value_name)?;
+                Ok(stored.and_then(|v| v.as_dword()).is_some_and(|d| d & bits == bits))
+            }
+        }
+    }
+
+    /// One keyword's stored value (or the driver's default) is `value`.
+    fn keyword_is(&self, res: &ContextResolver, t: &Target, name: &str, value: &str) -> Result<bool> {
+        let stored = res.read_raw(RegRoot::LocalMachine, &t.key, name)?;
+        let now = match stored {
+            Some(v) => as_text(&v),
+            // Not stored: the driver's default.
+            None => res.read_string(
+                RegRoot::LocalMachine,
+                &format!(r"{}\Ndi\params\{}", t.key, name),
+                "default",
+            )?,
+        };
+        Ok(now.is_some_and(|n| n.trim().eq_ignore_ascii_case(value)))
     }
 
     fn restarts_adapter(&self) -> bool {
@@ -179,7 +213,7 @@ impl Tweak for AdapterSetting {
             target: Cow::Owned(format!(
                 r"HKLM\{}\{{adapter}}\{} = {value}",
                 class_root(),
-                self.value_name
+                self.keywords().join(", ")
             )),
             category: Cow::Borrowed("network"),
             tier: Tier::Pro,
@@ -195,10 +229,11 @@ impl Tweak for AdapterSetting {
     }
 
     fn touches(&self) -> Vec<RegTarget> {
+        let names: Vec<&str> = self.keywords();
         vec![RegTarget::new(
             RegRoot::LocalMachine,
             format!(r"{}\*", class_root()),
-            &[self.value_name],
+            &names,
         )]
     }
 
@@ -235,11 +270,18 @@ impl Tweak for AdapterSetting {
             }
             match self.wanted {
                 Wanted::Keyword(value) => {
-                    // Keep the driver's own type for the value.
-                    let stored = tx.resolver().read_raw(RegRoot::LocalMachine, &t.key, self.value_name)?;
-                    match (stored.as_ref().map(|v| v.vtype), value.parse::<u32>()) {
-                        (Some(4), Ok(n)) => tx.set_dword(RegRoot::LocalMachine, &t.key, self.value_name, n)?,
-                        _ => tx.set_string(RegRoot::LocalMachine, &t.key, self.value_name, value)?,
+                    for name in self.keywords() {
+                        if !Self::offered(tx.resolver(), &t.key, name, value)?
+                            || self.keyword_is(tx.resolver(), &t, name, value)?
+                        {
+                            continue;
+                        }
+                        // Keep the driver's own type for the value.
+                        let stored = tx.resolver().read_raw(RegRoot::LocalMachine, &t.key, name)?;
+                        match (stored.as_ref().map(|v| v.vtype), value.parse::<u32>()) {
+                            (Some(4), Ok(n)) => tx.set_dword(RegRoot::LocalMachine, &t.key, name, n)?,
+                            _ => tx.set_string(RegRoot::LocalMachine, &t.key, name, value)?,
+                        }
                     }
                     Self::restart(tx, &t.adapter.guid)?;
                 }
@@ -288,6 +330,7 @@ pub const INTERRUPT_MODERATION: AdapterSetting = AdapterSetting {
     summary: "Turns Interrupt Moderation off on each network adapter whose driver has it, so the adapter tells the \
               processor about each packet as it arrives instead of grouping several into one interrupt.",
     value_name: "*InterruptModeration",
+    extra_value_name: None,
     wanted: Wanted::Keyword("0"),
     what: "interrupt moderation",
     safety: SafetyTier::Moderate,
@@ -301,6 +344,7 @@ pub const FLOW_CONTROL: AdapterSetting = AdapterSetting {
     summary: "Turns Flow Control off on each network adapter whose driver has it, so the adapter no longer pauses \
               sending when the router or switch asks it to.",
     value_name: "*FlowControl",
+    extra_value_name: None,
     wanted: Wanted::Keyword("0"),
     what: "flow control",
     safety: SafetyTier::Moderate,
@@ -313,6 +357,7 @@ pub const ENERGY_EFFICIENT_ETHERNET: AdapterSetting = AdapterSetting {
     summary: "Turns Energy-Efficient Ethernet off on each network adapter whose driver has it, so the cable link \
               stays fully awake between packets instead of dozing when traffic is light.",
     value_name: "*EEE",
+    extra_value_name: None,
     wanted: Wanted::Keyword("0"),
     what: "Energy-Efficient Ethernet",
     safety: SafetyTier::Moderate,
@@ -326,10 +371,30 @@ pub const POWER_SAVING: AdapterSetting = AdapterSetting {
     summary: "Clears Device Manager's \"Allow the computer to turn off this device to save power\" for each network \
               adapter, so Windows does not switch an adapter off to save power.",
     value_name: "PnPCapabilities",
+    extra_value_name: None,
     wanted: Wanted::Bits(0x18),
     what: "power saving",
     safety: SafetyTier::Moderate,
     tradeoff: "On a laptop, the adapter uses a little more battery.",
+};
+
+/// Receive Segment Coalescing joins packets that arrive together into one
+/// bigger packet before the processor sees them; turning it off hands each
+/// packet over as it arrives. One keyword per address family (VERIFY: the
+/// keyword names are Microsoft's standardized ones as recalled; NOTES N135).
+pub const RECEIVE_COALESCING: AdapterSetting = AdapterSetting {
+    id: "network.rsc",
+    name: "Network adapter receive coalescing: off",
+    summary: "Turns Receive Segment Coalescing off on each network adapter whose driver has it, so arriving \
+              packets are handed to Windows one by one as they come in, instead of being joined into bigger \
+              packets first.",
+    value_name: "*RscIPv4",
+    extra_value_name: Some("*RscIPv6"),
+    wanted: Wanted::Keyword("0"),
+    what: "receive segment coalescing",
+    safety: SafetyTier::Moderate,
+    tradeoff: "The connection drops for a few seconds while each adapter restarts, and the processor works harder \
+               during large downloads.",
 };
 
 pub fn all() -> Vec<Box<dyn Tweak>> {
@@ -337,6 +402,7 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
         Box::new(INTERRUPT_MODERATION),
         Box::new(FLOW_CONTROL),
         Box::new(ENERGY_EFFICIENT_ETHERNET),
+        Box::new(RECEIVE_COALESCING),
         Box::new(POWER_SAVING),
     ]
 }

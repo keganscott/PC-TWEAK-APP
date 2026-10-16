@@ -30,6 +30,14 @@ pub struct LiveReadings {
     /// Each logical processor's `% Processor Utility` over the same half
     /// second, 0-100 (capped: with turbo it can pass 100), in Windows' order.
     pub cpu_cores: Probe<Vec<u32>>,
+    /// Share of processor time spent in deferred procedure calls over the
+    /// same window, all processors, to a tenth of a percent. Driver work
+    /// queued by interrupts runs here; a share that stays high is a driver
+    /// asking for attention (NOTES N136).
+    pub cpu_dpc_percent: Probe<f64>,
+    /// Share of processor time spent answering hardware interrupts over the
+    /// same window, all processors, to a tenth of a percent.
+    pub cpu_interrupt_percent: Probe<f64>,
     /// Windows' ACPI thermal zones (`Thermal Zone Information`). Set by the
     /// motherboard's firmware; on many PCs none is the processor itself.
     pub thermal_zones: Probe<Vec<ThermalZone>>,
@@ -61,6 +69,11 @@ pub struct TimerReading {
 /// microsecond (Windows' own intervals are exact in these units).
 pub fn timer_ms(units: u32) -> f64 {
     (f64::from(units) / 10.0).round() / 1000.0
+}
+
+/// A percentage to a tenth, capped at 100; nothing believable, no reading.
+pub fn percent_1dp(v: f64) -> Option<f64> {
+    (v.is_finite() && v >= 0.0).then(|| (v * 10.0).round().min(1000.0) / 10.0)
 }
 
 /// One ACPI thermal zone's temperature.
@@ -147,6 +160,8 @@ pub fn read() -> LiveReadings {
         cpu_busy_percent: cpu.busy,
         cpu_mhz: cpu.mhz,
         cpu_cores: cpu.cores,
+        cpu_dpc_percent: cpu.dpc,
+        cpu_interrupt_percent: cpu.interrupt,
         thermal_zones: cpu.thermal,
         memory: match crate::memory::system().usage() {
             Ok(m) => Probe::yes(m),
@@ -163,6 +178,8 @@ struct Cpu {
     busy: Probe<u32>,
     mhz: Probe<u32>,
     cores: Probe<Vec<u32>>,
+    dpc: Probe<f64>,
+    interrupt: Probe<f64>,
     thermal: Probe<Vec<ThermalZone>>,
 }
 
@@ -246,10 +263,19 @@ mod imp {
                 Err(e) => Probe::unknown(e),
             },
         };
+        let share = |counter: &std::result::Result<isize, Missing>| match pdh.value(counter) {
+            Ok(v) => match percent_1dp(v) {
+                Some(p) => Probe::yes(p),
+                None => Probe::unknown(format!("Windows gave {v}%")),
+            },
+            Err(e) => Probe::unknown(e),
+        };
         Cpu {
             busy,
             mhz,
             cores,
+            dpc: share(&pdh.dpc),
+            interrupt: share(&pdh.interrupt),
             thermal,
         }
     }
@@ -271,6 +297,8 @@ mod imp {
         frequency: std::result::Result<isize, Missing>,
         performance: std::result::Result<isize, Missing>,
         utility: std::result::Result<isize, Missing>,
+        dpc: std::result::Result<isize, Missing>,
+        interrupt: std::result::Result<isize, Missing>,
         thermal: std::result::Result<isize, Missing>,
     }
 
@@ -309,6 +337,8 @@ mod imp {
                 frequency: add(r"\Processor Information(_Total)\Processor Frequency"),
                 performance: add(r"\Processor Information(_Total)\% Processor Performance"),
                 utility: add(r"\Processor Information(*)\% Processor Utility"),
+                dpc: add(r"\Processor Information(_Total)\% DPC Time"),
+                interrupt: add(r"\Processor Information(_Total)\% Interrupt Time"),
                 thermal: add(r"\Thermal Zone Information(*)\High Precision Temperature"),
                 query,
             }
@@ -419,6 +449,8 @@ mod imp {
             busy: off(),
             mhz: off(),
             cores: off(),
+            dpc: off(),
+            interrupt: off(),
             thermal: off(),
         }
     }
@@ -436,6 +468,16 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn percentages_read_to_a_tenth_and_cap_at_100() {
+        assert_eq!(percent_1dp(0.04), Some(0.0));
+        assert_eq!(percent_1dp(0.46), Some(0.5));
+        assert_eq!(percent_1dp(15.625), Some(15.6));
+        assert_eq!(percent_1dp(250.0), Some(100.0));
+        assert_eq!(percent_1dp(-1.0), None);
+        assert_eq!(percent_1dp(f64::NAN), None);
+    }
 
     #[test]
     fn timer_intervals_read_in_milliseconds() {

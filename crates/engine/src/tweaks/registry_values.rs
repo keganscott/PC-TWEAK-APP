@@ -289,6 +289,7 @@ const TOGGLE_KEYS: &str = r"Control Panel\Accessibility\ToggleKeys";
 const PERSONALIZE: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
 const BG_APPS: &str = r"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications";
 const GRAPHICS: &str = r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers";
+const DWM: &str = r"SOFTWARE\Microsoft\Windows\Dwm";
 const POWER_THROTTLING: &str = r"SYSTEM\CurrentControlSet\Control\Power\PowerThrottling";
 const MMCSS: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
 /// SKF_HOTKEYACTIVE, FKF_HOTKEYACTIVE and TKF_HOTKEYACTIVE share this bit.
@@ -410,6 +411,31 @@ pub const GPU_SCHEDULING: ValueTweak = ValueTweak {
     tradeoff: Some("Some older games and recording tools have had problems with it on."),
     requires_reboot: true,
     settings: &[dword(GRAPHICS, "HwSchMode", 2)],
+};
+
+/// Windows' multiplane overlay (MPO): the desktop window manager hands
+/// some windows straight to the graphics card instead of composing every
+/// frame itself. `OverlayTestMode` 5 turns it off, so every window takes
+/// the composed path. NVIDIA's support guidance uses this same switch when
+/// a screen flickers or tears with the overlay on (VERIFY: the value name
+/// and data are from that guidance and players' copies of the key, not
+/// from Microsoft documentation; NOTES N129). The desktop window manager
+/// reads it when it starts, so it takes effect after a restart.
+pub const MULTIPLANE_OVERLAY: ValueTweak = ValueTweak {
+    id: "display.mpo",
+    name: "Multiplane overlay (MPO)",
+    summary: "Turns off Windows' multiplane overlay, so the desktop window manager composes every window \
+              itself instead of handing some straight to the graphics card. Some PCs show flicker on that \
+              direct path; NVIDIA's support guidance uses this switch for it. Undo removes the switch and \
+              Windows goes back to its own choice.",
+    category: "display",
+    root: RegRoot::LocalMachine,
+    safety: SafetyTier::Moderate,
+    tradeoff: Some(
+        "Windows composes every window the long way, which can use a little more graphics power on the desktop.",
+    ),
+    requires_reboot: true,
+    settings: &[dword(DWM, "OverlayTestMode", 5)],
 };
 
 /// Power throttling (EcoQoS) for background programs, system-wide.
@@ -787,6 +813,7 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
         Box::new(ACCESSIBILITY_SHORTCUTS),
         Box::new(TRANSPARENCY),
         Box::new(GPU_SCHEDULING),
+        Box::new(MULTIPLANE_OVERLAY),
         Box::new(BACKGROUND_APPS),
         Box::new(POWER_THROTTLING_OFF),
         Box::new(SYSTEM_RESPONSIVENESS),

@@ -57,6 +57,12 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | E5 | Multi-Internet | Several connections at once, failover | Without servers, only failover: prefer the cable over Wi-Fi (interface metric), warn when a game runs on Wi-Fi |
 | E6 | RAM Cleaner | Frees memory | One-shot: empty the standby list and trim working sets (Windows' memory-list API); nothing to undo |
 
+## Added beyond Hone and ExitLag
+
+| Tool | What it changes | How PeakTweaks builds it |
+|---|---|---|
+| Multiplane overlay (MPO) off (`display.mpo`) | `SOFTWARE\Microsoft\Windows\Dwm` `OverlayTestMode` 5, so the desktop window manager composes every window instead of handing some straight to the graphics card; NVIDIA's support guidance uses this switch for screen flicker | ValueTweak; needs a restart; VERIFY against a real PC (N129) |
+
 ## Not built, even though another app has it
 
 These are in plan section 12 ("never do"). Kegan's approval covers Hone and ExitLag features; if either app has one of these, it still needs Kegan to change section 12 explicitly first.

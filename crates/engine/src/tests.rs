@@ -1641,6 +1641,43 @@ fn a_value_tweak_already_set_on_the_pc_is_listed_as_done_and_round_trips() {
 }
 
 #[test]
+fn the_multiplane_overlay_tool_writes_one_value_and_undo_removes_it() {
+    use crate::registry::RegistryBackend;
+    use crate::tweaks::registry_values::MULTIPLANE_OVERLAY;
+    let fake = Arc::new(FakeRegistry::new());
+    let dwm = r"SOFTWARE\Microsoft\Windows\Dwm";
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(
+        &fake,
+        dir.path(),
+        vec![Box::new(MULTIPLANE_OVERLAY)],
+        true,
+        Tier::Ultimate,
+    );
+    let state = |e: &mut crate::engine::Engine| e.list().unwrap().remove(0).state;
+    let value = |fake: &FakeRegistry| {
+        fake.read_value_for_test(Hive::LocalMachine, dwm, "OverlayTestMode")
+            .and_then(|v| v.as_dword())
+    };
+
+    // Nothing written: Windows uses the overlay, the tool is offered.
+    assert!(matches!(state(&mut engine), TweakState::Default));
+    engine.apply("display.mpo").unwrap();
+    assert_eq!(value(&fake), Some(5));
+    assert!(matches!(state(&mut engine), TweakState::Applied));
+    engine.revert("display.mpo").unwrap();
+    assert_eq!(value(&fake), None, "undo removes the switch it wrote");
+    assert!(matches!(state(&mut engine), TweakState::Default));
+
+    // A PC that already has the switch reads as already done, and Apply
+    // there is a no-op that writes no journal entry.
+    fake.create_key(Hive::LocalMachine, dwm).unwrap();
+    fake.write_value(Hive::LocalMachine, dwm, "OverlayTestMode", &RawValue::dword(5))
+        .unwrap();
+    assert!(matches!(state(&mut engine), TweakState::Foreign));
+}
+
+#[test]
 fn the_sticky_keys_tool_clears_only_the_shortcut_and_keeps_the_users_own_settings() {
     use crate::registry::RegistryBackend;
     use crate::tweaks::registry_values::ACCESSIBILITY_SHORTCUTS;

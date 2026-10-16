@@ -1641,6 +1641,33 @@ fn a_value_tweak_already_set_on_the_pc_is_listed_as_done_and_round_trips() {
 }
 
 #[test]
+fn the_support_bundle_is_a_zip_with_the_five_readings() {
+    let fake = Arc::new(FakeRegistry::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = build_engine(&fake, dir.path(), vec![], true, Tier::Ultimate);
+    let bundle = engine.support_bundle().unwrap();
+    assert_eq!(
+        bundle.entries,
+        [
+            "audit.json",
+            "tools.json",
+            "changes.json",
+            "settings.json",
+            "play-history.json",
+            "live.json"
+        ]
+    );
+    let bytes = std::fs::read(&bundle.path).unwrap();
+    assert_eq!(bundle.bytes, bytes.len() as u64);
+    assert_eq!(&bytes[0..4], b"PK\x03\x04", "a zip, written where it says");
+    let text = String::from_utf8_lossy(&bytes);
+    for name in bundle.entries.iter() {
+        assert!(text.contains(name.as_str()), "the zip names {name}");
+    }
+    assert!(text.contains("applied"), "the change record is inside");
+}
+
+#[test]
 fn the_multiplane_overlay_tool_writes_one_value_and_undo_removes_it() {
     use crate::registry::RegistryBackend;
     use crate::tweaks::registry_values::MULTIPLANE_OVERLAY;

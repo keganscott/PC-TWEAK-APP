@@ -46,6 +46,7 @@ pub mod security;
 pub mod settings;
 pub mod settings_file;
 pub mod startup;
+pub mod support;
 pub mod sysdirs;
 pub mod sysprobe;
 pub mod system;

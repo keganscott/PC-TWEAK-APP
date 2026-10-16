@@ -487,6 +487,15 @@ pub async fn list_journal(engine: State<'_, EngineHandle>) -> Result<JournalView
     blocking_recovering(&engine, |e| Ok(e.journal_view())).await
 }
 
+/// Write the support bundle (one zip in the data folder) and say where it
+/// is. Reads only; the file goes nowhere by itself.
+#[tauri::command]
+pub async fn export_support_bundle(
+    engine: State<'_, EngineHandle>,
+) -> Result<peaktweaks_engine::support::SupportBundle> {
+    blocking(&engine, |e| e.support_bundle()).await
+}
+
 /// Short one-time actions (emptying the standby list, looking for junk files)
 /// would still disturb a Proof recording, so they wait for it. Long ones take
 /// the activity slot instead.

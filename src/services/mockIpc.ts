@@ -399,6 +399,12 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         warnings: clone(fx.journalView.warnings),
         offlineError: null,
       })),
+    exportSupportBundle: () =>
+      reply("exportSupportBundle", [], () => ({
+        path: String.raw`C:\ProgramData\PeakTweaks\peaktweaks-support-sample.zip`,
+        entries: ["audit.json", "tools.json", "changes.json", "settings.json", "play-history.json", "live.json"],
+        bytes: 48_211,
+      })),
     purgeStandbyMemory: () =>
       reply("purgeStandbyMemory", [], () => {
         emit("standby", "Emptying the standby list");

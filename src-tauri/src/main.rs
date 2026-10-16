@@ -140,6 +140,7 @@ fn main() {
             commands::revert_tweak,
             commands::revert_all,
             commands::list_journal,
+            commands::export_support_bundle,
             commands::purge_standby_memory,
             commands::cleanup_measure,
             commands::cleanup_run,

@@ -152,7 +152,7 @@ mod imp {
         PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
         PdhGetFormattedCounterValue, PdhOpenQueryW, PDH_CSTATUS_NEW_DATA, PDH_CSTATUS_NO_OBJECT,
         PDH_CSTATUS_VALID_DATA, PDH_FMT, PDH_FMT_COUNTERVALUE, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE,
-        PDH_MORE_DATA,
+        PDH_MORE_DATA, PDH_NO_DATA,
     };
     use windows::Win32::System::Threading::GetSystemTimes;
 
@@ -215,6 +215,7 @@ mod imp {
             Err(Missing::NoObject) => Probe::no("Windows lists no thermal zone on this PC"),
             Err(Missing::Failed(e)) => Probe::unknown(e.clone()),
             Ok(_) => match pdh.array(&pdh.thermal) {
+                Ok(items) if items.is_empty() && counters_off => Probe::unknown(COUNTERS_OFF),
                 Ok(items) if items.is_empty() => Probe::no("Windows lists no thermal zone on this PC"),
                 Ok(items) => match thermal_zones(&items) {
                     z if z.is_empty() => Probe::unknown("no thermal zone gave a believable temperature"),
@@ -331,7 +332,9 @@ mod imp {
             // SAFETY: a null buffer asks for the size.
             let rc = unsafe { PdhGetFormattedCounterArrayW(counter, format, &mut bytes, &mut count, None) };
             if rc != PDH_MORE_DATA {
-                return if rc == 0 {
+                // PDH_NO_DATA: the counter set is there with no instance, as
+                // `Thermal Zone Information` on the Windows CI runner.
+                return if rc == 0 || rc == PDH_NO_DATA {
                     Ok(Vec::new())
                 } else {
                     Err(format!("the counter gave no values (0x{rc:08X})"))

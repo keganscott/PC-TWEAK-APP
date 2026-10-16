@@ -103,6 +103,51 @@
   }
 }
 
+/* Accent colours (Settings > Colour; `Settings.accent`): the violet family
+   is the accent, so picking a colour re-points those tokens. Lime stays the
+   "ready / done" colour and red stays errors, whatever accent is picked.
+   Violet itself needs no rule: it is the theme's own. */
+[data-accent="blue"] {
+  --color-violet: #2563eb;
+  --color-violet-strong: #1d4ed8;
+  --color-violet-soft: #93c5fd;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-warn: #93c5fd;
+}
+[data-accent="teal"] {
+  --color-violet: #0d9488;
+  --color-violet-strong: #0f766e;
+  --color-violet-soft: #5eead4;
+  --color-accent: #0d9488;
+  --color-accent-strong: #0f766e;
+  --color-warn: #5eead4;
+}
+[data-accent="green"] {
+  --color-violet: #16a34a;
+  --color-violet-strong: #15803d;
+  --color-violet-soft: #86efac;
+  --color-accent: #16a34a;
+  --color-accent-strong: #15803d;
+  --color-warn: #86efac;
+}
+[data-accent="amber"] {
+  --color-violet: #d97706;
+  --color-violet-strong: #b45309;
+  --color-violet-soft: #fcd34d;
+  --color-accent: #d97706;
+  --color-accent-strong: #b45309;
+  --color-warn: #fcd34d;
+}
+[data-accent="pink"] {
+  --color-violet: #db2777;
+  --color-violet-strong: #be185d;
+  --color-violet-soft: #f9a8d4;
+  --color-accent: #db2777;
+  --color-accent-strong: #be185d;
+  --color-warn: #f9a8d4;
+}
+
 /* The two flat textures from the palette sheet: fine diagonal lines on black,
    and violet diamond facets (drawn in Facets.tsx). */
 @utility texture-lines {

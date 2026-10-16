@@ -36,6 +36,22 @@ pub enum Language {
     Technical,
 }
 
+/// The accent colour the UI draws its actions with (Game Plan idea 13).
+/// Violet is PeakTweaks' own. A preference only: it changes no wording,
+/// gate or check, only the theme's accent family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum Accent {
+    #[default]
+    Violet,
+    Blue,
+    Teal,
+    Green,
+    Amber,
+    Pink,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase", default)]
@@ -43,6 +59,9 @@ pub struct Settings {
     /// When set, replaces the detected rig class for defaults and copy.
     pub rig_class_override: Option<RigClass>,
     pub language: Language,
+    /// The accent colour for the UI's actions. Missing in older files,
+    /// which keep violet.
+    pub accent: Accent,
     /// The first-run welcome was shown and closed. Missing in older files,
     /// which then show it once.
     pub welcome_seen: bool,
@@ -202,11 +221,21 @@ mod tests {
     }
 
     #[test]
+    fn an_older_settings_file_without_an_accent_keeps_violet() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), r#"{"language":"technical"}"#).unwrap();
+        let s = store(dir.path()).load();
+        assert_eq!(s.accent, Accent::Violet);
+        assert_eq!(s.language, Language::Technical);
+    }
+
+    #[test]
     fn settings_round_trip_through_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let s = Settings {
             rig_class_override: Some(RigClass::High),
             language: Language::Technical,
+            accent: Accent::Teal,
             welcome_seen: true,
             gaming_mode: true,
             game_timer: true,

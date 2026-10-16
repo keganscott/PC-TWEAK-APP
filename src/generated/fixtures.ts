@@ -1025,6 +1025,7 @@ export const systemAudit = {
   "settings": {
     "rigClassOverride": null,
     "language": "plain",
+    "accent": "violet",
     "welcomeSeen": false,
     "gamingMode": false,
     "gameTimer": false,

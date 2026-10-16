@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 
+import type { Accent } from "../../generated/Accent";
 import type { Language } from "../../generated/Language";
 import type { RigClass } from "../../generated/RigClass";
+import { ACCENTS } from "../../lib/accent";
 import { explain } from "../../lib/errors";
 import { probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -24,6 +26,7 @@ export function SettingsDialog({
   const [language, setLanguage] = useState<Language>("plain");
   const [rig, setRig] = useState<RigClass | "">("");
   const [reminders, setReminders] = useState(true);
+  const [accent, setAccent] = useState<Accent>("violet");
   const rigId = useId();
 
   // Start from what is stored each time the dialog opens. Not again while it
@@ -37,13 +40,14 @@ export function SettingsDialog({
       setLanguage(settings.language);
       setRig(settings.rigClassOverride ?? "");
       setReminders(!settings.remindersOff);
+      setAccent(settings.accent);
     }
   }, [open, settings]);
 
   const save = async () => {
     // Stay open on failure so the error is seen next to what was chosen.
     // Only what this dialog edits changes; anything else stored is kept.
-    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null, remindersOff: !reminders }, settings))) onClose();
+    if (settings && (await saveSettings({ ...settings, language, accent, rigClassOverride: rig || null, remindersOff: !reminders }, settings))) onClose();
   };
 
   return (
@@ -87,6 +91,36 @@ export function SettingsDialog({
               </label>
             ))}
           </div>
+        </fieldset>
+        <fieldset>
+          <legend className="font-medium">Colour</legend>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {ACCENTS.map((a) => (
+              <label
+                key={a.id}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                  accent === a.id ? "border-line-strong bg-surface-2" : "border-line"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="accent"
+                  checked={accent === a.id}
+                  onChange={() => setAccent(a.id)}
+                  className="sr-only"
+                />
+                <span
+                  aria-hidden
+                  className="size-4 rounded-full border border-white/20"
+                  style={{ backgroundColor: a.swatch }}
+                />
+                {a.name}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-ink-faint">
+            The colour of buttons and highlights. Green stays "ready" and red stays an error, whatever you pick.
+          </p>
         </fieldset>
         <div>
           <label htmlFor={rigId} className="font-medium">

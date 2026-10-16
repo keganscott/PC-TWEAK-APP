@@ -36,10 +36,10 @@ const AFFINITY_KEY: &str = r"Device Parameters\Interrupt Management\Affinity Pol
 pub const VALUE: &str = "MSISupported";
 
 /// Which processors a device's interrupts go to, in plain words, from its
-/// `Affinity Policy` key (NOTES N138): nothing set means Windows chooses.
+/// `Affinity Policy` key (NOTES N140): nothing set means Windows chooses.
 /// The policy number is Windows' own (`DevicePolicy`); the processor list
 /// is the first eight bytes of `AssignmentSetOverride`, a bit per logical
-/// processor. What each policy number makes Windows do is VERIFY (N138),
+/// processor. What each policy number makes Windows do is VERIFY (N140),
 /// so the number is shown, not named.
 pub fn policy_text(policy: Option<u32>, mask: Option<&[u8]>) -> String {
     match policy {

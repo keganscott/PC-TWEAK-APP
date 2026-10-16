@@ -754,6 +754,9 @@ mod tests {
             temperature_c: temperature,
             memory_used_bytes: Probe::yes(1),
             memory_total_bytes: Probe::yes(2),
+            graphics_clock_mhz: Probe::yes(1800),
+            power_milliwatts: Probe::yes(200_000),
+            fan_percent: Probe::no("no fan"),
         }
     }
 

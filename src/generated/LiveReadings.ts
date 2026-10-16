@@ -2,6 +2,7 @@
 import type { GpuLive } from "./GpuLive";
 import type { MemoryUse } from "./MemoryUse";
 import type { Probe } from "./Probe";
+import type { ThermalZone } from "./ThermalZone";
 
 export type LiveReadings = { 
 /**
@@ -9,6 +10,22 @@ export type LiveReadings = {
  * took, across all cores, 0-100.
  */
 cpuBusyPercent: Probe<number>, 
+/**
+ * The processor's speed over the same half second, in MHz, worked out
+ * as Task Manager does: its base frequency times `% Processor
+ * Performance` (`Processor Information(_Total)`).
+ */
+cpuMhz: Probe<number>, 
+/**
+ * Each logical processor's `% Processor Utility` over the same half
+ * second, 0-100 (capped: with turbo it can pass 100), in Windows' order.
+ */
+cpuCores: Probe<Array<number>>, 
+/**
+ * Windows' ACPI thermal zones (`Thermal Zone Information`). Set by the
+ * motherboard's firmware; on many PCs none is the processor itself.
+ */
+thermalZones: Probe<Array<ThermalZone>>, 
 /**
  * The same reading as the standby-list action's (`memory.rs`).
  */

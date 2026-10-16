@@ -171,7 +171,10 @@ impl ThrottleTally {
 /// reading is its own probe: a driver that lacks one still gives the others.
 /// Layouts and names from NVIDIA's `nvml.h` (`nvmlUtilization_t`,
 /// `nvmlMemory_t`, `NVML_TEMPERATURE_GPU` = 0, a 96-byte name buffer), as
-/// shipped in NVIDIA/go-nvml `gen/nvml/nvml.h`, checked 2026-10-09.
+/// shipped in NVIDIA/go-nvml `gen/nvml/nvml.h`, checked 2026-10-09. The
+/// clock (`NVML_CLOCK_GRAPHICS` = 0, MHz), power (milliwatts) and fan
+/// (percent of the fan's top speed) calls and `NVML_ERROR_NOT_SUPPORTED` = 3
+/// are from the same header, checked 2026-10-16.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
@@ -184,6 +187,14 @@ pub struct GpuLive {
     /// Graphics memory in use (reserved and allocated), and in all, in bytes.
     pub memory_used_bytes: Probe<u64>,
     pub memory_total_bytes: Probe<u64>,
+    /// The graphics clock right now, in MHz.
+    pub graphics_clock_mhz: Probe<u32>,
+    /// The whole board's power draw right now, in milliwatts. No on GPUs
+    /// that do not report it.
+    pub power_milliwatts: Probe<u32>,
+    /// The fan's speed as a share of its rated top speed (NVML: can pass
+    /// 100). No on GPUs without a fan NVML can read (most laptops).
+    pub fan_percent: Probe<u32>,
 }
 
 #[cfg(windows)]
@@ -212,6 +223,7 @@ mod real {
 
     type NvmlReturn = i32;
     const NVML_SUCCESS: NvmlReturn = 0;
+    const NVML_ERROR_NOT_SUPPORTED: NvmlReturn = 3;
 
     type Init = unsafe extern "C" fn() -> NvmlReturn;
     type Count = unsafe extern "C" fn(*mut u32) -> NvmlReturn;
@@ -222,6 +234,9 @@ mod real {
     /// `nvmlMemory_t`: total, free, used.
     type Memory = unsafe extern "C" fn(*mut c_void, *mut [u64; 3]) -> NvmlReturn;
     type Name = unsafe extern "C" fn(*mut c_void, *mut u8, u32) -> NvmlReturn;
+    type Clock = unsafe extern "C" fn(*mut c_void, u32, *mut u32) -> NvmlReturn;
+    /// Power in milliwatts, or fan speed in percent.
+    type OneValue = unsafe extern "C" fn(*mut c_void, *mut u32) -> NvmlReturn;
 
     struct Lib {
         get_count: Count,
@@ -232,6 +247,9 @@ mod real {
         get_temperature: Option<Temperature>,
         get_memory: Option<Memory>,
         get_name: Option<Name>,
+        get_clock: Option<Clock>,
+        get_power: Option<OneValue>,
+        get_fan: Option<OneValue>,
         // The module stays loaded for the life of the process.
         _module: HMODULE,
     }
@@ -325,6 +343,9 @@ mod real {
             get_temperature: optional!("nvmlDeviceGetTemperature", Temperature),
             get_memory: optional!("nvmlDeviceGetMemoryInfo", Memory),
             get_name: optional!("nvmlDeviceGetName", Name),
+            get_clock: optional!("nvmlDeviceGetClockInfo", Clock),
+            get_power: optional!("nvmlDeviceGetPowerUsage", OneValue),
+            get_fan: optional!("nvmlDeviceGetFanSpeed", OneValue),
             _module: module,
         })
     }
@@ -377,6 +398,18 @@ mod real {
         }
     }
 
+    /// As `read`, but a GPU that does not support the reading is a No.
+    fn read_or_no<F, T>(f: Option<F>, what: &str, call: impl FnOnce(F) -> (NvmlReturn, T)) -> Probe<T> {
+        let Some(f) = f else {
+            return Probe::unknown(format!("this NVIDIA driver's NVML has no {what} call"));
+        };
+        match call(f) {
+            (NVML_SUCCESS, value) => Probe::yes(value),
+            (NVML_ERROR_NOT_SUPPORTED, _) => Probe::no(format!("this GPU does not report its {what}")),
+            (rc, _) => Probe::unknown(format!("reading the {what} failed with code {rc}")),
+        }
+    }
+
     unsafe fn gpu_live(lib: &Lib, handle: *mut c_void) -> GpuLive {
         let memory = read(lib.get_memory, "memory use", |f| {
             let mut m = [0u64; 3];
@@ -399,6 +432,18 @@ mod real {
             }),
             memory_used_bytes: memory.clone().map(|m| m[2]),
             memory_total_bytes: memory.map(|m| m[0]),
+            graphics_clock_mhz: read_or_no(lib.get_clock, "graphics clock", |f| {
+                let mut mhz = 0u32;
+                (f(handle, 0, &mut mhz), mhz)
+            }),
+            power_milliwatts: read_or_no(lib.get_power, "power draw", |f| {
+                let mut mw = 0u32;
+                (f(handle, &mut mw), mw)
+            }),
+            fan_percent: read_or_no(lib.get_fan, "fan speed", |f| {
+                let mut p = 0u32;
+                (f(handle, &mut p), p)
+            }),
         }
     }
 

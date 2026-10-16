@@ -6,7 +6,10 @@ import type { Probe } from "./Probe";
  * reading is its own probe: a driver that lacks one still gives the others.
  * Layouts and names from NVIDIA's `nvml.h` (`nvmlUtilization_t`,
  * `nvmlMemory_t`, `NVML_TEMPERATURE_GPU` = 0, a 96-byte name buffer), as
- * shipped in NVIDIA/go-nvml `gen/nvml/nvml.h`, checked 2026-10-09.
+ * shipped in NVIDIA/go-nvml `gen/nvml/nvml.h`, checked 2026-10-09. The
+ * clock (`NVML_CLOCK_GRAPHICS` = 0, MHz), power (milliwatts) and fan
+ * (percent of the fan's top speed) calls and `NVML_ERROR_NOT_SUPPORTED` = 3
+ * are from the same header, checked 2026-10-16.
  */
 export type GpuLive = { name: Probe<string>, 
 /**
@@ -20,4 +23,18 @@ temperatureC: Probe<number>,
 /**
  * Graphics memory in use (reserved and allocated), and in all, in bytes.
  */
-memoryUsedBytes: Probe<number>, memoryTotalBytes: Probe<number>, };
+memoryUsedBytes: Probe<number>, memoryTotalBytes: Probe<number>, 
+/**
+ * The graphics clock right now, in MHz.
+ */
+graphicsClockMhz: Probe<number>, 
+/**
+ * The whole board's power draw right now, in milliwatts. No on GPUs
+ * that do not report it.
+ */
+powerMilliwatts: Probe<number>, 
+/**
+ * The fan's speed as a share of its rated top speed (NVML: can pass
+ * 100). No on GPUs without a fan NVML can read (most laptops).
+ */
+fanPercent: Probe<number>, };

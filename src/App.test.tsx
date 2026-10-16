@@ -123,6 +123,11 @@ describe("App", () => {
     expect(within(section).getByRole("meter", { name: "Memory: 57 percent in use" })).toBeTruthy();
     expect(within(section).getByText("Sample graphics card")).toBeTruthy();
     expect(within(section).getByText("SAMPLE")).toBeTruthy();
+    expect(within(section).getByText(/^\d\.\d\d GHz$/)).toBeTruthy();
+    expect(within(section).getByRole("img", { name: /^12 logical processors, the busiest at \d+ percent$/ })).toBeTruthy();
+    expect(within(section).getByText(/Reading the processor's own temperature needs a driver PeakTweaks does not install/)).toBeTruthy();
+    expect(within(section).getByText(/^\d+ W$/)).toBeTruthy();
+    expect(within(section).getByRole("img", { name: /^Graphics memory: 3\.2 GB of 8\.0 GB$/ })).toBeTruthy();
     cleanup();
 
     gpus = { state: "unknown", reason: "nvml.dll was not found" };

@@ -11,7 +11,6 @@ import {
   Printer,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -26,12 +25,12 @@ import { formatDate, formatDateTime, formatGiB, probeValue, RIG_LABEL } from "..
 import { playedReports, reportNotes } from "../../lib/playReport";
 import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
 import { restartCheck } from "../../lib/restartCheck";
-import { useActions, useLiveReadings, useStore, useTechnical } from "../../store/hooks";
+import { useActions, useStore, useTechnical } from "../../store/hooks";
 import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
 import { GamingModeCard } from "../shell/GamingModeButton";
 import { LastChange } from "./LastChange";
-import { gb, useCleanMemory } from "./MemoryCleaner";
+import { LiveDashboard } from "./LiveDashboard";
 import { useNavigate } from "../shell/nav";
 import { RestorePointButton } from "../shell/RestorePointButton";
 import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, Spinner, StatusBadge, type Tone } from "../ui/primitives";
@@ -79,7 +78,7 @@ export function HomeView() {
       <LastGame />
       <Reminders />
       <YourPc audit={audit} />
-      <RightNow />
+      <LiveDashboard />
       <div className="grid items-start gap-3.5 lg:grid-cols-[1.65fr_1fr]">
         <div className="flex min-w-0 flex-col gap-4">
           {audit ? <Findings findings={audit.scan.findings} /> : <FindingsSkeleton />}
@@ -551,171 +550,6 @@ function YourPc({ audit }: { audit: SystemAudit | null }) {
 // Right now: live readings, read every few seconds while Home is on screen
 // (real readings only, plan section 7; `live.rs`)
 // ---------------------------------------------------------------------------
-
-function RightNow() {
-  const live = useStore((s) => s.live);
-  const op = useStore((s) => s.liveOp);
-  const sample = useStore((s) => s.sample);
-  useLiveReadings();
-
-  const memory = live?.memory.state === "yes" ? live.memory.value : null;
-  const gpus = live?.gpus.state === "yes" ? live.gpus.value : [];
-
-  return (
-    <section aria-labelledby="right-now-title" className="print:hidden">
-      <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h2 id="right-now-title" className="text-[15px] font-extrabold tracking-tight">
-            Right now
-          </h2>
-          {sample && <SampleBadge />}
-        </div>
-        <span className="text-xs font-semibold text-ink-faint">Read from Windows every few seconds</span>
-      </div>
-      {!live ? (
-        op.status === "failed" ? (
-          <ErrorCallout text={explain(op.error)} technical={false} />
-        ) : (
-          <Skeleton className="h-24" label="Loading live readings" />
-        )
-      ) : (
-        <ul className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
-          <LiveMeter label="Processor" icon={Cpu} reading={live.cpuBusyPercent} unit="busy" />
-          <LiveMeter
-            label="Memory"
-            icon={MemoryStick}
-            reading={
-              memory
-                ? { state: "yes", value: Math.round(((memory.totalBytes - memory.availableBytes) / memory.totalBytes) * 100) }
-                : { state: "unknown", reason: live.memory.state === "yes" ? "" : live.memory.reason }
-            }
-            unit="in use"
-            detail={memory && `${formatGiB(memory.totalBytes - memory.availableBytes)} of ${formatGiB(memory.totalBytes)}`}
-            action={<CleanMemoryButton />}
-          />
-          {gpus.map((g, i) => {
-            const name = g.name.state === "yes" ? g.name.value : `Graphics card ${i + 1}`;
-            const used = g.memoryUsedBytes.state === "yes" ? g.memoryUsedBytes.value : null;
-            const total = g.memoryTotalBytes.state === "yes" ? g.memoryTotalBytes.value : null;
-            return (
-              <LiveMeter
-                key={i}
-                label="Graphics card"
-                icon={Gpu}
-                reading={g.busyPercent}
-                unit="busy"
-                detail={
-                  <>
-                    <span className="block truncate">{name}</span>
-                    {g.temperatureC.state === "yes" && <span>{g.temperatureC.value} °C</span>}
-                    {g.temperatureC.state === "yes" && used !== null && total !== null && <span> · </span>}
-                    {used !== null && total !== null && (
-                      <span>
-                        {formatGiB(used)} of {formatGiB(total)} graphics memory
-                      </span>
-                    )}
-                  </>
-                }
-              />
-            );
-          })}
-          {live.gpus.state !== "yes" && (
-            <li className="flex min-h-24 flex-col rounded-2xl border border-line bg-surface-1 px-[18px] py-4 text-xs text-ink-muted">
-              <span className="flex items-center gap-2">
-                <Gpu aria-hidden className="size-4 text-ink-faint" strokeWidth={1.8} />
-                <Eyebrow>Graphics card</Eyebrow>
-              </span>
-              <p className="mt-3">
-                {live.gpus.state === "no"
-                  ? "No NVIDIA graphics card to read. AMD and Intel cards are not read yet."
-                  : `Not read: ${live.gpus.reason}. AMD and Intel cards are not read yet.`}
-              </p>
-            </li>
-          )}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function LiveMeter({
-  label,
-  icon: Icon,
-  reading,
-  unit,
-  detail,
-  action,
-}: {
-  label: string;
-  icon: LucideIcon;
-  reading: Probe<number>;
-  unit: string;
-  detail?: ReactNode;
-  action?: ReactNode;
-}) {
-  const value = reading.state === "yes" ? Math.min(100, Math.max(0, reading.value)) : null;
-  return (
-    <li className="flex min-h-24 flex-col rounded-2xl border border-line bg-surface-1 px-[18px] py-4">
-      <span className="flex items-center gap-2">
-        <Icon aria-hidden className="size-4 text-ink-faint" strokeWidth={1.8} />
-        <Eyebrow>{label}</Eyebrow>
-      </span>
-      {value === null ? (
-        <p className="mt-3 text-xs text-ink-muted">Not read: {reading.state === "yes" ? "" : reading.reason}</p>
-      ) : (
-        <>
-          <p className="mt-2 text-xl font-bold tracking-tight tabular-nums">
-            {value}
-            <span className="text-sm">%</span>
-            <span className="ml-1.5 text-xs font-semibold text-ink-muted">{unit}</span>
-          </p>
-          <div
-            role="meter"
-            aria-label={`${label}: ${value} percent ${unit}`}
-            aria-valuenow={value}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-3"
-          >
-            <div className="h-full rounded-full bg-violet-soft transition-[width] duration-500" style={{ width: `${value}%` }} />
-          </div>
-        </>
-      )}
-      {detail && <div className="mt-2 text-xs text-ink-muted">{detail}</div>}
-      {action && <div className="mt-auto pt-3">{action}</div>}
-    </li>
-  );
-}
-
-/** Clean memory from Home's memory tile: the same action as Tools' Quick tools. */
-function CleanMemoryButton() {
-  const { op, capturing, clean } = useCleanMemory();
-  const result = op.status === "done" ? op.value : null;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <Button
-        variant="secondary"
-        className="px-3 py-1.5 text-xs"
-        busy={op.status === "running"}
-        disabled={capturing}
-        onClick={() => void clean()}
-        icon={<Sparkles aria-hidden className="size-3.5" />}
-      >
-        Clean memory
-      </Button>
-      {result && (
-        <span role="status" className="text-xs text-ink-muted">
-          Cleaned: {gb(Math.max(0, result.before.cachedBytes - result.after.cachedBytes))} of files let go.
-        </span>
-      )}
-      {op.status === "failed" && (
-        <span role="alert" className="text-xs text-bad">
-          {explain(op.error).title}
-        </span>
-      )}
-    </div>
-  );
-}
 
 function Tile({
   label,

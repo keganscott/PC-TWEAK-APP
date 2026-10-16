@@ -443,6 +443,9 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         const wobble = (base: number) => base + ((live * 7) % 9) - 4;
         return {
           cpuBusyPercent: { state: "yes", value: wobble(23) },
+          cpuMhz: { state: "yes", value: 4200 + wobble(0) * 25 },
+          cpuCores: { state: "yes", value: [41, 12, 30, 8, 22, 5, 64, 17, 9, 3, 26, 14].map((c, i) => Math.max(0, c + ((live * (i + 3)) % 11) - 5)) },
+          thermalZones: { state: "yes", value: [{ name: "\\_TZ.THRM", celsius: 44 + (((live * 3) % 5) - 2) / 2 }] },
           memory: { state: "yes", value: { totalBytes: 16 * 2 ** 30, availableBytes: 6.9 * 2 ** 30, cachedBytes: cached } },
           gpus: {
             state: "yes",
@@ -453,6 +456,9 @@ export function createMockBackend(options: MockOptions = {}): Backend {
                 temperatureC: { state: "yes", value: wobble(58) },
                 memoryUsedBytes: { state: "yes", value: 3.2 * 2 ** 30 },
                 memoryTotalBytes: { state: "yes", value: 8 * 2 ** 30 },
+                graphicsClockMhz: { state: "yes", value: 1785 + wobble(0) * 15 },
+                powerMilliwatts: { state: "yes", value: (118 + wobble(0) * 3) * 1000 },
+                fanPercent: { state: "yes", value: wobble(38) },
               },
             ],
           },

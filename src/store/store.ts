@@ -138,10 +138,15 @@ export interface State {
   /** Home's live readings: the newest answer, kept while the next is read. */
   live: LiveReadings | null;
   liveOp: Op;
+  /** The last `LIVE_HISTORY` readings, oldest first, for Home's graphs. Only
+   * what was read while a page asked; nothing is kept on disk. */
+  liveHistory: LiveReadings[];
   bus: BusEntry[];
 }
 
 export const BUS_LIMIT = 200;
+/** Readings kept for Home's live graphs: two minutes at one every three seconds. */
+export const LIVE_HISTORY = 40;
 
 export function initialState(sample: boolean): State {
   return {
@@ -181,6 +186,7 @@ export function initialState(sample: boolean): State {
     msi: null,
     msiOp: IDLE,
     live: null,
+    liveHistory: [],
     liveOp: IDLE,
     bus: [],
   };
@@ -741,8 +747,6 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       await refreshMsi();
     },
 
-    /** Read the live processor, memory and GPU readings once. Reads only. The
-     * newest answer wins; one already being read is not asked for again. */
     /** One live reading. `fresh`: also while a poll is out, since that one
      * may have been read before a change (the newer request wins). */
     async readLive(fresh = false) {
@@ -751,7 +755,14 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       set((s) => ({ ...s, liveOp: RUNNING }));
       try {
         const live = await backend.liveReadings();
-        if (current()) set((s) => ({ ...s, live, liveOp: { status: "done", value: null } }));
+        if (current()) {
+          set((s) => ({
+            ...s,
+            live,
+            liveHistory: [...s.liveHistory, live].slice(-LIVE_HISTORY),
+            liveOp: { status: "done", value: null },
+          }));
+        }
       } catch (e) {
         if (current()) set((s) => ({ ...s, liveOp: failed(e) }));
       }

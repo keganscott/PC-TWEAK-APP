@@ -515,6 +515,28 @@ jobs:
           path: ${{ runner.temp }}/tester/peaktweaks-tester.exe
           if-no-files-found: error
 
+      # The installers (docs/RELEASE.md): the release build and the tester build,
+      # each as an NSIS setup .exe. Signed with Azure Artifact Signing when the
+      # signing secrets exist, otherwise built unsigned and said so. Each is
+      # installed silently, checked (files, desktop shortcut, admin manifest,
+      # signature) and uninstalled again.
+      - name: Installers (build, sign if configured, install, uninstall)
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SIGNING_ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ vars.SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ vars.SIGNING_PROFILE }}
+        run: ./scripts/build-installers.ps1 -Out (Join-Path $env:RUNNER_TEMP 'installers')
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: peaktweaks-installers
+          path: ${{ runner.temp }}/installers/*.exe
+          if-no-files-found: error
+
       # Phase 5 gate, runtime half (the dependency half is check-no-network-deps.sh):
       # Windows' own connection audit log, a positive control, then 150 s of the
       # shipped exe and every process it starts. Fails on any network connection

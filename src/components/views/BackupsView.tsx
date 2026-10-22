@@ -615,6 +615,7 @@ const ACTION_DONE: Record<OneTimeAction, string> = {
   cleanup: "Cleared junk files",
   optimize_drive: "Optimized the Windows drive",
   install_gpu_driver: "NVIDIA driver clean install",
+  repair_windows: "Repaired Windows files",
 };
 
 const ACTION_FAILED: Record<OneTimeAction, string> = {
@@ -622,6 +623,7 @@ const ACTION_FAILED: Record<OneTimeAction, string> = {
   cleanup: "Could not clear junk files",
   optimize_drive: "The drive optimization did not finish",
   install_gpu_driver: "The NVIDIA driver install did not finish",
+  repair_windows: "The Windows repair did not finish",
 };
 
 function describeDone(done: ActionDone): string {
@@ -639,6 +641,8 @@ function describeDone(done: ActionDone): string {
       return `started ${done.version ? `driver ${done.version}` : done.file} (a restore point puts the old driver back)`;
     case "gpu_driver_installed":
       return `driver ${done.version ?? done.file} installed${done.restart ? ", restart Windows to finish" : ""}`;
+    case "repair_windows":
+      return `Windows took ${formatDuration(done.seconds)}: ${done.sfcSummary}`;
   }
 }
 

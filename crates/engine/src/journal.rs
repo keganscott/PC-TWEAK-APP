@@ -225,6 +225,8 @@ pub enum OneTimeAction {
     OptimizeDrive,
     /// A clean install of an NVIDIA driver the user downloaded (`gpu_install.rs`).
     InstallGpuDriver,
+    /// Windows' own repair tools, DISM then SFC (`repair.rs`).
+    RepairWindows,
 }
 
 /// What a one-time action did, as numbers the screen words itself.
@@ -253,6 +255,8 @@ pub enum ActionDone {
         version: Option<String>,
         restart: bool,
     },
+    /// How long DISM and SFC took, and SFC's own last line.
+    RepairWindows { seconds: u64, sfc_summary: String },
 }
 
 /// A one-time action that ran: it changes no setting, so there is nothing to

@@ -57,8 +57,8 @@ Written after the action ran. It changes no setting, so it has nothing to undo a
 | Field | Meaning |
 |---|---|
 | `seq`, `unixMs` | As above. |
-| `action` | `purge_standby` (emptied the standby list), `cleanup` (deleted junk files) or `optimize_drive` (Windows' drive optimization). |
-| `done` | What it did, or `null` when it failed. An object with the same `action` tag and: for `purge_standby`, `cachedBefore` and `cachedAfter` (bytes of files Windows kept in memory); for `cleanup`, `areas` (`user_temp`, `windows_temp`, `thumbnails`, `shader_caches`, `crash_dumps`), `removedBytes`, `removedFiles` and `leftFiles` (files left because a program had them open or Windows refused); for `optimize_drive`, `drive` (`C:`) and `seconds`. |
+| `action` | `purge_standby` (emptied the standby list), `cleanup` (deleted junk files), `optimize_drive` (Windows' drive optimization), `install_gpu_driver` (an NVIDIA clean install) or `repair_windows` (DISM, then SFC). |
+| `done` | What it did, or `null` when it failed. An object with the same `action` tag and: for `purge_standby`, `cachedBefore` and `cachedAfter` (bytes of files Windows kept in memory); for `cleanup`, `areas` (`user_temp`, `windows_temp`, `thumbnails`, `shader_caches`, `crash_dumps`), `removedBytes`, `removedFiles` and `leftFiles` (files left because a program had them open or Windows refused); for `optimize_drive`, `drive` (`C:`) and `seconds`; for `repair_windows`, `seconds` and `sfcSummary` (System File Checker's own last line, in the PC's language). |
 | `error` | Why it failed, or `null`. |
 
 ## Order of operations

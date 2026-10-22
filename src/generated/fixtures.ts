@@ -22,6 +22,7 @@ import type { StandbyPurge } from "./StandbyPurge";
 import type { StartupList } from "./StartupList";
 import type { SystemAudit } from "./SystemAudit";
 import type { TweakView } from "./TweakView";
+import type { WindowsRepair } from "./WindowsRepair";
 
 export const tweakViews = [
   {
@@ -1311,6 +1312,29 @@ export const cleanupReport = {
   ],
   "unixMs": 1791331500000
 } satisfies CleanupReport;
+
+export const windowsRepair = {
+  "unixMs": 1791331900000,
+  "seconds": 1260,
+  "dism": {
+    "exitCode": 0,
+    "summary": "The operation completed successfully.",
+    "report": [
+      "Image Version: 10.0.26100.2033",
+      "The restore operation completed successfully.",
+      "The operation completed successfully."
+    ]
+  },
+  "sfc": {
+    "exitCode": 0,
+    "summary": "Windows Resource Protection did not find any integrity violations.",
+    "report": [
+      "Beginning system scan.  This process will take some time.",
+      "Verification 100% complete.",
+      "Windows Resource Protection did not find any integrity violations."
+    ]
+  }
+} satisfies WindowsRepair;
 
 export const gpuDriverInstall = {
   "file": "123.45-sample-driver.exe",

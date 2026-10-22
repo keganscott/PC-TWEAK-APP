@@ -29,6 +29,7 @@ const COMMANDS: &[&str] = &[
     "cleanup_measure",
     "cleanup_run",
     "optimize_drive",
+    "repair_windows",
     "list_startup_apps",
     "list_msi_devices",
     "live_readings",

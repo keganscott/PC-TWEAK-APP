@@ -27,6 +27,7 @@ use peaktweaks_engine::proof::auto::AutoRecordStatus;
 use peaktweaks_engine::proof::service::{BeginSession, ProofService};
 use peaktweaks_engine::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use peaktweaks_engine::proof::verdict::Comparison;
+use peaktweaks_engine::repair::{self, WindowsRepair};
 use peaktweaks_engine::restore::{create_restore_point as run_create_restore_point, RestoreOutcome};
 use peaktweaks_engine::settings::Settings;
 use peaktweaks_engine::startup::{StartupFolders, StartupList};
@@ -730,6 +731,37 @@ pub async fn optimize_drive(app: AppHandle, engine: State<'_, EngineHandle>) -> 
         detail: format!("drive worker failed: {e}"),
     })?;
     progress(&app, if out.is_ok() { "drive_done" } else { "drive_failed" }, None, "");
+    out
+}
+
+/// Run Windows' own repair tools now: DISM, then SFC (game plan C, Repair
+/// Windows). They replace damaged Windows files, which cannot be undone, so a
+/// verified restore point comes first, as for a driver install. Takes half
+/// an hour or more; the engine lock is not held meanwhile.
+#[tauri::command]
+pub async fn repair_windows(app: AppHandle, engine: State<'_, EngineHandle>) -> Result<WindowsRepair> {
+    let shared = engine.get()?;
+    refuse_while_recording(&shared, "repair Windows")?;
+    blocking(&engine, |e| e.require_restore_point()).await?;
+    let activity = Activity::start("a Windows repair")?;
+    progress(&app, "repair", None, "Repairing Windows files");
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let _activity = activity;
+        let out = repair::repair(repair::system().as_ref(), now_ms());
+        let outcome = out.as_ref().map(WindowsRepair::done).map_err(ToString::to_string);
+        record_action(&shared, OneTimeAction::RepairWindows, outcome);
+        out
+    })
+    .await
+    .map_err(|e| EngineError::Internal {
+        detail: format!("repair worker failed: {e}"),
+    })?;
+    progress(
+        &app,
+        if out.is_ok() { "repair_done" } else { "repair_failed" },
+        None,
+        "",
+    );
     out
 }
 

@@ -721,6 +721,25 @@ describe("App", () => {
     expect(within(junk).queryByText("Available again when the drive optimization finishes.")).toBeNull();
   });
 
+  it("Tools repairs Windows files only with a restore point, then shows SFC's own verdict", async () => {
+    renderApp(createMockBackend({ gateOpen: false }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    let card = await screen.findByRole("region", { name: "Repair Windows files" });
+    expect(within(card).getByText(/may download repair files from Windows Update/)).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Repair now" }).hasAttribute("disabled")).toBe(true);
+    expect(within(card).getByText(/Needs a verified restore point first/)).toBeTruthy();
+    cleanup();
+
+    renderApp(createMockBackend({ gateOpen: true }));
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    card = await screen.findByRole("region", { name: "Repair Windows files" });
+    await userEvent.click(within(card).getByRole("button", { name: "Repair now" }));
+    expect(await within(card).findByText(/Windows Resource Protection did not find any integrity violations\./)).toBeTruthy();
+    expect(within(card).getByText(/Windows took 21 minutes/)).toBeTruthy();
+  });
+
   it("Backups says when a change in effect was applied", async () => {
     renderApp(createMockBackend({ gateOpen: true }));
     await screen.findByRole("heading", { name: "Home", level: 1 });

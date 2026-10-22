@@ -145,6 +145,7 @@ fn main() {
             commands::cleanup_measure,
             commands::cleanup_run,
             commands::optimize_drive,
+            commands::repair_windows,
             commands::list_startup_apps,
             commands::list_msi_devices,
             commands::launch_game,

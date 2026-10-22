@@ -3,4 +3,4 @@
 /**
  * A one-time action from Tools > One-time actions.
  */
-export type OneTimeAction = "purge_standby" | "cleanup" | "optimize_drive" | "install_gpu_driver";
+export type OneTimeAction = "purge_standby" | "cleanup" | "optimize_drive" | "install_gpu_driver" | "repair_windows";

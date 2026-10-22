@@ -404,6 +404,9 @@ function OneTimeActions() {
         <li>
           <CleanupCard />
         </li>
+        <li>
+          <RepairCard />
+        </li>
       </ul>
     </section>
   );
@@ -415,6 +418,7 @@ const WAIT_FOR: Record<LongWork, string> = {
   cleanup: "Available again when the junk cleanup finishes.",
   drive: "Available again when the drive optimization finishes.",
   driver: "Available again when the driver install finishes.",
+  repair: "Available again when the Windows repair finishes.",
 };
 
 /** Catalogue H28, in the engine's order. */
@@ -668,6 +672,69 @@ function DriveCard() {
       {technical && result && result.report.length > 0 && (
         <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-ink-faint">
           {result.report.join("\n")}
+        </pre>
+      )}
+      {op.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Game plan C, Repair Windows: DISM then SFC, Windows' own tools, now. They
+ * replace damaged Windows files, which Undo cannot put back, so the engine
+ * wants a verified restore point first (NOTES N146). */
+function RepairCard() {
+  const op = useStore((s) => s.repairOp);
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
+  const waiting = useStore((s) => otherLongWork(s, "repair"));
+  const sample = useStore((s) => s.sample);
+  const technical = useTechnical();
+  const { repairWindows } = useActions();
+  const headingId = useId();
+  const running = op.status === "running";
+  const result = op.status === "done" ? op.value : null;
+
+  return (
+    <Card className="p-4" aria-labelledby={headingId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 id={headingId} className="font-bold">
+              Repair Windows files
+            </h3>
+            {sample && <SampleBadge />}
+          </div>
+          <p className="mt-1 text-sm text-ink-muted">
+            Runs Windows' own repair tools in the order Microsoft gives: DISM repairs the store Windows keeps its files in,
+            then System File Checker checks every protected Windows file and replaces any that are damaged. Worth running
+            when Windows or games crash or updates fail. It takes half an hour or more, and DISM may download repair files
+            from Windows Update.
+          </p>
+          <p className="mt-1 text-sm text-ink-muted">Replaced files cannot be put back with Undo; a restore point can.</p>
+          {gateOpen !== true && !running && (
+            <p className="mt-2 text-sm text-ink-muted">Needs a verified restore point first (Backups).</p>
+          )}
+          {waiting && <p className="mt-2 text-sm text-ink-muted">{WAIT_FOR[waiting]}</p>}
+          {running && (
+            <p className="mt-2 text-sm text-ink-muted">Windows is working on it. The result shows here when it finishes.</p>
+          )}
+          {result && (
+            <p className="mt-2 text-sm" role="status">
+              Repaired {formatDateTime(result.unixMs)}. Windows took {formatDuration(result.seconds)}. System File Checker
+              said: {result.sfc.summary || "nothing"}
+            </p>
+          )}
+        </div>
+        <Button busy={running} disabled={waiting !== null || gateOpen !== true} onClick={() => void repairWindows()}>
+          Repair now
+        </Button>
+      </div>
+      {technical && result && (
+        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-ink-faint">
+          {["DISM:", ...result.dism.report, "", "SFC:", ...result.sfc.report].join("\n")}
         </pre>
       )}
       {op.status === "failed" && (

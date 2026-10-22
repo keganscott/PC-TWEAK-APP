@@ -524,6 +524,21 @@ export function createMockBackend(options: MockOptions = {}): Backend {
         installedDriver = result.version;
         return result;
       }),
+    repairWindows: () =>
+      reply("repairWindows", [], () => {
+        if (!gateOpen) {
+          throw blocked({
+            code: "no_restore_point",
+            trigger: null,
+            message: "There is no verified restore point, so there is nothing to roll back to.",
+          });
+        }
+        // SAMPLE: neither DISM nor SFC runs.
+        emit("repair", "Repairing Windows files");
+        const result = { ...clone(fx.windowsRepair), unixMs: Date.now() };
+        recordAction({ action: "repair_windows", seconds: result.seconds, sfcSummary: result.sfc.summary });
+        return result;
+      }),
     optimizeDrive: () =>
       reply("optimizeDrive", [], () => {
         emit("drive", "Optimizing the Windows drive");

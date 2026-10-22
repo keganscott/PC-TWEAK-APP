@@ -485,6 +485,31 @@ describe("one-time actions", () => {
     expect(store.getState().driveOp).toEqual({ status: "failed", error });
   });
 
+  it("repairs Windows after a restore point and keeps SFC's own last line", async () => {
+    const { store } = await booted({ gateOpen: true });
+    await store.actions.repairWindows();
+    const op = store.getState().repairOp;
+    if (op.status !== "done") throw new Error(`repair ${op.status}`);
+    expect(op.value.sfc.summary).toBe("Windows Resource Protection did not find any integrity violations.");
+    const actions = (store.getState().journal?.records ?? []).flatMap((r) => (r.record === "action" ? [r.action] : []));
+    expect(actions.at(-1)).toBe("repair_windows");
+  });
+
+  it("a repair without a verified restore point is refused before anything runs", async () => {
+    const { store } = await booted({ gateOpen: false });
+    await store.actions.repairWindows();
+    expect(store.getState().repairOp).toMatchObject({ status: "failed", error: { kind: "blocked" } });
+  });
+
+  it("a repair is long work: other long work waits for it", async () => {
+    const { store } = await booted({ gateOpen: true, latencyFor: (command) => (command === "repairWindows" ? 20 : undefined) });
+    const running = store.actions.repairWindows();
+    expect(otherLongWork(store.getState(), "drive")).toBe("repair");
+    expect(otherLongWork(store.getState(), "repair")).toBeNull();
+    await running;
+    expect(otherLongWork(store.getState(), "drive")).toBeNull();
+  });
+
   it("each one-time action adds a line to the change record", async () => {
     const { store } = await booted();
     const actions = () => (store.getState().journal?.records ?? []).flatMap((r) => (r.record === "action" ? [r.action] : []));

@@ -13,6 +13,7 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
 import type { DriveOptimization } from "../generated/DriveOptimization";
+import type { WindowsRepair } from "../generated/WindowsRepair";
 import type { DriverVendor } from "../generated/DriverVendor";
 import type { GameInfo } from "../generated/GameInfo";
 import type { GpuDriverInstall } from "../generated/GpuDriverInstall";
@@ -60,6 +61,8 @@ export interface Backend {
   cleanupMeasure(): Promise<AreaSize[]>;
   cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;
   optimizeDrive(): Promise<DriveOptimization>;
+  /** Windows' own repair tools, DISM then SFC. Needs a verified restore point; cannot be undone. */
+  repairWindows(): Promise<WindowsRepair>;
   /** Startup apps (catalogue H12). Each entry has two switches, each a change: one turns it off, one turns back on what was turned off elsewhere; revertTweak puts either back. */
   listStartupApps(): Promise<StartupList>;
   /** MSI mode per device (catalogue H6). Each is a change: applyTweak / revertTweak. */

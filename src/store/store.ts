@@ -19,6 +19,7 @@ import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
 import type { DriveOptimization } from "../generated/DriveOptimization";
+import type { WindowsRepair } from "../generated/WindowsRepair";
 import type { DriverVendor } from "../generated/DriverVendor";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
@@ -113,6 +114,8 @@ export interface State {
   cleanupOp: Op<CleanupReport>;
   /** "Optimize the Windows drive" (catalogue H29); keeps the last run for its card. */
   driveOp: Op<DriveOptimization>;
+  /** "Repair Windows" (DISM then SFC); keeps the last run for its card. */
+  repairOp: Op<WindowsRepair>;
   /** "Check the connection" (catalogue E4); keeps the last check for its card. */
   netcheckOp: Op<NetworkCheck>;
   /** "Play" on a game found in a Steam library, per game id. */
@@ -175,6 +178,7 @@ export function initialState(sample: boolean): State {
     cleanupSizesOp: IDLE,
     cleanupOp: IDLE,
     driveOp: IDLE,
+    repairOp: IDLE,
     netcheckOp: IDLE,
     launchOps: {},
     measureOps: {},
@@ -257,7 +261,7 @@ export const APPEARANCE = "appearance";
 export const AUTO_RUNS = 3;
 
 /** Long work the engine runs one at a time (`Activity` in commands.rs). */
-export type LongWork = "proof" | "cleanup" | "drive" | "driver";
+export type LongWork = "proof" | "cleanup" | "drive" | "driver" | "repair";
 
 /** The long work running now other than `own`, which would make the engine
  * refuse `own`. */
@@ -266,6 +270,7 @@ export function otherLongWork(s: State, own: LongWork): LongWork | null {
   if (own !== "cleanup" && s.cleanupOp.status === "running") return "cleanup";
   if (own !== "drive" && s.driveOp.status === "running") return "drive";
   if (own !== "driver" && s.driverInstallOp.status === "running") return "driver";
+  if (own !== "repair" && s.repairOp.status === "running") return "repair";
   return null;
 }
 
@@ -750,6 +755,19 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
         set((s) => ({ ...s, driveOp: { status: "done", value: result } }));
       } catch (e) {
         set((s) => ({ ...s, driveOp: failed(e) }));
+      }
+      await refreshJournal();
+    },
+
+    /** Run Windows' own repair tools. Replaces damaged Windows files: no Undo, a restore point first (the engine checks). */
+    async repairWindows() {
+      if (state.repairOp.status === "running") return;
+      set((s) => ({ ...s, repairOp: RUNNING }));
+      try {
+        const result = await backend.repairWindows();
+        set((s) => ({ ...s, repairOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, repairOp: failed(e) }));
       }
       await refreshJournal();
     },

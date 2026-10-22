@@ -16,6 +16,7 @@ import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
 import type { DriveOptimization } from "./generated/DriveOptimization";
+import type { WindowsRepair } from "./generated/WindowsRepair";
 import type { DriverVendor } from "./generated/DriverVendor";
 import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
@@ -123,6 +124,8 @@ export const engine = {
   cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
   /** Run Windows' own drive optimisation on the Windows drive (catalogue H29). Can take an hour or more on a hard drive. */
   optimizeDrive: () => call<DriveOptimization>("optimize_drive"),
+  /** Run Windows' own repair tools, DISM then SFC. Needs a verified restore point; takes half an hour or more. */
+  repairWindows: () => call<WindowsRepair>("repair_windows"),
   /** The programs Windows starts at sign-in, each with its switch (catalogue H12). Reads only; turn one off with applyTweak(its id). */
   listStartupApps: () => call<StartupList>("list_startup_apps"),
   /** MSI mode for each graphics card and network adapter (catalogue H6). Reads only; apply with applyTweak(its id). */

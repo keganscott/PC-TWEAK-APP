@@ -33,6 +33,7 @@ use crate::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use crate::proof::verdict::{compare, RunSummary};
 use crate::registry::fake::FakeRegistry;
 use crate::registry::Hive;
+use crate::repair::{RepairStep, WindowsRepair};
 use crate::restore::{FakeRestoreOps, FixedClock, RestoreOutcome, RestoreService};
 use crate::startup::{StartupFolders, StartupList};
 use crate::sysprobe::{SystemAudit, SystemProbe};
@@ -709,7 +710,8 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
          import type { StandbyPurge } from \"./StandbyPurge\";\n\
          import type { StartupList } from \"./StartupList\";\n\
          import type { SystemAudit } from \"./SystemAudit\";\n\
-         import type { TweakView } from \"./TweakView\";\n\n",
+         import type { TweakView } from \"./TweakView\";\n\
+         import type { WindowsRepair } from \"./WindowsRepair\";\n\n",
     );
 
     ts_const(&mut out, "tweakViews", "TweakView[]", &views());
@@ -804,6 +806,34 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
         },
     );
     ts_const(&mut out, "cleanupReport", "CleanupReport", &cleanup_report());
+    // The shape of a clean repair run, in English (SAMPLE in the UI).
+    ts_const(
+        &mut out,
+        "windowsRepair",
+        "WindowsRepair",
+        &WindowsRepair {
+            unix_ms: 1_791_331_900_000,
+            seconds: 1_260,
+            dism: RepairStep {
+                exit_code: Some(0),
+                summary: "The operation completed successfully.".into(),
+                report: vec![
+                    "Image Version: 10.0.26100.2033".into(),
+                    "The restore operation completed successfully.".into(),
+                    "The operation completed successfully.".into(),
+                ],
+            },
+            sfc: RepairStep {
+                exit_code: Some(0),
+                summary: "Windows Resource Protection did not find any integrity violations.".into(),
+                report: vec![
+                    "Beginning system scan.  This process will take some time.".into(),
+                    "Verification 100% complete.".into(),
+                    "Windows Resource Protection did not find any integrity violations.".into(),
+                ],
+            },
+        },
+    );
     // The shape of a finished clean install; the file name is made up (SAMPLE
     // in the UI), not a real NVIDIA release.
     ts_const(

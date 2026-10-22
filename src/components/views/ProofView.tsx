@@ -455,7 +455,14 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
             {toolsBusy && (
               <span className="text-sm text-ink-muted">
                 Available again when the{" "}
-                {toolsBusy === "drive" ? "drive optimization" : toolsBusy === "driver" ? "driver install" : "junk cleanup"} in Tools
+                {toolsBusy === "drive"
+                  ? "drive optimization"
+                  : toolsBusy === "driver"
+                    ? "driver install"
+                    : toolsBusy === "repair"
+                      ? "Windows repair"
+                      : "junk cleanup"}{" "}
+                in Tools
                 finishes.
               </span>
             )}

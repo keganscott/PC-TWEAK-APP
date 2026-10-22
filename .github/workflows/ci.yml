@@ -218,7 +218,7 @@ jobs:
       # analysis only (/A), which changes nothing. A test that prints SKIPPED
       # did not run its check.
       - name: One-time actions on this runner
-        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 the_standby_list_empties_on_this_pc measures_the_real_areas_on_this_pc defrag_runs_from_system32_on_this_pc windows_and_system32_are_real_folders
+        run: cargo test -p peaktweaks-engine -- --nocapture --test-threads=1 the_standby_list_empties_on_this_pc measures_the_real_areas_on_this_pc defrag_runs_from_system32_on_this_pc dism_runs_from_system32_on_this_pc windows_and_system32_are_real_folders
 
       # The driver tool's signature check (gpu_install.rs) against real files:
       # an unsigned one, the pinned PresentMon (signed by Intel, so refused as

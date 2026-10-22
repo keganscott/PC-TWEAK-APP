@@ -1788,4 +1788,18 @@ describe("What's holding this PC back", () => {
     expect(link.getAttribute("href")).toBe(`#finding-${attention[0]!.id}`);
     expect(document.getElementById(`finding-${attention[0]!.id}`)).toBeTruthy();
   });
+  it("points a PC with little memory or integrated graphics at the Low-end PC preset", async () => {
+    const backend = createMockBackend();
+    const auditSystem = backend.auditSystem.bind(backend);
+    backend.auditSystem = async () => {
+      const a = await auditSystem();
+      const findings = a.scan.findings.map((f) =>
+        f.id === "graphics.integrated" ? { ...f, status: "attention" as const, title: "Games run on integrated graphics", fixBy: "you" as const } : f,
+      );
+      return { ...a, scan: { ...a.scan, findings } };
+    };
+    renderApp(backend);
+    await screen.findByRole("list", { name: "What's holding this PC back" });
+    expect(screen.getByRole("button", { name: "Try the Low-end PC preset in Tools" })).toBeTruthy();
+  });
 });

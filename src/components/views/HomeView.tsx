@@ -973,9 +973,14 @@ const WHO: Record<FixBy, string> = { us: "One click", you: "You can fix", hardwa
 
 /** The biggest problems first: the engine already orders attention findings
  * by how much each tends to hold a PC back, so the top three are its first three. */
+/** Findings that mark a low-end PC, for which Tools has the Low-end PC preset. */
+const LOW_END_FINDINGS = new Set(["memory.capacity", "memory.channels", "graphics.integrated"]);
+
 function HoldingBack({ attention }: { attention: Finding[] }) {
+  const navigate = useNavigate();
   if (attention.length === 0) return null;
   const top = attention.slice(0, 3);
+  const lowEnd = attention.some((f) => LOW_END_FINDINGS.has(f.id));
   return (
     <div className="mb-3.5 rounded-2xl border border-violet/60 bg-surface-1 px-5 py-4">
       <h3 id="holding-back-title" className="text-sm font-extrabold">
@@ -994,6 +999,11 @@ function HoldingBack({ attention }: { attention: Finding[] }) {
           </li>
         ))}
       </ol>
+      {lowEnd && (
+        <div className="mt-3">
+          <LinkButton onClick={() => navigate("tools")}>Try the Low-end PC preset in Tools</LinkButton>
+        </div>
+      )}
     </div>
   );
 }

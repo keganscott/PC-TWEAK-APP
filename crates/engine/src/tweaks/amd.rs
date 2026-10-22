@@ -195,6 +195,22 @@ pub const VSYNC_OFF: AmdSetting = AmdSetting {
     values: &[(Setting::WaitForVerticalRefresh, vsync::ALWAYS_OFF)],
 };
 
+pub const SUPER_RESOLUTION: AmdSetting = AmdSetting {
+    id: "amd.rsr",
+    name: "Radeon Super Resolution: on",
+    summary: "Turns on Radeon Super Resolution in AMD Software's graphics settings. When a game runs in exclusive \
+              fullscreen at a resolution below the display's, the driver scales its picture up to the display's \
+              resolution with AMD FidelityFX Super Resolution 1 and sharpens it. Choosing that lower resolution in \
+              the game is up to you; at the display's own resolution nothing changes.",
+    target: "AMD Software > Gaming > Graphics > Radeon Super Resolution: Enabled",
+    safety: SafetyTier::Safe,
+    tradeoff: Some(
+        "A game at a lower resolution looks softer than at the display's own. Only exclusive fullscreen games \
+         use it.",
+    ),
+    values: &[(Setting::SuperResolution, 1)],
+};
+
 pub const FRAME_CAP_ID: &str = "amd.framecap";
 
 /// Radeon Frame Rate Target Control just under the main display's refresh
@@ -295,5 +311,10 @@ impl Tweak for FrameCap {
 }
 
 pub fn all() -> Vec<Box<dyn Tweak>> {
-    vec![Box::new(ANTI_LAG), Box::new(FrameCap), Box::new(VSYNC_OFF)]
+    vec![
+        Box::new(ANTI_LAG),
+        Box::new(FrameCap),
+        Box::new(SUPER_RESOLUTION),
+        Box::new(VSYNC_OFF),
+    ]
 }

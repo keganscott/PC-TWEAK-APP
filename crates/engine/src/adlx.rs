@@ -89,6 +89,7 @@ pub mod slot {
     pub const SERVICES_GET_CHILL: usize = 4;
     pub const SERVICES_GET_WAIT_FOR_VERTICAL_REFRESH: usize = 8;
     pub const SERVICES_GET_FRAME_RATE_TARGET_CONTROL: usize = 9;
+    pub const SERVICES_GET_RADEON_SUPER_RESOLUTION: usize = 14;
     pub const ANTI_LAG_IS_SUPPORTED: usize = 3;
     pub const ANTI_LAG_IS_ENABLED: usize = 4;
     pub const ANTI_LAG_SET_ENABLED: usize = 5;
@@ -106,6 +107,9 @@ pub mod slot {
     pub const FRTC_GET_FPS: usize = 6;
     pub const FRTC_SET_ENABLED: usize = 7;
     pub const FRTC_SET_FPS: usize = 8;
+    pub const RSR_IS_SUPPORTED: usize = 3;
+    pub const RSR_IS_ENABLED: usize = 4;
+    pub const RSR_SET_ENABLED: usize = 5;
 }
 
 /// One AMD graphics card as ADLX lists it.
@@ -133,15 +137,21 @@ pub enum Setting {
     /// frames per second as its target. Turning it off leaves the target
     /// number as it was, unused.
     FrameRateTarget,
+    /// Radeon Super Resolution: 1 on, 0 off. One setting for the whole PC,
+    /// not per card (`GetRadeonSuperResolution` takes no card), so every card
+    /// reads the same; Undo puts each card's recorded value back in reverse
+    /// order, which ends on the value from before the first change.
+    SuperResolution,
 }
 
 impl Setting {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::AntiLag,
         Self::AntiLagLevel,
         Self::Chill,
         Self::WaitForVerticalRefresh,
         Self::FrameRateTarget,
+        Self::SuperResolution,
     ];
 
     pub const fn key(self) -> &'static str {
@@ -151,6 +161,7 @@ impl Setting {
             Self::Chill => "chill",
             Self::WaitForVerticalRefresh => "wait_for_vertical_refresh",
             Self::FrameRateTarget => "frame_rate_target",
+            Self::SuperResolution => "super_resolution",
         }
     }
 
@@ -165,6 +176,7 @@ impl Setting {
             Self::Chill => "Radeon Chill",
             Self::WaitForVerticalRefresh => "Wait for Vertical Refresh",
             Self::FrameRateTarget => "Radeon Frame Rate Target Control",
+            Self::SuperResolution => "Radeon Super Resolution",
         }
     }
 }
@@ -295,7 +307,10 @@ mod real {
             None => return Err(AdlxError::Failed("amdadlx64.dll has no ADLXInitialize".into())),
         };
         // The library's own version: every slot used here dates from ADLX's
-        // first version, so any version has them.
+        // first version, so any version has them. VERIFY (NOTES N144): Frame
+        // Rate Target Control and Radeon Super Resolution may be later; a
+        // driver without them answers the call with an error, which reads as
+        // unknown, never as a change.
         let mut full = 0u64;
         check("ADLXQueryFullVersion", version(&mut full))?;
         let mut system: Obj = std::ptr::null_mut();
@@ -393,7 +408,20 @@ mod real {
                             "GetFrameRateTargetControl",
                             slot::SERVICES_GET_FRAME_RATE_TARGET_CONTROL,
                         ),
+                        Setting::SuperResolution => {
+                            ("GetRadeonSuperResolution", slot::SERVICES_GET_RADEON_SUPER_RESOLUTION)
+                        }
                     };
+                    if setting == Setting::SuperResolution {
+                        let iface = get(
+                            "GetRadeonSuperResolution",
+                            services.0,
+                            slot::SERVICES_GET_RADEON_SUPER_RESOLUTION,
+                            None,
+                        )?;
+                        out = Some(f.take().expect("called once")(iface.0)?);
+                        return Ok(());
+                    }
                     let iface = get(call, services.0, slot, Some(gpu))?;
                     out = Some(f.take().expect("called once")(iface.0)?);
                     Ok(())
@@ -467,6 +495,12 @@ mod real {
                             ),
                         )?;
                         Ok(Some(fps.max(0) as u32))
+                    }
+                    Setting::SuperResolution => {
+                        if !flag("RSR IsSupported", iface, slot::RSR_IS_SUPPORTED)? {
+                            return Ok(None);
+                        }
+                        Ok(Some(u32::from(flag("RSR IsEnabled", iface, slot::RSR_IS_ENABLED)?)))
                     }
                 }
             })
@@ -549,6 +583,13 @@ mod real {
                             method::<unsafe extern "C" fn(Obj, u8) -> i32>(iface, slot::FRTC_SET_ENABLED)(iface, 1),
                         )
                     }
+                    Setting::SuperResolution => check(
+                        "RSR SetEnabled",
+                        method::<unsafe extern "C" fn(Obj, u8) -> i32>(iface, slot::RSR_SET_ENABLED)(
+                            iface,
+                            u8::from(value != 0),
+                        ),
+                    ),
                 }
             })?;
             Ok(done.is_some())

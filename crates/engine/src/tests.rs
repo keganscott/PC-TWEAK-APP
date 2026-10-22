@@ -3584,6 +3584,7 @@ mod amd_tools {
                 v(vsync::OFF_UNLESS_APP_SPECIFIES),
             );
             h.sys.set(&setting(c, "frame_rate_target"), v(0));
+            h.sys.set(&setting(c, "super_resolution"), v(0));
         }
         h.sys.set_displays(vec![crate::system::Display {
             device: r"\\.\DISPLAY1".into(),
@@ -3616,6 +3617,17 @@ mod amd_tools {
         assert_eq!(h.sys.get(&setting(RADEON, "frame_rate_target")), v(0));
         assert_eq!(h.sys.get(&setting(RADEON, "chill")), v(1));
         assert_eq!(state(&h, "amd.framecap"), TweakState::Default);
+    }
+
+    #[test]
+    fn super_resolution_is_turned_on_and_undo_turns_it_off() {
+        let mut h = pc(&[RADEON]);
+        assert_eq!(state(&h, "amd.rsr"), TweakState::Default);
+        h.engine.apply("amd.rsr").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "super_resolution")), v(1));
+        assert_eq!(state(&h, "amd.rsr"), TweakState::Applied);
+        h.engine.revert("amd.rsr").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "super_resolution")), v(0));
     }
 
     #[test]
@@ -3848,6 +3860,7 @@ mod amd_tools {
         assert_eq!(keys("amd.antilag"), ["anti_lag_level", "chill", "anti_lag"]);
         assert_eq!(keys("amd.vsyncoff"), ["wait_for_vertical_refresh"]);
         assert_eq!(keys("amd.framecap"), ["chill", "frame_rate_target"]);
+        assert_eq!(keys("amd.rsr"), ["super_resolution"]);
         assert!(amd::all().iter().all(|t| t.touches().is_empty()), "no registry writes");
     }
 }

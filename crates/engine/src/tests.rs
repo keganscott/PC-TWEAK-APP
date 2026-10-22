@@ -3583,8 +3583,54 @@ mod amd_tools {
                 &setting(c, "wait_for_vertical_refresh"),
                 v(vsync::OFF_UNLESS_APP_SPECIFIES),
             );
+            h.sys.set(&setting(c, "frame_rate_target"), v(0));
         }
+        h.sys.set_displays(vec![crate::system::Display {
+            device: r"\\.\DISPLAY1".into(),
+            name: "Generic PnP Monitor".into(),
+            primary: true,
+            width: 1920,
+            height: 1080,
+            current_hz: 144,
+            max_hz: 144,
+        }]);
         h
+    }
+
+    #[test]
+    fn frame_cap_turns_frame_rate_target_control_on_three_below_the_refresh_rate() {
+        let mut h = pc(&[RADEON]);
+        h.sys.set(&setting(RADEON, "chill"), v(1));
+        assert_eq!(state(&h, "amd.framecap"), TweakState::Default);
+
+        h.engine.apply("amd.framecap").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "frame_rate_target")), v(141));
+        assert_eq!(h.sys.get(&setting(RADEON, "chill")), v(0), "Chill is off first");
+        assert_eq!(
+            changed(&h),
+            [format!("chill {RADEON}"), format!("frame_rate_target {RADEON}")]
+        );
+        assert_eq!(state(&h, "amd.framecap"), TweakState::Applied);
+
+        h.engine.revert("amd.framecap").unwrap();
+        assert_eq!(h.sys.get(&setting(RADEON, "frame_rate_target")), v(0));
+        assert_eq!(h.sys.get(&setting(RADEON, "chill")), v(1));
+        assert_eq!(state(&h, "amd.framecap"), TweakState::Default);
+    }
+
+    #[test]
+    fn frame_cap_on_a_card_without_frame_rate_target_control_is_not_offered() {
+        let mut h = pc(&[IGPU]);
+        h.sys.set(&setting(IGPU, "frame_rate_target"), SysState::Absent);
+        match state(&h, "amd.framecap") {
+            TweakState::Blocked { reason } => assert_eq!(
+                reason.message,
+                "This PC's AMD graphics does not have Radeon Frame Rate Target Control."
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(h.engine.apply("amd.framecap").is_err());
+        assert!(h.engine.applied_tweak_ids().is_empty());
     }
 
     /// The AMD settings the journal records changing, in order.
@@ -3801,6 +3847,7 @@ mod amd_tools {
         };
         assert_eq!(keys("amd.antilag"), ["anti_lag_level", "chill", "anti_lag"]);
         assert_eq!(keys("amd.vsyncoff"), ["wait_for_vertical_refresh"]);
+        assert_eq!(keys("amd.framecap"), ["chill", "frame_rate_target"]);
         assert!(amd::all().iter().all(|t| t.touches().is_empty()), "no registry writes");
     }
 }

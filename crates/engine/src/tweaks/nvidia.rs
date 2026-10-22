@@ -26,9 +26,8 @@ use crate::context::ContextResolver;
 use crate::error::{EngineError, Result};
 use crate::system::{SysItem, SysState};
 use crate::transaction::Transaction;
-use crate::types::{
-    BlockedCode, BlockedReason, ExecutionContext, Impact, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState,
-};
+use crate::tweaks::refresh::main_display_frame_cap;
+use crate::types::{ExecutionContext, Impact, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState};
 
 /// Maximum pre-rendered frames (`PRERENDERLIMIT_ID`); 1 is Low Latency
 /// Mode "On".
@@ -208,40 +207,14 @@ pub const SHADER_CACHE_UNLIMITED: NvidiaSetting = NvidiaSetting {
     values: &[(SHADER_CACHE, 1), (SHADER_CACHE_SIZE, 0xFFFF_FFFF)],
 };
 
-/// How far below the refresh rate the cap sits. Blur Busters' G-SYNC 101
-/// tests found 2 enough and recommend 3, at any refresh rate, because frame
-/// limiters overshoot a little.
-/// VERIFY (NOTES N144): that Control Panel shows the value written here as
-/// its Max Frame Rate.
-pub const FRAME_CAP_MARGIN: u32 = 3;
-
 pub const FRAME_CAP_ID: &str = "nvidia.framecap";
 
 /// Max Frame Rate a few frames per second below the main display's refresh
 /// rate, the rate it runs at now. The cap follows the display: when its rate
 /// changes, the tool reads as changed and applying it again sets the new cap.
+/// VERIFY (NOTES N144): that Control Panel shows the value written here as
+/// its Max Frame Rate.
 pub struct FrameCap;
-
-/// The cap for the main display, or why there is none.
-fn frame_cap(res: &ContextResolver) -> Result<std::result::Result<u32, BlockedReason>> {
-    let displays = res.displays()?;
-    let Some(main) = displays.iter().find(|d| d.primary).or(displays.first()) else {
-        return Ok(Err(BlockedReason::new(
-            BlockedCode::HardwareUnsupported,
-            "Windows lists no display on this PC.",
-        )));
-    };
-    if main.current_hz < 30 + FRAME_CAP_MARGIN {
-        return Ok(Err(BlockedReason::new(
-            BlockedCode::HardwareUnsupported,
-            format!(
-                "The main display runs at {} Hz, too low for a frame rate limit.",
-                main.current_hz
-            ),
-        )));
-    }
-    Ok(Ok((main.current_hz - FRAME_CAP_MARGIN).min(0x3ff)))
-}
 
 impl Tweak for FrameCap {
     fn id(&self) -> &str {
@@ -289,7 +262,7 @@ impl Tweak for FrameCap {
             Err(EngineError::Blocked { reason }) => return Ok(TweakState::Blocked { reason }),
             Err(e) => return Err(e),
         };
-        let cap = match frame_cap(res)? {
+        let cap = match main_display_frame_cap(res, 0x3ff)? {
             Ok(cap) => cap,
             Err(reason) => return Ok(TweakState::Blocked { reason }),
         };
@@ -301,7 +274,7 @@ impl Tweak for FrameCap {
     }
 
     fn apply(&self, tx: &mut Transaction) -> Result<()> {
-        let cap = frame_cap(tx.resolver())?.map_err(|reason| EngineError::Blocked { reason })?;
+        let cap = main_display_frame_cap(tx.resolver(), 0x3ff)?.map_err(|reason| EngineError::Blocked { reason })?;
         tx.set_system(item(FRAME_RATE_LIMIT), SysState::Dword { value: cap })
     }
 }

@@ -9,7 +9,9 @@
 //! (github.com/GPUOpen-LibrariesAndSDKs/ADLX, main, 2026-10-08:
 //! `ISystem.h`, `I3DSettings.h`, `ADLX.h`, `ADLXDefines.h`, version 2.0.0.125),
 //! as were the result codes, the vertical refresh modes and the Anti-Lag
-//! levels. Not yet run against a real AMD driver (NOTES N87).
+//! levels. Not yet run against a real AMD driver (NOTES N87). Frame Rate
+//! Target Control's slots were read from the same header on 2026-10-22
+//! (NOTES N144).
 
 /// Why a call did not work.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,7 @@ pub mod slot {
     pub const SERVICES_GET_ANTI_LAG: usize = 3;
     pub const SERVICES_GET_CHILL: usize = 4;
     pub const SERVICES_GET_WAIT_FOR_VERTICAL_REFRESH: usize = 8;
+    pub const SERVICES_GET_FRAME_RATE_TARGET_CONTROL: usize = 9;
     pub const ANTI_LAG_IS_SUPPORTED: usize = 3;
     pub const ANTI_LAG_IS_ENABLED: usize = 4;
     pub const ANTI_LAG_SET_ENABLED: usize = 5;
@@ -97,6 +100,12 @@ pub mod slot {
     pub const VSYNC_IS_SUPPORTED: usize = 3;
     pub const VSYNC_GET_MODE: usize = 5;
     pub const VSYNC_SET_MODE: usize = 6;
+    pub const FRTC_IS_SUPPORTED: usize = 3;
+    pub const FRTC_IS_ENABLED: usize = 4;
+    pub const FRTC_GET_FPS_RANGE: usize = 5;
+    pub const FRTC_GET_FPS: usize = 6;
+    pub const FRTC_SET_ENABLED: usize = 7;
+    pub const FRTC_SET_FPS: usize = 8;
 }
 
 /// One AMD graphics card as ADLX lists it.
@@ -120,14 +129,19 @@ pub enum Setting {
     Chill,
     /// Wait for Vertical Refresh: a `vsync` mode.
     WaitForVerticalRefresh,
+    /// Radeon Frame Rate Target Control: 0 off, otherwise on with that many
+    /// frames per second as its target. Turning it off leaves the target
+    /// number as it was, unused.
+    FrameRateTarget,
 }
 
 impl Setting {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::AntiLag,
         Self::AntiLagLevel,
         Self::Chill,
         Self::WaitForVerticalRefresh,
+        Self::FrameRateTarget,
     ];
 
     pub const fn key(self) -> &'static str {
@@ -136,6 +150,7 @@ impl Setting {
             Self::AntiLagLevel => "anti_lag_level",
             Self::Chill => "chill",
             Self::WaitForVerticalRefresh => "wait_for_vertical_refresh",
+            Self::FrameRateTarget => "frame_rate_target",
         }
     }
 
@@ -149,6 +164,7 @@ impl Setting {
             Self::AntiLagLevel => "Radeon Anti-Lag level",
             Self::Chill => "Radeon Chill",
             Self::WaitForVerticalRefresh => "Wait for Vertical Refresh",
+            Self::FrameRateTarget => "Radeon Frame Rate Target Control",
         }
     }
 }
@@ -373,6 +389,10 @@ mod real {
                             "GetWaitForVerticalRefresh",
                             slot::SERVICES_GET_WAIT_FOR_VERTICAL_REFRESH,
                         ),
+                        Setting::FrameRateTarget => (
+                            "GetFrameRateTargetControl",
+                            slot::SERVICES_GET_FRAME_RATE_TARGET_CONTROL,
+                        ),
                     };
                     let iface = get(call, services.0, slot, Some(gpu))?;
                     out = Some(f.take().expect("called once")(iface.0)?);
@@ -432,6 +452,22 @@ mod real {
                         )?;
                         Ok(Some(mode as u32))
                     }
+                    Setting::FrameRateTarget => {
+                        if !flag("FRTC IsSupported", iface, slot::FRTC_IS_SUPPORTED)? {
+                            return Ok(None);
+                        }
+                        if !flag("FRTC IsEnabled", iface, slot::FRTC_IS_ENABLED)? {
+                            return Ok(Some(0));
+                        }
+                        let mut fps: i32 = 0;
+                        check(
+                            "FRTC GetFPS",
+                            method::<unsafe extern "C" fn(Obj, *mut i32) -> i32>(iface, slot::FRTC_GET_FPS)(
+                                iface, &mut fps,
+                            ),
+                        )?;
+                        Ok(Some(fps.max(0) as u32))
+                    }
                 }
             })
         }
@@ -480,6 +516,37 @@ mod real {
                                 iface,
                                 value as i32,
                             ),
+                        )
+                    }
+                    Setting::FrameRateTarget => {
+                        if value == 0 {
+                            return check(
+                                "FRTC SetEnabled",
+                                method::<unsafe extern "C" fn(Obj, u8) -> i32>(iface, slot::FRTC_SET_ENABLED)(iface, 0),
+                            );
+                        }
+                        // `ADLX_IntRange`: minimum, maximum, step.
+                        let mut range = [0i32; 3];
+                        check(
+                            "FRTC GetFPSRange",
+                            method::<unsafe extern "C" fn(Obj, *mut [i32; 3]) -> i32>(iface, slot::FRTC_GET_FPS_RANGE)(
+                                iface, &mut range,
+                            ),
+                        )?;
+                        let fps = i32::try_from(value).unwrap_or(i32::MAX);
+                        if fps < range[0] || fps > range[1] {
+                            return Err(AdlxError::Failed(format!(
+                                "the AMD driver takes a frame rate target from {} to {}, not {value}",
+                                range[0], range[1]
+                            )));
+                        }
+                        check(
+                            "FRTC SetFPS",
+                            method::<unsafe extern "C" fn(Obj, i32) -> i32>(iface, slot::FRTC_SET_FPS)(iface, fps),
+                        )?;
+                        check(
+                            "FRTC SetEnabled",
+                            method::<unsafe extern "C" fn(Obj, u8) -> i32>(iface, slot::FRTC_SET_ENABLED)(iface, 1),
                         )
                     }
                 }

@@ -29,6 +29,31 @@ fn no_display() -> BlockedReason {
     BlockedReason::new(BlockedCode::HardwareUnsupported, "Windows lists no display on this PC.")
 }
 
+/// How far below the refresh rate a driver frame cap sits. Blur Busters'
+/// G-SYNC 101 tests found 2 enough and recommend 3, at any refresh rate,
+/// because frame limiters overshoot a little.
+pub const FRAME_CAP_MARGIN: u32 = 3;
+
+/// The frame cap for the main display (the primary one, else the first): its
+/// refresh rate now, less `FRAME_CAP_MARGIN`, at most `limit`. `Err` says why
+/// there is none.
+pub fn main_display_frame_cap(res: &ContextResolver, limit: u32) -> Result<std::result::Result<u32, BlockedReason>> {
+    let displays = res.displays()?;
+    let Some(main) = displays.iter().find(|d| d.primary).or(displays.first()) else {
+        return Ok(Err(no_display()));
+    };
+    if main.current_hz < 30 + FRAME_CAP_MARGIN {
+        return Ok(Err(BlockedReason::new(
+            BlockedCode::HardwareUnsupported,
+            format!(
+                "The main display runs at {} Hz, too low for a frame rate limit.",
+                main.current_hz
+            ),
+        )));
+    }
+    Ok(Ok((main.current_hz - FRAME_CAP_MARGIN).min(limit)))
+}
+
 impl Tweak for HighestRefreshRate {
     fn id(&self) -> &str {
         ID

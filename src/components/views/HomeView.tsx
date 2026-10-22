@@ -965,7 +965,38 @@ const AREA_ICON: Record<string, LucideIcon> = {
   power: Gauge,
   security: ShieldCheck,
   background: Cpu,
+  graphics: Gpu,
 };
+
+/** Who acts on a finding, in two words, for the ranked list. */
+const WHO: Record<FixBy, string> = { us: "One click", you: "You can fix", hardware: "Hardware" };
+
+/** The biggest problems first: the engine already orders attention findings
+ * by how much each tends to hold a PC back, so the top three are its first three. */
+function HoldingBack({ attention }: { attention: Finding[] }) {
+  if (attention.length === 0) return null;
+  const top = attention.slice(0, 3);
+  return (
+    <div className="mb-3.5 rounded-2xl border border-violet/60 bg-surface-1 px-5 py-4">
+      <h3 id="holding-back-title" className="text-sm font-extrabold">
+        What's holding this PC back
+      </h3>
+      <ol aria-labelledby="holding-back-title" className="mt-2.5 flex flex-col gap-2">
+        {top.map((f, i) => (
+          <li key={f.id} className="flex items-baseline gap-3 text-sm">
+            <span aria-hidden className="w-4 shrink-0 font-extrabold text-lime">
+              {i + 1}
+            </span>
+            <a href={`#finding-${f.id}`} className="min-w-0 flex-1 font-semibold hover:text-lime">
+              {f.title}
+            </a>
+            {f.fixBy && <span className="shrink-0 text-xs text-ink-muted">{WHO[f.fixBy]}</span>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 function Findings({ findings }: { findings: Finding[] }) {
   const unknown = findings.filter((f) => f.status === "unknown");
@@ -1012,6 +1043,7 @@ function Findings({ findings }: { findings: Finding[] }) {
         {findings.length > 0 && attention.length === 0 && unknown.length === 0 && (
           <p className="rounded-2xl border border-line bg-surface-1 p-5 text-sm text-ink-muted">Nothing needs a look.</p>
         )}
+        <HoldingBack attention={attention} />
         <div className="flex flex-col gap-3.5">
           {FIX_GROUPS.map(({ by, title, blurb }) => {
             const list = attention.filter((f) => f.fixBy === by);
@@ -1093,7 +1125,7 @@ function FindingRow({ finding, nested = false, showStatus = false }: { finding: 
   const Title = nested ? "h4" : "h3";
   const Icon = AREA_ICON[finding.id.split(".")[0] ?? ""] ?? CircleDot;
   return (
-    <div className="flex gap-3.5 px-5 py-4 print:break-inside-avoid">
+    <div id={`finding-${finding.id}`} className="flex scroll-mt-6 gap-3.5 px-5 py-4 print:break-inside-avoid">
       <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-surface-3">
         <Icon className="size-[17px] text-white" strokeWidth={1.8} />
       </span>

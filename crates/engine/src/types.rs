@@ -358,6 +358,8 @@ pub struct SystemEnv {
     pub restore: Option<RestoreStatus>,
     /// The active Windows power plan (read-only). `None` until probed.
     pub power_plan: Option<crate::probe::Probe<crate::power::PowerPlan>>,
+    /// Charger or battery. `None` until probed.
+    pub power_source: Option<crate::probe::Probe<crate::hardware::PowerSource>>,
     /// What else used the processor during a short sample. `None` until probed.
     pub background: Option<crate::probe::Probe<crate::background::BackgroundLoad>>,
     /// Known games found on this PC and the drive each is on. `None` until

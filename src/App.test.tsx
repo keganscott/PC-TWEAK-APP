@@ -1775,3 +1775,17 @@ describe("tester build", () => {
     expect(screen.queryByText("Tester build")).toBeNull();
   });
 });
+
+describe("What's holding this PC back", () => {
+  it("numbers the problems in the engine's order, says who can fix each, and links to its details", async () => {
+    renderApp();
+    const list = await screen.findByRole("list", { name: "What's holding this PC back" });
+    const items = within(list).getAllByRole("listitem");
+    const attention = (await createMockBackend().auditSystem()).scan.findings.filter((f) => f.status === "attention");
+    expect(items).toHaveLength(Math.min(3, attention.length));
+    expect(items[0]!.textContent).toContain(attention[0]!.title);
+    const link = within(items[0]!).getByRole("link");
+    expect(link.getAttribute("href")).toBe(`#finding-${attention[0]!.id}`);
+    expect(document.getElementById(`finding-${attention[0]!.id}`)).toBeTruthy();
+  });
+});

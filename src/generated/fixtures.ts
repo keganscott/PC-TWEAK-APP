@@ -513,6 +513,10 @@ export const systemAudit = {
       "state": "unknown",
       "reason": "Windows has not recorded an active power plan"
     },
+    "powerSource": {
+      "state": "unknown",
+      "reason": "internal error: this build cannot read the power source"
+    },
     "background": {
       "state": "yes",
       "value": {
@@ -985,6 +989,26 @@ export const systemAudit = {
         "status": "fine",
         "title": "Memory uses more than one channel",
         "reading": "2 memory modules found across more than one channel.",
+        "remedy": null,
+        "guidedOnly": false,
+        "fixTweakId": null,
+        "fixBy": null
+      },
+      {
+        "id": "memory.capacity",
+        "status": "fine",
+        "title": "12 GB of memory or more",
+        "reading": "16 GB of memory is installed.",
+        "remedy": null,
+        "guidedOnly": false,
+        "fixTweakId": null,
+        "fixBy": null
+      },
+      {
+        "id": "graphics.integrated",
+        "status": "fine",
+        "title": "A graphics card with its own memory",
+        "reading": "Example GPU has 12 GB of its own memory.",
         "remedy": null,
         "guidedOnly": false,
         "fixTweakId": null,

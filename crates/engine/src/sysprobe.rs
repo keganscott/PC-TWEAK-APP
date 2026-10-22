@@ -255,6 +255,11 @@ impl EnvProbe for SystemProbe {
             // Cheap (one registry read) and it changes when the user changes it,
             // so it is not cached.
             power_plan: Some(crate::power::probe_power_plan(self.reg.as_ref())),
+            // One cheap call, and the charger comes and goes: not cached.
+            power_source: Some(match self.facts.power_source() {
+                Ok(p) => crate::probe::Probe::yes(p),
+                Err(e) => crate::probe::Probe::unknown(e.to_string()),
+            }),
             background: Some(background),
             // A few registry reads, and the user may change the setting at any
             // time, so it is not cached.

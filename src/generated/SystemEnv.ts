@@ -4,6 +4,7 @@ import type { GameGpuChoice } from "./GameGpuChoice";
 import type { GameInstall } from "./GameInstall";
 import type { HardwareReport } from "./HardwareReport";
 import type { PowerPlan } from "./PowerPlan";
+import type { PowerSource } from "./PowerSource";
 import type { Probe } from "./Probe";
 import type { RestoreStatus } from "./RestoreStatus";
 import type { SecurityReport } from "./SecurityReport";
@@ -31,6 +32,10 @@ restoreGateOpen: boolean, hardware: HardwareReport | null, security: SecurityRep
  * The active Windows power plan (read-only). `None` until probed.
  */
 powerPlan: Probe<PowerPlan> | null, 
+/**
+ * Charger or battery. `None` until probed.
+ */
+powerSource: Probe<PowerSource> | null, 
 /**
  * What else used the processor during a short sample. `None` until probed.
  */

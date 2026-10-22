@@ -8,7 +8,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 
 use super::error::{EngineError, Result};
-use super::hardware::{DisplayInfo, GpuAdapter, OsFacts};
+use super::hardware::{DisplayInfo, GpuAdapter, OsFacts, PowerSource};
 
 /// Microsoft's Basic Render Driver / WARP vendor id.
 const VENDOR_MICROSOFT: u32 = 0x1414;
@@ -16,6 +16,30 @@ const VENDOR_MICROSOFT: u32 = 0x1414;
 pub struct WindowsFacts;
 
 impl OsFacts for WindowsFacts {
+    fn power_source(&self) -> Result<PowerSource> {
+        use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        let mut st = SYSTEM_POWER_STATUS::default();
+        unsafe { GetSystemPowerStatus(&mut st) }.map_err(|e| EngineError::Win32 {
+            call: "GetSystemPowerStatus".into(),
+            code: e.code().0 as u32,
+            detail: e.message(),
+        })?;
+        // ACLineStatus: 0 offline, 1 online, 255 unknown. BatteryFlag 128: no
+        // system battery; 255: unknown. BatteryLifePercent 255: unknown.
+        if st.ACLineStatus == 255 {
+            return Err(EngineError::Win32 {
+                call: "GetSystemPowerStatus".into(),
+                code: 0,
+                detail: "Windows does not know whether the charger is connected".into(),
+            });
+        }
+        Ok(PowerSource {
+            on_battery: st.ACLineStatus == 0,
+            has_battery: st.BatteryFlag != 128 && st.BatteryFlag != 255,
+            battery_percent: (st.BatteryLifePercent <= 100).then_some(st.BatteryLifePercent),
+        })
+    }
+
     fn system_drive(&self) -> String {
         std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into())
     }

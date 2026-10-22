@@ -57,6 +57,23 @@ pub trait OsFacts: Send + Sync {
     fn system_drive(&self) -> String;
     fn display(&self) -> Result<DisplayInfo>;
     fn gpu_adapters(&self) -> Result<Vec<GpuAdapter>>;
+    /// Whether the PC runs on its charger or its battery (`GetSystemPowerStatus`).
+    fn power_source(&self) -> Result<PowerSource> {
+        Err(crate::error::EngineError::Internal {
+            detail: "this build cannot read the power source".into(),
+        })
+    }
+}
+
+/// Charger or battery, read fresh on every scan because it changes often.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerSource {
+    pub on_battery: bool,
+    /// False on a desktop: there is nothing to plug in.
+    pub has_battery: bool,
+    pub battery_percent: Option<u8>,
 }
 
 // ---------------------------------------------------------------------------

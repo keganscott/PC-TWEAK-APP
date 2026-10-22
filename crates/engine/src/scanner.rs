@@ -102,6 +102,8 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
     let mut findings: Vec<Finding> = Vec::new();
     if let Some(hw) = &env.hardware {
         findings.extend(memory_channels(hw));
+        findings.extend(memory_capacity(hw));
+        findings.extend(integrated_graphics(hw));
         findings.extend(memory_speed(hw));
         findings.extend(refresh_rate(hw));
         findings.extend(boot_disk(hw));
@@ -114,6 +116,13 @@ pub fn scan(env: &SystemEnv) -> ScanReport {
             .as_ref()
             .is_some_and(|hw| matches!(hw.is_laptop, Probe::Yes { value: true }));
         findings.push(power_plan(plan, laptop));
+    }
+    if let Some(source) = &env.power_source {
+        let laptop = env
+            .hardware
+            .as_ref()
+            .is_some_and(|hw| matches!(hw.is_laptop, Probe::Yes { value: true }));
+        findings.extend(power_source(source, laptop));
     }
     if let Some(sec) = &env.security {
         findings.push(memory_integrity(&sec.memory_integrity));
@@ -160,7 +169,9 @@ fn fix_by(f: &Finding, sticks: usize, ssd_available: bool) -> FixBy {
         "memory.channels" if sticks >= 2 => FixBy::You,
         // A game on a hard drive can be moved to the SSD Windows is on.
         "games.drive" if ssd_available => FixBy::You,
-        "memory.channels" | "storage.boot_disk" | "gpu.driver_branch" | "games.drive" => FixBy::Hardware,
+        "memory.channels" | "memory.capacity" | "storage.boot_disk" | "gpu.driver_branch" | "games.drive" => {
+            FixBy::Hardware
+        }
         // XMP/EXPO, refresh rate, Windows version, power plan, Memory Integrity:
         // settings the user changes.
         "memory.speed"
@@ -169,6 +180,8 @@ fn fix_by(f: &Finding, sticks: usize, ssd_available: bool) -> FixBy {
         | "power.plan"
         | "security.memory_integrity"
         | "background.load"
+        | "graphics.integrated"
+        | "power.source"
         | "gpu.choice" => FixBy::You,
         // `every_rule_says_who_can_fix_it` keeps this unreachable; a release
         // build must not lose the whole scan over a missing entry.
@@ -319,6 +332,125 @@ fn memory_speed(hw: &HardwareReport) -> Option<Finding> {
             )
         },
     )
+}
+
+/// Below this, many current games' minimum or recommended memory is not met.
+const LOW_MEMORY_BYTES: u64 = 12 << 30;
+
+fn memory_capacity(hw: &HardwareReport) -> Option<Finding> {
+    const ID: &str = "memory.capacity";
+    let Probe::Yes { value } = &hw.memory else {
+        return None; // `memory_channels` already reported why memory is unreadable.
+    };
+    let gb = (value.installed_bytes + (1 << 29)) >> 30;
+    Some(if value.installed_bytes < LOW_MEMORY_BYTES {
+        finding(
+            ID,
+            Status::Attention,
+            "Less than 12 GB of memory",
+            format!("{gb} GB of memory is installed."),
+            Some(
+                "Many current games list 8 GB as their minimum and 16 GB as recommended. Before playing, close \
+                 browsers, launchers and chat apps you do not need; Gaming Mode in PeakTweaks can do it for you. \
+                 Adding memory is a hardware change: if this PC has one module, a second matching module also \
+                 gives it two memory channels.",
+            ),
+            true,
+        )
+    } else {
+        finding(
+            ID,
+            Status::Fine,
+            "12 GB of memory or more",
+            format!("{gb} GB of memory is installed."),
+            None,
+            false,
+        )
+    })
+}
+
+/// A graphics chip with less dedicated memory than this shares the PC's main
+/// memory, as integrated graphics do. VERIFY: integrated chips report a small
+/// carve-out (often 128-512 MB) through DXGI; checked on real PCs by the field check.
+const DEDICATED_VRAM_BYTES: u64 = 1 << 30;
+
+fn integrated_graphics(hw: &HardwareReport) -> Option<Finding> {
+    const ID: &str = "graphics.integrated";
+    const TITLE: &str = "Graphics";
+    Some(match &hw.gpus {
+        Probe::Unknown { reason } => unknown(ID, TITLE, reason),
+        Probe::No { .. } => return None,
+        Probe::Yes { value } => {
+            let real: Vec<_> = value.iter().filter(|g| !g.is_software).collect();
+            if real.is_empty() {
+                return None;
+            }
+            if let Some(card) = real.iter().find(|g| g.dedicated_vram_bytes >= DEDICATED_VRAM_BYTES) {
+                finding(
+                    ID,
+                    Status::Fine,
+                    "A graphics card with its own memory",
+                    format!(
+                        "{} has {} GB of its own memory.",
+                        card.name,
+                        (card.dedicated_vram_bytes + (1 << 29)) >> 30
+                    ),
+                    None,
+                    false,
+                )
+            } else {
+                finding(
+                    ID,
+                    Status::Attention,
+                    "Games run on integrated graphics",
+                    format!(
+                        "{} shares the PC's main memory instead of having memory of its own.",
+                        real[0].name
+                    ),
+                    Some(
+                        "Integrated graphics depend on the main memory more than any other part: two matching \
+                         memory modules (two channels) and memory running at its rated speed matter most here. In \
+                         games, a lower render resolution with the game's own upscaling, lower texture quality and \
+                         a frame-rate cap reduce the work the graphics chip does each second.",
+                    ),
+                    true,
+                )
+            }
+        }
+    })
+}
+
+fn power_source(source: &Probe<crate::hardware::PowerSource>, laptop: bool) -> Option<Finding> {
+    const ID: &str = "power.source";
+    const TITLE: &str = "Charger";
+    Some(match source {
+        Probe::No { .. } => return None,
+        Probe::Unknown { reason } if laptop => unknown(ID, TITLE, reason),
+        Probe::Unknown { .. } => return None,
+        Probe::Yes { value } if !value.has_battery && !laptop => return None,
+        Probe::Yes { value } if value.on_battery => finding(
+            ID,
+            Status::Attention,
+            "The laptop is running on its battery",
+            match value.battery_percent {
+                Some(p) => format!("The charger is not connected; the battery is at {p}%."),
+                None => "The charger is not connected.".to_owned(),
+            },
+            Some(
+                "On battery, Windows and most laptop makers hold the processor and graphics chip at lower \
+                 clocks to save power. Connect the charger before playing.",
+            ),
+            true,
+        ),
+        Probe::Yes { .. } => finding(
+            ID,
+            Status::Fine,
+            "The charger is connected",
+            "The laptop runs on its charger.".to_owned(),
+            None,
+            false,
+        ),
+    })
 }
 
 fn refresh_rate(hw: &HardwareReport) -> Option<Finding> {
@@ -949,12 +1081,98 @@ mod tests {
             );
             assert!(f.remedy.is_some(), "{id}");
         }
-        assert_eq!(r.attention_count(), 5);
+        // Five above, plus 8 GB of memory.
+        assert_eq!(get(&r, "memory.capacity").status, Status::Attention);
+        assert_eq!(r.attention_count(), 6);
         let mut ids: Vec<&str> = r.findings.iter().map(|f| f.id.as_str()).collect();
         let n = ids.len();
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), n, "one finding per check");
+    }
+
+    fn laptop_env(source: Probe<crate::hardware::PowerSource>) -> SystemEnv {
+        let mut hw = hardware();
+        hw.is_laptop = Probe::yes(true);
+        SystemEnv {
+            power_source: Some(source),
+            ..env_with(hw)
+        }
+    }
+
+    fn battery(on_battery: bool) -> crate::hardware::PowerSource {
+        crate::hardware::PowerSource {
+            on_battery,
+            has_battery: true,
+            battery_percent: Some(64),
+        }
+    }
+
+    #[test]
+    fn a_laptop_on_battery_is_asked_to_plug_in_and_a_plugged_in_one_is_fine() {
+        let f = get(&scan(&laptop_env(Probe::yes(battery(true)))), "power.source").clone();
+        assert_eq!(f.status, Status::Attention);
+        assert!(f.reading.contains("64"), "{}", f.reading);
+        assert_eq!(f.fix_by, Some(FixBy::You));
+        assert_eq!(
+            get(&scan(&laptop_env(Probe::yes(battery(false)))), "power.source").status,
+            Status::Fine
+        );
+        assert_eq!(
+            get(&scan(&laptop_env(Probe::unknown("no power status"))), "power.source").status,
+            Status::Unknown
+        );
+        // A desktop has no charger to plug in: no finding at all.
+        let desktop = SystemEnv {
+            power_source: Some(Probe::yes(crate::hardware::PowerSource {
+                on_battery: false,
+                has_battery: false,
+                battery_percent: None,
+            })),
+            ..env_with(hardware())
+        };
+        assert!(scan(&desktop).findings.iter().all(|f| f.id != "power.source"));
+    }
+
+    #[test]
+    fn less_than_12_gb_of_memory_is_named_with_the_amount() {
+        let mut hw = hardware();
+        hw.memory = Probe::yes(MemoryInfo {
+            installed_bytes: 8 << 30,
+            sticks: vec![stick(Some(3200), Some(3200)), stick(Some(3200), Some(3200))],
+            channels: Probe::yes(ChannelLayout::Multi),
+        });
+        let r = scan(&env_with(hw));
+        let f = get(&r, "memory.capacity");
+        assert_eq!(f.status, Status::Attention);
+        assert!(f.reading.contains("8 GB"), "{}", f.reading);
+        assert_eq!(f.fix_by, Some(FixBy::Hardware));
+        assert!(f.remedy.is_some());
+
+        let r = scan(&env_with(hardware()));
+        assert_eq!(get(&r, "memory.capacity").status, Status::Fine);
+    }
+
+    #[test]
+    fn a_pc_with_only_integrated_graphics_gets_advice_for_it() {
+        let mut hw = hardware();
+        hw.gpus = Probe::yes(vec![adapter("Intel(R) UHD Graphics", 0)]);
+        let r = scan(&env_with(hw));
+        let f = get(&r, "graphics.integrated");
+        assert_eq!(f.status, Status::Attention);
+        assert!(f.reading.contains("Intel(R) UHD Graphics"), "{}", f.reading);
+        assert_eq!(f.fix_by, Some(FixBy::You));
+
+        let mut hw = hardware();
+        hw.gpus = Probe::yes(vec![
+            adapter("NVIDIA GeForce GTX 1650", 4),
+            adapter("Intel(R) UHD Graphics", 0),
+        ]);
+        assert_eq!(get(&scan(&env_with(hw)), "graphics.integrated").status, Status::Fine);
+
+        // Graphics that could not be read stay unknown, never "integrated".
+        let r = scan(&env_with(hardware()));
+        assert_eq!(get(&r, "graphics.integrated").status, Status::Unknown);
     }
 
     #[test]

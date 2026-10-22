@@ -50,6 +50,17 @@ Values are stored as their raw registry type number and bytes (comma-separated h
 
 `seq`, `unixMs`, `sequenceNumber` (Windows' own number for the point), `description`, `method` (`api` or `power_shell`), `protectionEnabledByUs` (`true` it was off and PeakTweaks turned it on, `false` it was already on, `null` could not be told; older journals hold only `true`/`false`).
 
+### `action`: a one-time action from Tools ran
+
+Written after the action ran. It changes no setting, so it has nothing to undo and is not part of any transaction; it is kept so the history says what was done.
+
+| Field | Meaning |
+|---|---|
+| `seq`, `unixMs` | As above. |
+| `action` | `purge_standby` (emptied the standby list), `cleanup` (deleted junk files) or `optimize_drive` (Windows' drive optimization). |
+| `done` | What it did, or `null` when it failed. An object with the same `action` tag and: for `purge_standby`, `cachedBefore` and `cachedAfter` (bytes of files Windows kept in memory); for `cleanup`, `areas` (`user_temp`, `windows_temp`, `thumbnails`, `shader_caches`, `crash_dumps`), `removedBytes`, `removedFiles` and `leftFiles` (files left because a program had them open or Windows refused); for `optimize_drive`, `drive` (`C:`) and `seconds`. |
+| `error` | Why it failed, or `null`. |
+
 ## Order of operations
 
 For each value a transaction changes: read the current value, write its `.reg`, append the `write` record and `fsync` it, and only then change the registry. A power cut at any point leaves a journal that describes at least everything that changed.
@@ -87,6 +98,6 @@ For an installation that will not start at all, use `offline\` (`offline.rs`):
 - `offline\recover.cmd`: loads `Windows\System32\config\SYSTEM` and `SOFTWARE` and each user's `NTUSER.DAT` from its own drive (or the folder given as its argument), imports the files in name order, and unloads every hive it loaded, also after a failure. It refuses a running Windows (the hives are in use) and a drive with no Windows on it.
 - `offline\README.txt`: the steps, and any change the script does not cover, with why.
 
-The set is rewritten inside every apply and revert, before its commit record, so it always matches what Undo all would restore once that commit is written. Not covered: keys PeakTweaks created are left in place, empty (a `.reg` file can only delete a key with everything under it); changes in other hives (only `SYSTEM`, `SOFTWARE` and users' own settings are loaded); a profile folder on another drive than Windows, or with non-ASCII characters, `!` or `^` in its path (`cmd` reads `users.txt` in an unknown code page, and the script's delayed expansion eats `!` and `^`). After an apply interrupted by a crash, the set catches up when PeakTweaks next starts; if that refresh fails, Backups says so until the next apply or Undo rewrites it. After a recovery, PeakTweaks still lists the changes as applied; Undo there finishes the record.
+The set is rewritten inside every apply and revert, before its commit record, so it always matches what Undo all would restore once that commit is written. Changes other than registry writes are covered where Windows reads the item from plain registry values at start-up, put back from the values exported just before the change (`reg_backups`): a service's `Start` and `DelayedAutostart`, an adapter's `NameServer` (DNS). Any other kind (power plans and settings, hibernation, scheduled tasks, interface metrics, TCP settings, graphics driver settings, QoS policies, files) makes that whole change not covered, named in `README.txt`. Not covered either: keys PeakTweaks created are left in place, empty (a `.reg` file can only delete a key with everything under it); changes in other hives (only `SYSTEM`, `SOFTWARE` and users' own settings are loaded); a profile folder on another drive than Windows, or with non-ASCII characters, `!` or `^` in its path (`cmd` reads `users.txt` in an unknown code page, and the script's delayed expansion eats `!` and `^`). After an apply interrupted by a crash, the set catches up when PeakTweaks next starts; if that refresh fails, Backups says so until the next apply or Undo rewrites it. After a recovery, PeakTweaks still lists the changes as applied; Undo there finishes the record.
 
 One known difference: `reg.exe` adds a NUL terminator to a string value that was stored without one (NOTES-closed C22). In-app undo restores the exact bytes.

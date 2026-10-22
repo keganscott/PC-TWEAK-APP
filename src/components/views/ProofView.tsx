@@ -1,14 +1,19 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Play, Plus, Scale } from "lucide-react";
+import { Check, ClipboardCopy, Gamepad2, Play, Plus, Scale } from "lucide-react";
 
 import type { Comparison } from "../../generated/Comparison";
+import type { MetricComparison } from "../../generated/MetricComparison";
 import type { ProofRun } from "../../generated/ProofRun";
 import type { ProofSessionSummary } from "../../generated/ProofSessionSummary";
 import type { Side } from "../../generated/Side";
 import { explain } from "../../lib/errors";
-import { formatDateTime, formatNumber } from "../../lib/format";
+import { formatDateTime, formatNumber, formatTime } from "../../lib/format";
+import { comparisonText } from "../../lib/report";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { AUTO_RUNS, otherLongWork } from "../../store/store";
 import { useNavigate } from "../shell/nav";
+import { gameHue, gameMark } from "./GameArt";
+import { ProofGames } from "./GameProof";
 import { Button, Callout, Card, ErrorCallout, PageHeader, SampleBadge, Spinner, cx } from "../ui/primitives";
 
 /** The engine's limits (proof/capture.rs `validate_timing`). */
@@ -22,13 +27,22 @@ export function ProofView() {
   const sessions = useStore((s) => s.proof.sessions);
   const loadError = useStore((s) => s.proof.loadError);
   const technical = useTechnical();
-  const [selected, setSelected] = useState<string | null>(null);
+  const focus = useStore((s) => s.proof.focus);
+  const [selected, setSelected] = useState<string | null>(focus);
   const [creating, setCreating] = useState(false);
-  const { loadSessions } = useActions();
+  const { loadSessions, clearProofFocus } = useActions();
 
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  // Opened from a Games card on the comparison it set to record.
+  useEffect(() => {
+    if (focus === null) return;
+    setSelected(focus);
+    setCreating(false);
+    clearProofFocus();
+  }, [focus, clearProofFocus]);
 
   const current = sessions.find((s) => s.session.sessionId === selected) ?? null;
 
@@ -48,7 +62,7 @@ export function ProofView() {
           <ErrorCallout text={explain(loadError)} technical={technical} />
         </div>
       )}
-      <div className="grid max-w-6xl gap-5 lg:grid-cols-[18rem_1fr]">
+      <div className="grid max-w-6xl gap-5 lg:grid-cols-[18rem_1fr] 2xl:max-w-none">
         <SessionList sessions={sessions} selected={selected} onSelect={(id) => (setSelected(id), setCreating(false))} />
         <div>
           {creating ? (
@@ -62,9 +76,10 @@ export function ProofView() {
           ) : current ? (
             <SessionDetail summary={current} />
           ) : (
-            <Card>
-              <p className="text-sm text-ink-muted">Pick a comparison on the left, or start a new one.</p>
-            </Card>
+            <div className="flex flex-col gap-5">
+              <ProofGames />
+              <HowItWorks hasSessions={sessions.length > 0} onStart={() => setCreating(true)} />
+            </div>
           )}
         </div>
       </div>
@@ -72,38 +87,146 @@ export function ProofView() {
   );
 }
 
-function SessionList({ sessions, selected, onSelect }: { sessions: ProofSessionSummary[]; selected: string | null; onSelect: (id: string) => void }) {
-  if (sessions.length === 0) {
-    return (
-      <Card>
-        <p className="text-sm text-ink-muted">No comparisons yet.</p>
-      </Card>
-    );
-  }
+/** Shown until a comparison is open: what one is, in the guide's own steps. */
+function HowItWorks({ hasSessions, onStart }: { hasSessions: boolean; onStart: () => void }) {
+  const steps = [
+    "Record the same scene in your game a few times. Each run is a short capture of frame timings while you play.",
+    "Make one change, in Tools.",
+    `Record the same scene again, the same number of times (${SUGGESTED_RUNS} each is a good start).`,
+    "Compare. PeakTweaks calls a difference real only when it is bigger than the variation between your own runs.",
+  ];
   return (
-    <nav aria-label="Comparisons">
-      <ul className="flex flex-col gap-2">
-        {sessions.map(({ session, beforeRuns, afterRuns }) => (
-          <li key={session.sessionId}>
-            <button
-              type="button"
-              onClick={() => onSelect(session.sessionId)}
-              aria-current={selected === session.sessionId ? "true" : undefined}
-              className={cx(
-                "w-full rounded-lg border p-3 text-left text-sm",
-                selected === session.sessionId ? "border-accent bg-accent/10" : "border-line bg-surface-1 hover:bg-surface-2",
-              )}
+    <Card aria-labelledby="proof-how-title">
+      <h2 id="proof-how-title" className="font-extrabold tracking-tight">
+        How a comparison works
+      </h2>
+      <ol className="mt-3 flex flex-col gap-2.5">
+        {steps.map((text, i) => (
+          <li key={i} className="flex gap-3 text-sm">
+            <span
+              aria-hidden
+              className="grid size-6 shrink-0 place-items-center rounded-full border border-line bg-surface-2 text-xs font-bold tabular-nums"
             >
-              <span className="block font-medium">{session.exe}</span>
-              <span className="block text-xs text-ink-muted">{formatDateTime(session.createdUnixMs)}</span>
-              <span className="mt-1 block text-xs text-ink-muted">
-                {beforeRuns} before · {afterRuns} after
-              </span>
-            </button>
+              {i + 1}
+            </span>
+            <span className="pt-0.5 text-ink-muted">{text}</span>
           </li>
         ))}
+      </ol>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button icon={<Plus aria-hidden className="size-4" />} onClick={onStart}>
+          Start one
+        </Button>
+        {hasSessions && <p className="text-sm text-ink-faint">Or open one of yours on the left.</p>}
+      </div>
+    </Card>
+  );
+}
+
+/** Where a comparison stands, for its line in the list. The engine compares
+ * once each side has two runs (proof/verdict.rs `MIN_RUNS_PER_SIDE`). */
+function sessionStage(beforeRuns: number, afterRuns: number, recording: boolean): { label: string; tone: "live" | "done" | "next" } {
+  if (recording) return { label: "Recording", tone: "live" };
+  if (beforeRuns >= 2 && afterRuns >= 2) return { label: "Result ready", tone: "done" };
+  if (afterRuns > 0) return { label: "After runs", tone: "next" };
+  if (beforeRuns >= 2) return { label: "Your change next", tone: "next" };
+  return { label: "Before runs", tone: "next" };
+}
+
+function SessionList({ sessions, selected, onSelect }: { sessions: ProofSessionSummary[]; selected: string | null; onSelect: (id: string) => void }) {
+  const installs = useStore((s) => s.audit?.env.gameInstalls ?? null);
+  const auto = useStore((s) => s.play?.autoRecord ?? null);
+  if (sessions.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-line p-5 text-center">
+        <Scale aria-hidden className="mx-auto size-6 text-ink-faint" />
+        <p className="mt-2 text-sm text-ink-muted">No comparisons yet.</p>
+      </div>
+    );
+  }
+  const nameOf = (gameId: string | null) => (gameId ? (installs?.find((i) => i.gameId === gameId)?.name ?? null) : null);
+  return (
+    <nav aria-label="Comparisons">
+      <h2 className="mb-2 flex items-baseline justify-between text-xs font-bold tracking-widest text-ink-faint uppercase">
+        Your comparisons <span className="tabular-nums">{sessions.length}</span>
+      </h2>
+      <ul className="flex flex-col gap-2">
+        {sessions.map(({ session, beforeRuns, afterRuns }) => {
+          const name = nameOf(session.gameId);
+          const isSelected = selected === session.sessionId;
+          const stage = sessionStage(beforeRuns, afterRuns, auto?.sessionId === session.sessionId && auto.recordingNow);
+          const hue = session.gameId ? gameHue(session.gameId) : null;
+          const markStyle =
+            hue === null
+              ? undefined
+              : {
+                  // copy-lint-allow: CSS colour stops, not text
+                  backgroundColor: `hsl(${hue} 60% 22%)`,
+                  // copy-lint-allow: CSS colour stops, not text
+                  borderColor: `hsl(${hue} 70% 45% / 0.6)`,
+                };
+          return (
+            <li key={session.sessionId}>
+              <button
+                type="button"
+                onClick={() => onSelect(session.sessionId)}
+                aria-current={isSelected ? "true" : undefined}
+                className={cx(
+                  "flex w-full gap-3 rounded-xl border p-3 text-left text-sm transition-colors",
+                  isSelected ? "border-accent bg-accent/10" : "border-line bg-surface-1 hover:bg-surface-2",
+                )}
+              >
+                <span
+                  aria-hidden
+                  className="grid size-10 shrink-0 place-items-center rounded-lg border border-line bg-surface-2 font-display text-[0.65rem] font-black tracking-tight"
+                  style={markStyle}
+                >
+                  {session.gameId ? gameMark(session.gameId, name ?? session.exe) : <Scale className="size-4 text-ink-muted" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold">{name ?? session.exe}</span>
+                  <span className="block truncate text-xs text-ink-muted">
+                    {name ? `${session.exe} · ` : ""}
+                    {formatDateTime(session.createdUnixMs)}
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+                    <RunPips label="Before" runs={beforeRuns} />
+                    <RunPips label="After" runs={afterRuns} />
+                  </span>
+                  <span
+                    className={cx(
+                      "mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[0.7rem] font-semibold",
+                      stage.tone === "live" && "bg-bad/15 text-bad",
+                      stage.tone === "done" && "bg-lime/15 text-lime",
+                      stage.tone === "next" && "bg-surface-2 text-ink-muted",
+                    )}
+                  >
+                    {stage.tone === "live" && <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-bad" />}
+                    {stage.label}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </nav>
+  );
+}
+
+/** A side's runs as dots against the suggested count, with the number. */
+function RunPips({ label, runs }: { label: string; runs: number }) {
+  const dots = Math.max(SUGGESTED_RUNS, Math.min(runs, 6));
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {label}
+      <span aria-hidden className="flex gap-0.5">
+        {Array.from({ length: dots }, (_, i) => (
+          <span key={i} className={cx("size-1.5 rounded-full", i < runs ? "bg-violet-soft" : "bg-line-strong")} />
+        ))}
+      </span>
+      <span className="tabular-nums">{runs}</span>
+    </span>
   );
 }
 
@@ -210,6 +333,9 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   const runs = useStore((s) => s.proof.runs[session.sessionId]);
   const captureOp = useStore((s) => s.proof.captureOps[session.sessionId]);
   const capturingSession = useStore((s) => s.proof.capturingSession);
+  // A cleanup or drive optimization keeps the disk busy; the engine refuses a
+  // recording until it ends.
+  const toolsBusy = useStore((s) => otherLongWork(s, "proof"));
   const comparison = useStore((s) => s.proof.comparisons[session.sessionId]);
   const sample = useStore((s) => s.sample);
   const technical = useTechnical();
@@ -227,6 +353,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   const after = (runs ?? []).filter((r) => r.side === "after");
   const capturing = captureOp?.status === "running";
   const otherRecording = capturingSession !== null && capturingSession !== session.sessionId;
+  const autoRecording = useStore((s) => s.play?.autoRecord?.recordingNow ?? false);
 
   // The guide's next step decides which side the Record button is set to,
   // until the user picks a side themselves.
@@ -240,6 +367,7 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
   return (
     <div className="flex flex-col gap-5">
       <ProofGuide before={before.length} after={after.length} changedNow={changedNow} />
+      <AutoRecordCard summary={summary} before={before.length} after={after.length} changedNow={changedNow} />
       <Card>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-base font-extrabold tracking-tight">{session.exe}</h2>
@@ -316,13 +444,21 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
               type="submit"
               variant="primary"
               busy={capturing}
-              disabled={otherRecording}
+              disabled={otherRecording || autoRecording || toolsBusy !== null}
               icon={<Play aria-hidden className="size-4" />}
             >
               Record
             </Button>
             {capturing && <Spinner label={`Recording for ${delay + seconds} s. Keep the game in front.`} />}
             {otherRecording && <span className="text-sm text-ink-muted">Another comparison is recording.</span>}
+            {autoRecording && !capturing && <span className="text-sm text-ink-muted">Recording while you play is taking a sample.</span>}
+            {toolsBusy && (
+              <span className="text-sm text-ink-muted">
+                Available again when the{" "}
+                {toolsBusy === "drive" ? "drive optimization" : toolsBusy === "driver" ? "driver install" : "junk cleanup"} in Tools
+                finishes.
+              </span>
+            )}
           </div>
         </form>
         <p className="mt-3 text-xs text-ink-faint">
@@ -359,12 +495,199 @@ function SessionDetail({ summary }: { summary: ProofSessionSummary }) {
           </div>
         )}
         {comparison?.status === "done" ? (
-          <ComparisonResult comparison={comparison.value} />
+          <ComparisonResult comparison={comparison.value} runs={runs ?? []} program={session.exe} sample={sample} />
         ) : (
           <p className="mt-2 text-sm text-ink-muted">Record at least two runs on each side, then compare.</p>
         )}
       </Card>
     </div>
+  );
+}
+
+/** The name of a compared figure. */
+// copy-lint-allow: labels for numbers from stored proof runs
+const METRIC_LABEL: Record<MetricComparison["metric"], string> = { avg_fps: "Average FPS", one_percent_low_fps: "1% low FPS" };
+
+/**
+ * One compared figure drawn from the stored runs: each run a dot (before in
+ * violet, after in lime), each side's median a line, and the band around the
+ * before median that the after median has to leave for the engine to count a
+ * difference (`threshold`). Nothing here is worked out again: the medians and
+ * the band are the engine's, the dots are the runs' own numbers.
+ */
+function RunStrip({ comparison: m, before, after }: { comparison: MetricComparison; before: number[]; after: number[] }) {
+  const label = METRIC_LABEL[m.metric];
+  const bandLo = m.beforeMedian - m.threshold;
+  const bandHi = m.beforeMedian + m.threshold;
+  const all = [...before, ...after, bandLo, bandHi, m.afterMedian];
+  const pad = Math.max((Math.max(...all) - Math.min(...all)) * 0.08, 0.5);
+  const lo = Math.min(...all) - pad;
+  const hi = Math.max(...all) + pad;
+  const at = (v: number) => `${((v - lo) / (hi - lo)) * 100}%`;
+  const list = (vs: number[]) => vs.map((v) => formatNumber(v)).join(", ");
+  const description =
+    `${label}. Before runs: ${list(before)}, median ${formatNumber(m.beforeMedian)}. ` +
+    `After runs: ${list(after)}, median ${formatNumber(m.afterMedian)}. ` +
+    `A difference counts outside ${formatNumber(bandLo)} to ${formatNumber(bandHi)}.`;
+  const row = (top: string, values: number[], median: number, dot: string, line: string) => (
+    <div className="absolute inset-x-0 h-0" style={{ top }}>
+      <div className="absolute inset-x-0 h-px bg-line" />
+      <div className={cx("absolute h-6 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full", line)} style={{ left: at(median) }} />
+      {values.map((v, i) => (
+        <div
+          key={i}
+          className={cx("absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-surface-1", dot)}
+          style={{ left: at(v) }}
+        />
+      ))}
+    </div>
+  );
+  return (
+    <figure className="rounded-xl border border-line bg-surface-0/60 px-4 pt-3 pb-2">
+      <figcaption className="text-xs font-bold text-ink">{label}</figcaption>
+      <div role="img" aria-label={description} className="relative mt-2 h-16">
+        <div
+          className="absolute inset-y-0 rounded-md bg-violet/15"
+          style={{ left: at(bandLo), width: `calc(${at(bandHi)} - ${at(bandLo)})` }}
+        />
+        {row("30%", before, m.beforeMedian, "bg-violet", "bg-violet")}
+        {row("72%", after, m.afterMedian, "bg-lime", "bg-lime")}
+      </div>
+      <p aria-hidden className="flex justify-between text-[11px] text-ink-faint tabular-nums">
+        <span>{formatNumber(lo)}</span>
+        <span>{formatNumber(hi)}</span>
+      </p>
+    </figure>
+  );
+}
+
+/** The key to the run charts above it. */
+function RunLegend() {
+  return (
+    <p aria-hidden className="-mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-2.5 rounded-full bg-violet" /> Before runs
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-2.5 rounded-full bg-lime" /> After runs
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-3 w-[3px] rounded-full bg-ink-muted" /> Median
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2.5 w-4 rounded-sm bg-violet/30" /> Inside this band counts as no difference
+      </span>
+    </p>
+  );
+}
+
+/**
+ * "Record while I play" (`proof/auto.rs`): the game watcher records the next
+ * side by itself while the comparison's game is the window in front. Shown
+ * for comparisons made for a game the watcher looks for. The timings in the
+ * text are the engine's (`AUTO_SECONDS`, `AUTO_FIRST_AFTER_MS`,
+ * `AUTO_GAP_MS`, `AUTO_RUNS`).
+ */
+function AutoRecordCard({
+  summary,
+  before,
+  after,
+  changedNow,
+}: {
+  summary: ProofSessionSummary;
+  before: number;
+  after: number;
+  changedNow: string[] | null;
+}) {
+  const { session } = summary;
+  const auto = useStore((s) => s.play?.autoRecord ?? null);
+  const watched = useStore((s) => s.play?.watched);
+  const games = useStore((s) => s.games);
+  const op = useStore((s) => s.proof.autoOp);
+  const technical = useTechnical();
+  const { autoRecord, stopAutoRecord } = useActions();
+  const navigate = useNavigate();
+
+  if (!session.gameId || !watched?.includes(session.gameId)) return null;
+  const gameName = (id: string) => games.find((g) => g.id === id)?.name ?? id;
+  const game = gameName(session.gameId);
+  const mine = auto?.sessionId === session.sessionId ? auto : null;
+  const side: Side | null = before < AUTO_RUNS ? "before" : after < AUTO_RUNS ? "after" : null;
+  const busy = op.status === "running";
+
+  return (
+    <Card aria-labelledby={`auto-${session.sessionId}`} className={cx(mine && "border-violet/60")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Gamepad2 aria-hidden className="size-4 text-violet" />
+        <h2 id={`auto-${session.sessionId}`} className="text-base font-extrabold tracking-tight">
+          Record while you play
+        </h2>
+        {mine && <span className="rounded-full bg-violet/20 px-2 py-0.5 text-xs font-bold text-ink">On</span>}
+      </div>
+      {mine ? (
+        <div className="mt-2 flex flex-col gap-2 text-sm">
+          <p className="text-ink">
+            {mine.recorded} of {mine.wanted} runs on the {mine.side} side so far.
+          </p>
+          {mine.recordingNow ? (
+            <Spinner label={`Recording sample ${mine.recorded + 1} of ${mine.wanted} now. Keep playing.`} />
+          ) : mine.nextUnixMs !== null ? (
+            <p className="text-ink-muted">
+              {game} is running. The next sample starts{" "}
+              {mine.nextUnixMs > Date.now() ? `at ${formatTime(mine.nextUnixMs)}, ` : ""}while {game} is the window in front.
+            </p>
+          ) : (
+            <p className="text-ink-muted">Waiting for {game} to start. Play as you normally do.</p>
+          )}
+          {mine.problem && <p className="text-warn">{mine.problem}</p>}
+          <div>
+            <Button busy={busy} onClick={() => void stopAutoRecord()}>
+              Stop recording while I play
+            </Button>
+          </div>
+        </div>
+      ) : side ? (
+        <div className="mt-2 flex flex-col gap-2 text-sm text-ink-muted">
+          <p>
+            PeakTweaks records the {side} side by itself the next time you play {game}: a 30-second sample 2 minutes in,
+            then one every 3 minutes while {game} is the window in front, until the side has {AUTO_RUNS} runs. The
+            game can close in between; recording carries on next time.
+          </p>
+          <p className="text-xs text-ink-faint">
+            Samples land wherever you are, a menu or a match, so the runs vary more than scenes you pick yourself, and a
+            difference has to be bigger to count.
+          </p>
+          {side === "after" && !changedNow && (
+            <p className="text-ink">
+              Make your change first (a tool, a preset, or a different graphics driver), then record the after side.{" "}
+              <button type="button" className="font-bold text-violet underline" onClick={() => navigate("tools")}>
+                Open Tools
+              </button>
+            </p>
+          )}
+          {auto && (
+            <p>This replaces recording for the {gameName(auto.gameId)} comparison that is set now.</p>
+          )}
+          <div>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => void autoRecord(session.sessionId, side)}
+              icon={<Gamepad2 aria-hidden className="size-4" />}
+            >
+              Record the {side} side while I play
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-ink-muted">Both sides have their runs. Compare them below.</p>
+      )}
+      {op.status === "failed" && (
+        <div className="mt-3">
+          <ErrorCallout text={explain(op.error)} technical={technical} />
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -508,9 +831,41 @@ function throttleText(run: ProofRun): string {
   return limiting.length ? `Yes (${limiting.length} reason${limiting.length > 1 ? "s" : ""})` : "No";
 }
 
-/** The engine's headline, verbatim, then the numbers behind it. */
-function ComparisonResult({ comparison }: { comparison: Comparison }) {
+/** The engine's headline, verbatim, then the numbers behind it, and a way
+ * to copy them (with the run ids) to share. */
+function ComparisonResult({
+  comparison,
+  runs,
+  program,
+  sample,
+}: {
+  comparison: Comparison;
+  runs: readonly ProofRun[];
+  program: string;
+  sample: boolean;
+}) {
   const rows = [comparison.average, comparison.lows];
+  const side = (ids: string[], pick: (r: ProofRun) => number) =>
+    ids.flatMap((id) => runs.filter((r) => r.runId === id).map(pick));
+  const charts = rows.flatMap((m) => {
+    // copy-lint-allow: a metric id from stored proof runs, not shown
+    const pick = (r: ProofRun) => (m.metric === "avg_fps" ? r.stats.avgFps : r.stats.onePercentLowFps);
+    const before = side(comparison.beforeRunIds, pick);
+    const after = side(comparison.afterRunIds, pick);
+    return before.length > 0 && after.length > 0 ? [<RunStrip key={m.metric} comparison={m} before={before} after={after} />] : [];
+  });
+  const [copy, setCopy] = useState<{ copied: true } | { copied: false; text: string } | null>(null);
+  // A new comparison is new text.
+  useEffect(() => setCopy(null), [comparison]);
+  const copyResult = async () => {
+    const text = comparisonText(program, comparison, new Date(), sample);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopy({ copied: true });
+    } catch {
+      setCopy({ copied: false, text });
+    }
+  };
   return (
     <div className="mt-3 flex flex-col gap-4">
       <p className="text-base font-medium" data-testid="verdict-headline">
@@ -524,6 +879,12 @@ function ComparisonResult({ comparison }: { comparison: Comparison }) {
             ))}
           </ul>
         </Callout>
+      )}
+      {charts.length > 0 && (
+        <>
+          <div className="grid gap-3 xl:grid-cols-2">{charts}</div>
+          <RunLegend />
+        </>
       )}
       <table className="w-full text-left text-sm">
         <thead className="text-xs text-ink-faint">
@@ -554,9 +915,30 @@ function ComparisonResult({ comparison }: { comparison: Comparison }) {
           ))}
         </tbody>
       </table>
-      <p className="text-xs text-ink-faint">
-        Runs compared: {comparison.beforeRunIds.length} before, {comparison.afterRunIds.length} after.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-ink-faint">
+          Runs compared: {comparison.beforeRunIds.length} before, {comparison.afterRunIds.length} after.
+        </p>
+        <Button
+          variant="ghost"
+          icon={copy?.copied ? <Check aria-hidden className="size-4" /> : <ClipboardCopy aria-hidden className="size-4" />}
+          title="This result as plain text, with the ids of the runs behind it, to paste into a message. Nothing is sent anywhere."
+          onClick={() => void copyResult()}
+        >
+          {copy?.copied ? "Copied" : "Copy result"}
+        </Button>
+      </div>
+      {copy && !copy.copied && (
+        <Callout tone="warn" title="Windows did not allow copying. Select the text below and copy it yourself.">
+          <textarea
+            readOnly
+            aria-label="This comparison as text"
+            className="mt-2 h-48 w-full rounded-lg border border-line bg-transparent p-2 font-mono text-xs"
+            value={copy.text}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        </Callout>
+      )}
     </div>
   );
 }

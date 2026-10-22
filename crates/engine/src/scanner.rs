@@ -3,10 +3,12 @@
 //!
 //! A pure function of the engine's own `SystemEnv`. It reads nothing itself and
 //! changes nothing, so it runs unelevated and its results are reproducible from
-//! a saved `SystemEnv`. Every finding is `guided_only` for now: the one-click
-//! fixes the plan lists (refresh rate, power mode, per-app GPU choice) need
-//! tweaks that are not built yet, so a finding never names a fix that does not
-//! exist (`fix_tweak_id` is `None` until one does; NOTES.md N41).
+//! a saved `SystemEnv`. A finding names the tool that fixes it in one click
+//! (`fix_tweak_id`) only when that tool is in the catalogue: so far the power
+//! plan (the PeakTweaks power plan, CATALOGUE H7) and the refresh rate
+//! (`tweaks::refresh`, NOTES N95). The other one-click fixes the plan lists
+//! (per-app GPU choice) are not built, so those findings are guided only
+//! (NOTES.md N41, N42).
 //!
 //! Rules this file keeps, and `tests` below enforces:
 //! - A probe that could not tell produces a `Status::Unknown` finding that says
@@ -177,6 +179,15 @@ fn fix_by(f: &Finding, sticks: usize, ssd_available: bool) -> FixBy {
     }
 }
 
+/// "1 module", "2 modules".
+fn modules(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 fn finding(id: &str, status: Status, title: &str, reading: String, remedy: Option<&str>, guided_only: bool) -> Finding {
     Finding {
         id: id.to_owned(),
@@ -215,7 +226,10 @@ fn memory_channels(hw: &HardwareReport) -> Option<Finding> {
                 ID,
                 Status::Attention,
                 "Memory is on a single channel",
-                format!("{} memory module(s) found, all on one channel.", value.sticks.len()),
+                format!(
+                    "{} found, all on one channel.",
+                    modules(value.sticks.len(), "memory module")
+                ),
                 Some(
                     "A matched pair of modules in the slots your motherboard manual names for two channels \
                      lets the CPU use both. This is a hardware change; PeakTweaks does not push purchases \
@@ -271,9 +285,11 @@ fn memory_speed(hw: &HardwareReport) -> Option<Finding> {
                 Status::Attention,
                 "Memory runs below its rated speed",
                 format!(
-                    "{} of {} module(s) run below their rated speed (for example {running} of {rated} MT/s).",
+                    "{} of {} {} below {} rated speed (for example {running} of {rated} MT/s).",
                     slow.len(),
-                    comparable.len()
+                    modules(comparable.len(), "module"),
+                    if slow.len() == 1 { "runs" } else { "run" },
+                    if slow.len() == 1 { "its" } else { "their" },
                 ),
                 Some(
                     "Many motherboards ship with the memory profile (XMP or EXPO) switched off. It is a BIOS \
@@ -288,7 +304,16 @@ fn memory_speed(hw: &HardwareReport) -> Option<Finding> {
                 ID,
                 Status::Fine,
                 "Memory runs at its rated speed",
-                format!("{} module(s) report running at their rated speed.", comparable.len()),
+                format!(
+                    "{} {} at {} rated speed.",
+                    modules(comparable.len(), "module"),
+                    if comparable.len() == 1 {
+                        "reports running"
+                    } else {
+                        "report running"
+                    },
+                    if comparable.len() == 1 { "its" } else { "their" },
+                ),
                 None,
                 false,
             )
@@ -306,17 +331,21 @@ fn refresh_rate(hw: &HardwareReport) -> Option<Finding> {
             unknown(ID, TITLE, "Windows did not report a refresh rate")
         }
         // 1 Hz of slack: 59.94 Hz shows up as 59 or 60 depending on the driver.
-        Probe::Yes { value } if value.current_hz + 1 < value.max_hz_at_current_resolution => finding(
-            ID,
-            Status::Attention,
-            "The display is set below its highest refresh rate",
-            format!(
-                "Running at {} Hz; this display offers {} Hz at {}x{}.",
-                value.current_hz, value.max_hz_at_current_resolution, value.width, value.height
-            ),
-            Some("Windows Settings > System > Display > Advanced display lets you choose the refresh rate."),
-            true,
-        ),
+        Probe::Yes { value } if value.current_hz + 1 < value.max_hz_at_current_resolution => {
+            let mut f = finding(
+                ID,
+                Status::Attention,
+                "The display is set below its highest refresh rate",
+                format!(
+                    "Running at {} Hz; this display offers {} Hz at {}x{}.",
+                    value.current_hz, value.max_hz_at_current_resolution, value.width, value.height
+                ),
+                Some("Windows Settings > System > Display > Advanced display lets you choose the refresh rate."),
+                false,
+            );
+            f.fix_tweak_id = Some(crate::tweaks::refresh::ID.to_owned());
+            f
+        }
         Probe::Yes { value } => finding(
             ID,
             Status::Fine,
@@ -396,7 +425,9 @@ fn windows_support(hw: &HardwareReport) -> Option<Finding> {
 /// Plan 6.2 item 8: NVIDIA's older generations no longer get new game drivers.
 /// Only NVIDIA cards are judged; the plan names no rule for other makers, so
 /// they get no finding rather than an invented one. The generation table is
-/// from memory (VERIFY, NOTES.md N47); an unknown name is reported as unknown.
+/// partly from memory (VERIFY, NOTES.md N47); an unknown name is reported as
+/// unknown. Which generations still get security updates is NVIDIA's own
+/// (`gpu_driver::security_updates`).
 fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
     const ID: &str = "gpu.driver_branch";
     const TITLE: &str = "Graphics driver";
@@ -417,10 +448,22 @@ fn gpu_driver(hw: &HardwareReport) -> Option<Finding> {
     };
     Some(match nvidia_branch(&card.name) {
         NvidiaBranch::Legacy { generation } => Finding {
-            remedy: Some(format!(
-                "NVIDIA no longer releases new Game Ready drivers for {generation} cards. Keep installing the \
-                 security updates NVIDIA still publishes for them. Getting new game drivers needs a newer card."
-            )),
+            remedy: Some(match crate::gpu_driver::security_updates(generation) {
+                Some(true) => format!(
+                    "NVIDIA no longer releases new Game Ready drivers for {generation} cards. It publishes \
+                     security updates for them until October 2028; keep installing those. Getting new game \
+                     drivers needs a newer card."
+                ),
+                Some(false) => format!(
+                    "NVIDIA no longer releases any drivers for {generation} cards: their security updates ended \
+                     in September 2024. Getting new drivers needs a newer card."
+                ),
+                None => format!(
+                    "NVIDIA no longer releases new Game Ready drivers for {generation} cards. It publishes \
+                     security updates for Maxwell cards until October 2028, not for older ones. Getting new game \
+                     drivers needs a newer card."
+                ),
+            }),
             ..finding(
                 ID,
                 Status::Attention,
@@ -570,18 +613,33 @@ fn gpu_choice(hw: &HardwareReport, choices: &[GameGpuChoice]) -> Option<Finding>
         if !unknowns.is_empty() {
             lines.push(format!("Could not be read: {}.", unknowns.join("; ")));
         }
+        // One game, with a tool PeakTweaks offers for it now (not held back by
+        // its anti-cheat, N75): that tool is the fix. Otherwise guided only.
+        let fix = match not_high.as_slice() {
+            [only] if crate::games::anti_cheat_block(&only.game_id).is_none() => {
+                crate::tweaks::gpu_pref::HighPerformanceGpu::for_game(&only.game_id).map(|t| {
+                    use crate::types::Tweak;
+                    t.id().to_owned()
+                })
+            }
+            _ => None,
+        };
         let mut f = finding(
             ID,
             Status::Attention,
             "A game is not set to the high-performance graphics chip",
             format!("{lead} {}", lines.join(" ")),
-            Some(
+            Some(if fix.is_some() {
+                "In Windows Settings > System > Display > Graphics, find the game (add it with Browse if it is \
+                 not listed), open its options and choose High performance."
+            } else {
                 "In Windows Settings > System > Display > Graphics, find the game (add it with Browse if it is \
                  not listed), open its options and choose High performance. PeakTweaks does not change this \
-                 setting yet.",
-            ),
-            true,
+                 setting for this game."
+            }),
+            fix.is_none(),
         );
+        f.fix_tweak_id = fix;
         // VERIFY (N56): each Roblox update installs to a new folder.
         if let (Some(remedy), true) = (f.remedy.as_mut(), not_high.iter().any(|c| c.game_id == "roblox")) {
             remedy.push_str(
@@ -674,17 +732,21 @@ fn background_load(load: &Probe<BackgroundLoad>) -> Option<Finding> {
 
 /// Reads the power *plan*. Windows 11 also has a separate "power mode" setting
 /// that is not read here, so the copy names the plan and points at both places
-/// (NOTES.md N43). No one-click fix exists yet, so this is guided only.
+/// (NOTES.md N43). The PeakTweaks power plan tool is the one-click fix; Windows'
+/// own settings are named as well, for anyone who would rather pick a plan.
 fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
     const ID: &str = "power.plan";
     const TITLE: &str = "Power plan";
     let remedy = if laptop {
-        "In Windows Settings > System > Power & battery, the Power mode setting, or Control Panel > Power \
-         Options, you can pick a plan that favours performance. On a laptop that uses more battery and \
-         makes more heat, so many people only do this while plugged in."
+        "The PeakTweaks power plan below copies this plan and, while plugged in, keeps the processor and \
+         devices out of power saving, which uses more electricity and makes more heat; battery settings stay \
+         as they were. Undo switches back. Or pick a plan yourself in Windows Settings > System > Power & \
+         battery (Power mode) or Control Panel > Power Options; on battery a performance plan uses more \
+         battery."
     } else {
-        "In Windows Settings > System > Power & battery, the Power mode setting, or Control Panel > Power \
-         Options, you can pick a plan that favours performance. It uses more electricity."
+        "The PeakTweaks power plan below copies this plan and keeps the processor and devices out of power \
+         saving. It uses more electricity. Undo switches back. Or pick a plan yourself in Windows Settings > \
+         System > Power & battery (Power mode) or Control Panel > Power Options."
     };
     match plan {
         Probe::Unknown { reason } | Probe::No { reason } => unknown(ID, TITLE, reason),
@@ -694,6 +756,16 @@ fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
                 Status::Fine,
                 "A performance power plan is active",
                 "The active power plan is one of Windows' performance plans.".to_owned(),
+                None,
+                false,
+            ),
+            PowerPlanKind::PeakTweaks => finding(
+                ID,
+                Status::Fine,
+                "The PeakTweaks power plan is active",
+                "The active power plan is the one PeakTweaks made from your previous plan. Undo in Backups \
+                 switches back."
+                    .to_owned(),
                 None,
                 false,
             ),
@@ -712,14 +784,16 @@ fn power_plan(plan: &Probe<PowerPlan>, laptop: bool) -> Finding {
                 } else {
                     "Power saver"
                 };
-                finding(
+                let mut f = finding(
                     ID,
                     Status::Attention,
                     "The power plan is not a performance plan",
                     format!("The active power plan is {name}."),
                     Some(remedy),
-                    true,
-                )
+                    false,
+                );
+                f.fix_tweak_id = Some(crate::tweaks::power::PLAN_ID.to_owned());
+                f
             }
         },
     }
@@ -861,13 +935,11 @@ mod tests {
             is_server: false,
         });
         let r = scan(&env_with(hw));
-        for id in [
-            "memory.channels",
-            "memory.speed",
-            "display.refresh_rate",
-            "storage.boot_disk",
-            "os.support",
-        ] {
+        let f = get(&r, "display.refresh_rate");
+        assert_eq!(f.status, Status::Attention);
+        assert_eq!(f.fix_tweak_id.as_deref(), Some(crate::tweaks::refresh::ID));
+        assert!(!f.guided_only && f.remedy.is_some());
+        for id in ["memory.channels", "memory.speed", "storage.boot_disk", "os.support"] {
             let f = get(&r, id);
             assert_eq!(f.status, Status::Attention, "{id}");
             assert!(f.guided_only, "{id}: no one-click fix exists yet");
@@ -1006,15 +1078,32 @@ mod tests {
             (PowerPlanKind::HighPerformance, Status::Fine),
             (PowerPlanKind::UltimatePerformance, Status::Fine),
             (PowerPlanKind::Custom, Status::Fine),
+            (PowerPlanKind::PeakTweaks, Status::Fine),
         ] {
             let r = scan(&env_with_plan(plan(kind), false));
             let f = get(&r, "power.plan");
             assert_eq!(f.status, status, "{kind:?}");
             assert_eq!(f.remedy.is_some(), status == Status::Attention, "{kind:?}");
-            assert!(f.fix_tweak_id.is_none());
+            let fix = (status == Status::Attention).then_some(crate::tweaks::power::PLAN_ID);
+            assert_eq!(f.fix_tweak_id.as_deref(), fix, "{kind:?}");
+            assert!(!f.guided_only, "{kind:?}");
+            assert_eq!(f.fix_by, (status == Status::Attention).then_some(FixBy::Us), "{kind:?}");
         }
         let unknown = scan(&env_with_plan(Probe::unknown("no value"), false));
         assert_eq!(get(&unknown, "power.plan").status, Status::Unknown);
+    }
+
+    /// A finding may only name a tool the app ships; Home shows that tool's
+    /// card under the finding.
+    #[test]
+    fn a_fix_a_finding_names_is_a_tool_in_the_catalogue() {
+        let ids: Vec<String> = crate::tweaks::catalogue().iter().map(|t| t.id().to_owned()).collect();
+        let r = scan(&env_with_plan(plan(PowerPlanKind::Balanced), true));
+        let named: Vec<&str> = r.findings.iter().filter_map(|f| f.fix_tweak_id.as_deref()).collect();
+        assert!(!named.is_empty());
+        for id in named {
+            assert!(ids.iter().any(|t| t == id), "{id} is not in the catalogue");
+        }
     }
 
     #[test]
@@ -1140,10 +1229,15 @@ mod tests {
         );
         assert_eq!(get(&r, "storage.boot_disk").fix_by, Some(FixBy::Hardware));
         assert_eq!(get(&r, "memory.speed").fix_by, Some(FixBy::You));
-        assert_eq!(get(&r, "display.refresh_rate").fix_by, Some(FixBy::You));
+        assert_eq!(get(&r, "display.refresh_rate").fix_by, Some(FixBy::Us));
         for f in &r.findings {
             assert_eq!(f.fix_by.is_some(), f.status == Status::Attention, "{}", f.id);
-            assert_ne!(f.fix_by, Some(FixBy::Us), "{}: nothing has a one-click fix yet", f.id);
+            assert_eq!(
+                f.fix_by == Some(FixBy::Us),
+                f.fix_tweak_id.is_some(),
+                "{}: ours to fix exactly when it names our tool",
+                f.id
+            );
         }
 
         hw.memory = Probe::yes(MemoryInfo {
@@ -1218,6 +1312,7 @@ mod tests {
             drive: drive.into(),
             disk,
             exe: None,
+            steam_app: None,
         }
     }
 
@@ -1319,7 +1414,15 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::You)));
+        // Fortnite's tool, once its anti-cheat is cleared (N75); until then
+        // the finding stays guided.
+        if crate::games::anti_cheat_block("fortnite").is_none() {
+            assert_eq!(f.fix_tweak_id.as_deref(), Some("gpu.choice.fortnite"));
+            assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::Us)));
+        } else {
+            assert_eq!(f.fix_tweak_id, None);
+            assert_eq!((f.status, f.fix_by), (Status::Attention, Some(FixBy::You)));
+        }
         assert_eq!(
             f.reading,
             "This laptop has more than one graphics chip (NVIDIA GeForce RTX 4060 Laptop GPU, Intel UHD). \

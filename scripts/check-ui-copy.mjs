@@ -33,9 +33,18 @@ export function loadClaimWords(path = join(here, "claim-words.json")) {
 
 const isWordChar = (c) => /[a-z0-9]/i.test(c);
 
-/** The first claim word in `text`, or null. Same rule as the Rust `find_claim`. */
+/** Lower-case names of Windows and driver features that contain a claim word. */
+const featureNames = (JSON.parse(readFileSync(join(here, "claim-words.json"), "utf8")).names ?? []).map((n) =>
+  String(n).toLowerCase(),
+);
+
+/**
+ * The first claim word in `text`, or null. Same rule as the Rust `find_claim`:
+ * the feature names in the shared list are removed first.
+ */
 export function findClaim(text, words) {
-  const lower = text.toLowerCase();
+  let lower = text.toLowerCase();
+  for (const name of featureNames) lower = lower.split(name).join(" ");
   for (const word of words) {
     const wordLike = isWordChar(word[0] ?? "");
     let from = 0;
@@ -47,6 +56,16 @@ export function findClaim(text, words) {
     }
   }
   return null;
+}
+
+/**
+ * UTF-8 text that was decoded as Windows-1252 and saved again ("â€œ" for a
+ * curly quote, "Ã©" for é). It reaches users as garbage, so any is an error.
+ * @returns {number[]} 1-based line numbers
+ */
+export function findMojibake(source) {
+  const bad = /\u00e2\u20ac|\u00c2[\u00a0-\u00bf]|\u00c3[\u0080-\u00bf]/;
+  return source.split(/\r?\n/).flatMap((line, i) => (bad.test(line) ? [i + 1] : []));
 }
 
 const ALLOW = /copy-lint-allow:\s*\S/;
@@ -123,7 +142,11 @@ function main(argv) {
   for (const dir of dirs) {
     for (const file of sourceFiles(resolve(dir))) {
       files += 1;
-      for (const hit of lintSource(file, readFileSync(file, "utf8"), words)) {
+      const source = readFileSync(file, "utf8");
+      for (const line of findMojibake(source)) {
+        problems.push(`${relative(root, file)}:${line}: garbled characters (UTF-8 read as Windows-1252); retype them`);
+      }
+      for (const hit of lintSource(file, source, words)) {
         problems.push(`${relative(root, file)}:${hit.line}: "${hit.word}" in ${JSON.stringify(hit.text)}`);
       }
     }

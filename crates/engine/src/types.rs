@@ -238,6 +238,18 @@ pub enum BlockedCode {
     UnsafeForDevice,
     /// The license held by the engine does not cover this tweak's tier.
     TierRequired,
+    /// An app installed on this PC relies on what this would change (the Xbox
+    /// app on Xbox sign-in). `message` names the app.
+    NeededByInstalledApp,
+    /// A per-game change for a game, or a program file of it, that is not on
+    /// this PC. The trigger is the game id.
+    GameNotInstalled,
+    /// Security software or an anti-cheat, which PeakTweaks never turns off
+    /// (a startup entry for Windows Security, say). `message` names it.
+    ProtectedProgram,
+    /// An administrator or a policy on this PC set this, so only they can
+    /// change it (a Store app's startup task set by policy, say).
+    SetByPolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -391,6 +403,20 @@ pub trait Tweak: Send + Sync {
     /// long as any user may still have the old version applied. Dropping one
     /// makes that user's revert fail with `ContextViolation`.
     fn touches(&self) -> Vec<RegTarget>;
+
+    /// Every non-registry item (`system.rs`) this tweak may change: power plans,
+    /// services, DNS servers, files. `Transaction` refuses anything else, on
+    /// apply and on replay. Same rule as `touches` for old records. Most tweaks
+    /// change only the registry and declare none.
+    fn system_targets(&self) -> Vec<crate::system::SysItem> {
+        Vec::new()
+    }
+
+    /// Side effects this tweak may queue (`Transaction::after_commit`), with `*`
+    /// allowed in text fields like `system_targets`. Anything else is refused.
+    fn effect_targets(&self) -> Vec<crate::system::SideEffect> {
+        Vec::new()
+    }
 
     /// Cheap, pure, no I/O. Called on every refresh.
     fn evaluate_predicate(&self, env: &SystemEnv) -> PredicateOutcome {

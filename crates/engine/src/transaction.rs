@@ -16,10 +16,16 @@ use std::path::PathBuf;
 
 use super::context::ContextResolver;
 use super::error::{EngineError, Result};
-use super::journal::{now_ms, CommitAction, CommitRecord, Journal, JournalAction, JournalEntry};
+use super::journal::{
+    now_ms, ChangeEntry, CommitAction, CommitRecord, EffectRecord, Journal, JournalAction, JournalEntry, NoteRecord,
+    RegBackup,
+};
 use super::offline;
 use super::reg_export::{write_reg_backup, write_session_backup};
-use super::registry::{components, is_ancestor_or_equal, path_eq};
+use super::registry::{
+    components, is_ancestor_or_equal, path_eq, pattern_eq, pattern_is_ancestor_or_equal, value_name_matches, WILDCARD,
+};
+use super::system::{SideEffect, SysItem, SysState};
 use super::types::{ExecutionContext, RawValue, RegRoot, RegTarget, Tweak};
 
 #[must_use = "a transaction must be committed or rolled back"]
@@ -33,6 +39,14 @@ pub struct Transaction<'a> {
     action: JournalAction,
     tx_id: u64,
     written: Vec<JournalEntry>,
+    /// Declared non-registry items (`Tweak::system_targets`).
+    sys_allowlist: Vec<SysItem>,
+    /// Non-registry changes made by this transaction so far.
+    changes: Vec<ChangeEntry>,
+    /// Run after the commit, in order, each once.
+    effects: Vec<SideEffect>,
+    /// Declared side effects (`Tweak::effect_targets`).
+    effect_allowlist: Vec<SideEffect>,
 }
 
 impl<'a> Transaction<'a> {
@@ -57,7 +71,105 @@ impl<'a> Transaction<'a> {
             action,
             tx_id,
             written: Vec::new(),
+            sys_allowlist: tweak
+                .system_targets()
+                .into_iter()
+                .map(|item| match item {
+                    // Made concrete for this user. One that cannot be (no
+                    // profile folder) stays as declared and so matches nothing.
+                    SysItem::File { path } => SysItem::File {
+                        path: resolver.profile_path(&path).unwrap_or(path),
+                    },
+                    other => other,
+                })
+                .collect(),
+            changes: Vec::new(),
+            effects: Vec::new(),
+            effect_allowlist: tweak.effect_targets(),
         })
+    }
+
+    /// Non-registry changes made by this transaction so far.
+    pub fn changes(&self) -> &[ChangeEntry] {
+        &self.changes
+    }
+
+    /// Change a non-registry item (`system.rs`): check it is declared, read and
+    /// journal what it is now, then change it. Files go through `write_file`.
+    pub fn set_system(&mut self, item: SysItem, state: SysState) -> Result<()> {
+        if matches!(item, SysItem::File { .. }) || matches!(state, SysState::File { .. }) {
+            return Err(EngineError::Internal {
+                detail: "files are changed with write_file".into(),
+            });
+        }
+        self.check_sys_allowed(&item)?;
+        let previous = self.resolver.system().read(&item)?;
+        if previous == state {
+            return Ok(());
+        }
+        self.check_put_back_possible(&item, &previous)?;
+        self.record_change(item.clone(), previous, state.clone())?;
+        self.resolver.system().write(&item, &state)
+    }
+
+    /// A power setting Windows hides reads as `Absent`, and `Absent` cannot be
+    /// written back. So one may only be changed on a plan copy this tweak made
+    /// (in this transaction or an earlier apply still outstanding), which Undo
+    /// deletes as a whole.
+    fn check_put_back_possible(&self, item: &SysItem, previous: &SysState) -> Result<()> {
+        let SysItem::PowerSetting { scheme, .. } = item else {
+            return Ok(());
+        };
+        if *previous != SysState::Absent {
+            return Ok(());
+        }
+        let ours = |c: &ChangeEntry| {
+            c.previous == SysState::Absent
+                && matches!(&c.item, SysItem::PowerScheme { guid } if guid.eq_ignore_ascii_case(scheme))
+        };
+        if self.changes.iter().any(ours) || self.journal.outstanding_changes(&self.tweak_id).iter().any(ours) {
+            return Ok(());
+        }
+        Err(EngineError::ContextViolation {
+            tweak_id: self.tweak_id.clone(),
+            detail: format!(
+                "the {} has no value of its own to put back, and the plan is not a copy PeakTweaks made",
+                item.describe()
+            ),
+        })
+    }
+
+    /// Replace a whole file. A copy of what it held (or that it did not exist)
+    /// is kept with the backups and journalled first; revert puts it back.
+    pub fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<()> {
+        let item = SysItem::File { path: path.to_owned() };
+        self.check_sys_allowed(&item)?;
+        let before = self.resolver.system().read_file(path)?;
+        if before.as_deref() == Some(bytes) {
+            return Ok(());
+        }
+        let previous = match &before {
+            Some(b) => self.keep_file_copy(b, "before")?,
+            None => SysState::Absent,
+        };
+        let written = self.keep_file_copy(bytes, "after")?;
+        self.record_change(item, previous, written)?;
+        self.resolver.system().write_file(path, Some(bytes))
+    }
+
+    /// Run `effect` once this transaction commits (after apply or revert).
+    /// Journalled with its outcome; a failure does not undo the change.
+    pub fn after_commit(&mut self, effect: SideEffect) -> Result<()> {
+        if !self.effect_allowlist.iter().any(|p| effect.matches(p)) {
+            return Err(EngineError::ContextViolation {
+                tweak_id: self.tweak_id.clone(),
+                detail: format!("\"{}\" is not in this tweak's declared side effects", effect.describe()),
+            });
+        }
+        if !self.effects.contains(&effect) {
+            self.effects.push(effect);
+        }
+        Ok(())
     }
 
     pub fn tweak_id(&self) -> &str {
@@ -142,13 +254,13 @@ impl<'a> Transaction<'a> {
     /// write, so a tampered or stale journal line cannot cause a partial
     /// restore followed by a refusal.
     pub fn restore_journalled(&mut self) -> Result<()> {
-        let mut entries: Vec<JournalEntry> = self.journal.outstanding(&self.tweak_id).to_vec();
-        if entries.is_empty() {
+        let entries: Vec<JournalEntry> = self.journal.outstanding(&self.tweak_id).to_vec();
+        let changes: Vec<ChangeEntry> = self.journal.outstanding_changes(&self.tweak_id).to_vec();
+        if entries.is_empty() && changes.is_empty() {
             return Err(EngineError::NoJournalEntry {
                 tweak_id: self.tweak_id.clone(),
             });
         }
-        entries.sort_by_key(|e| std::cmp::Reverse(e.seq));
 
         for e in &entries {
             self.check_same_account(e)?;
@@ -157,28 +269,142 @@ impl<'a> Transaction<'a> {
                 self.check_key_removable(e.root, k)?;
             }
         }
+        for c in &changes {
+            self.check_sys_allowed(&c.item)?;
+        }
 
-        for e in entries {
-            match e.previous.clone() {
-                Some(prev) => self.set_raw(e.root, &e.key_path, &e.value_name, prev)?,
-                None => self.delete_value(e.root, &e.key_path, &e.value_name)?,
+        // Registry writes and other changes, newest first across both.
+        enum Step {
+            Reg(JournalEntry),
+            Sys(ChangeEntry),
+        }
+        let mut steps: Vec<(u64, Step)> = entries
+            .into_iter()
+            .map(|e| (e.seq, Step::Reg(e)))
+            .chain(changes.into_iter().map(|c| (c.seq, Step::Sys(c))))
+            .collect();
+        steps.sort_by_key(|(seq, _)| std::cmp::Reverse(*seq));
+
+        for (_, step) in steps {
+            match step {
+                Step::Reg(e) => {
+                    if self.per_pc_key_is_gone(&e)? {
+                        self.note(format!(
+                            "{} no longer exists (the device or adapter was removed), so {} was not put back",
+                            e.display_path, e.value_name
+                        ))?;
+                        continue;
+                    }
+                    match e.previous.clone() {
+                        Some(prev) => self.set_raw(e.root, &e.key_path, &e.value_name, prev)?,
+                        None => self.delete_value(e.root, &e.key_path, &e.value_name)?,
+                    }
+                    self.remove_created_keys(e.root, &e.created_keys)?;
+                }
+                Step::Sys(c) => {
+                    if let Some(name) = self.adapter_is_gone(&c.item) {
+                        self.note(format!(
+                            "network adapter {name} no longer exists (it was removed), so its {} was not put back",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
+                    if self.amd_card_is_gone(&c.item) {
+                        self.note(format!(
+                            "the {} was not put back: that graphics card is no longer on this PC",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
+                    if self.nvidia_is_gone(&c.item) {
+                        self.note(format!(
+                            "the NVIDIA driver is no longer on this PC, and its settings went with it, so the {} \
+                             was not put back",
+                            c.item.describe()
+                        ))?;
+                        continue;
+                    }
+                    self.change_back(&c.item, &c.previous)?
+                }
             }
-            self.remove_created_keys(e.root, &e.created_keys)?;
         }
         Ok(())
     }
 
+    /// Put a non-registry item back to `target`, journalled like any change.
+    fn change_back(&mut self, item: &SysItem, target: &SysState) -> Result<()> {
+        let current = match item {
+            SysItem::File { path } => {
+                let bytes = self.resolver.system().read_file(path)?;
+                let same = match (&bytes, target) {
+                    (None, SysState::Absent) => true,
+                    (Some(b), SysState::File { sha256, .. }) => hex_sha256(b) == *sha256,
+                    _ => false,
+                };
+                if same {
+                    return Ok(());
+                }
+                match bytes {
+                    Some(b) => self.keep_file_copy(&b, "before")?,
+                    None => SysState::Absent,
+                }
+            }
+            _ => {
+                let now = self.resolver.system().read(item)?;
+                if now == *target {
+                    return Ok(());
+                }
+                now
+            }
+        };
+        self.record_change(item.clone(), current, target.clone())?;
+        self.put_back(item, target)
+    }
+
+    /// Make `item` be `state` without journalling (rollback, and the last step
+    /// of `change_back`).
+    fn put_back(&self, item: &SysItem, state: &SysState) -> Result<()> {
+        let system = self.resolver.system();
+        match (item, state) {
+            (SysItem::File { path }, SysState::Absent) => system.write_file(path, None),
+            (SysItem::File { path }, SysState::File { backup, sha256 }) => {
+                let src = self.journal.root().join(backup);
+                let bytes = std::fs::read(&src).map_err(|e| EngineError::storage(src.display().to_string(), e))?;
+                if hex_sha256(&bytes) != *sha256 {
+                    return Err(EngineError::Storage {
+                        path: src.display().to_string(),
+                        detail: "the saved copy of this file does not match its recorded checksum".into(),
+                    });
+                }
+                system.write_file(path, Some(&bytes))
+            }
+            (SysItem::File { .. }, _) | (_, SysState::File { .. }) => Err(EngineError::Internal {
+                detail: format!(
+                    "a journal record for the {} has the wrong kind of state",
+                    item.describe()
+                ),
+            }),
+            (item, state) => system.write(item, state),
+        }
+    }
+
     /// Close the transaction successfully.
-    pub fn commit(self) -> Result<Vec<JournalEntry>> {
+    pub fn commit(mut self) -> Result<Vec<JournalEntry>> {
         // One combined restore file per applied change, for recovery by hand
         // when PeakTweaks cannot run (Safe Mode; see journal.rs). Written
         // before the commit so a committed apply always has one.
-        if self.action == JournalAction::Apply && !self.written.is_empty() {
-            let values: Vec<(&str, &str, Option<&RawValue>)> = self
-                .written
-                .iter()
-                .map(|e| (e.display_path.as_str(), e.value_name.as_str(), e.previous.as_ref()))
-                .collect();
+        let values: Vec<(&str, &str, Option<&RawValue>)> = self
+            .written
+            .iter()
+            .map(|e| (e.display_path.as_str(), e.value_name.as_str(), e.previous.as_ref()))
+            .chain(
+                self.changes
+                    .iter()
+                    .flat_map(|c| &c.reg_backups)
+                    .map(|b| (b.display_path.as_str(), b.value_name.as_str(), b.previous.as_ref())),
+            )
+            .collect();
+        if self.action == JournalAction::Apply && !values.is_empty() {
             let stem = format!("session_{}_{}", self.tx_id, sanitise(&self.tweak_id));
             write_session_backup(&self.session_dir, &stem, &values)?;
         }
@@ -197,22 +423,84 @@ impl<'a> Transaction<'a> {
             tweak_id: self.tweak_id.clone(),
             action,
         })?;
+        // The change has committed; side effects only help it take hold. Each
+        // outcome is journalled, but neither a failed effect nor a failed
+        // journal line for it may turn a committed change into a reported
+        // failure (the caller would then retry a change that is already made).
+        for effect in std::mem::take(&mut self.effects) {
+            let error = self.resolver.system().run(&effect).err().map(|e| e.to_string());
+            let seq = self.journal.take_seq();
+            let _ = self.journal.append_effect(EffectRecord {
+                seq,
+                tx_id: self.tx_id,
+                unix_ms: now_ms(),
+                tweak_id: self.tweak_id.clone(),
+                effect,
+                error,
+            });
+        }
         Ok(self.written)
+    }
+
+    /// Roll back after the tweak's apply failed with `err`, and return the
+    /// error the caller should see: `err` itself, or `PartlyApplied` when
+    /// putting back failed too, so nobody is told nothing was left half-done
+    /// while its writes stay outstanding for Undo (audit I5).
+    pub fn abandon(self, err: EngineError) -> EngineError {
+        // Nothing written: nothing to put back, whatever the journal can take.
+        if self.written.is_empty() && self.changes.is_empty() {
+            return err;
+        }
+        if let Err(undo) = self.put_back_all() {
+            return EngineError::PartlyApplied {
+                tweak_id: self.tweak_id.clone(),
+                detail: err.to_string(),
+                undo_detail: undo.to_string(),
+            };
+        }
+        // Everything is back. If the rollback line cannot be written the
+        // writes stay outstanding in the journal, and Undo putting the same
+        // values back again is harmless, so `err` is still the whole story.
+        let _ = self.record_rollback();
+        err
     }
 
     /// Undo this transaction's own writes, newest first, straight from their
     /// journal records, then cancel them in the journal. If any undo fails the
     /// cancel is not written: the writes stay outstanding so a revert can retry.
     pub fn rollback(self) -> Result<()> {
+        self.put_back_all()?;
+        self.record_rollback()
+    }
+
+    /// Every write and change of this transaction put back, newest first; the
+    /// first failure is returned after trying them all.
+    fn put_back_all(&self) -> Result<()> {
         let mut first_err = None;
-        for e in self.written.iter().rev() {
-            if let Err(err) = self.undo_entry(e) {
+        // Newest first across registry writes and other changes.
+        let mut seqs: Vec<(u64, bool, usize)> = self
+            .written
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.seq, true, i))
+            .chain(self.changes.iter().enumerate().map(|(i, c)| (c.seq, false, i)))
+            .collect();
+        seqs.sort_by_key(|(seq, _, _)| std::cmp::Reverse(*seq));
+        for (_, is_reg, i) in seqs {
+            let undone = if is_reg {
+                self.undo_entry(&self.written[i])
+            } else {
+                let c = &self.changes[i];
+                self.put_back(&c.item, &c.previous)
+            };
+            if let Err(err) = undone {
                 first_err.get_or_insert(err);
             }
         }
-        if let Some(err) = first_err {
-            return Err(err);
-        }
+        first_err.map_or(Ok(()), Err)
+    }
+
+    fn record_rollback(self) -> Result<()> {
         let seq = self.journal.take_seq();
         self.journal.append_commit(CommitRecord {
             seq,
@@ -269,6 +557,17 @@ impl<'a> Transaction<'a> {
     fn undo_entry(&self, e: &JournalEntry) -> Result<()> {
         let (hive, full) = self.resolver.route(e.root, &e.key_path);
         let backend = self.resolver.backend();
+        // A write that failed (its record is made first) left the value as it
+        // was, and created no key: nothing to put back, so a refusing registry
+        // is not asked again.
+        let unchanged = backend.read_value(hive, &full, &e.value_name).ok().as_ref() == Some(&e.previous);
+        let no_new_keys = e.created_keys.iter().all(|k| {
+            let (h, p) = self.resolver.route(e.root, k);
+            backend.key_exists(h, &p).is_ok_and(|exists| !exists)
+        });
+        if unchanged && no_new_keys {
+            return Ok(());
+        }
         match &e.previous {
             Some(prev) => backend.write_value(hive, &full, &e.value_name, prev)?,
             None => {
@@ -323,6 +622,159 @@ impl<'a> Transaction<'a> {
         Ok(entry)
     }
 
+    /// Journal (durably) and remember one non-registry change, before it is made.
+    fn record_change(&mut self, item: SysItem, previous: SysState, written: SysState) -> Result<()> {
+        // `.reg` backups of the registry values behind the item come first,
+        // like a registry write's (plan section 12).
+        let seq = self.journal.take_seq();
+        let mut reg_backups = Vec::new();
+        for (key, name) in item.registry_backing() {
+            let display_path = self.resolver.display_path(RegRoot::LocalMachine, &key);
+            let prev = self.resolver.read_raw(RegRoot::LocalMachine, &key, name)?;
+            let stem = format!("{seq}_{}_{}", sanitise(&self.tweak_id), sanitise(name));
+            let file = write_reg_backup(&self.session_dir, &stem, &display_path, name, prev.as_ref())?;
+            let backup_file = file
+                .strip_prefix(self.journal.root())
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
+            reg_backups.push(RegBackup {
+                display_path,
+                value_name: name.to_owned(),
+                previous: prev,
+                backup_file,
+            });
+        }
+        let entry = ChangeEntry {
+            reg_backups,
+            seq,
+            tx_id: self.tx_id,
+            unix_ms: now_ms(),
+            tweak_id: self.tweak_id.clone(),
+            action: self.action,
+            item,
+            previous,
+            written,
+        };
+        self.journal.append_change(entry.clone())?;
+        self.changes.push(entry);
+        Ok(())
+    }
+
+    /// The interface GUID of a per-adapter change (DNS servers, interface
+    /// metric) whose adapter Windows no longer lists: there is nothing to put
+    /// back, and the write would fail, so Undo could never finish. When the
+    /// adapters cannot be listed, the adapter is taken to be there.
+    fn adapter_is_gone(&self, item: &SysItem) -> Option<String> {
+        let (SysItem::DnsServers { interface } | SysItem::InterfaceMetric { interface, .. }) = item else {
+            return None;
+        };
+        let adapters = self.resolver.system().network_adapters().ok()?;
+        (!adapters.iter().any(|a| a.guid.eq_ignore_ascii_case(interface))).then(|| interface.clone())
+    }
+
+    /// True for an AMD setting when AMD's driver no longer lists its card
+    /// (removed, or no AMD driver at all): its settings went with it. A
+    /// failed listing is no proof, so Undo then tries, fails plainly and can
+    /// be retried.
+    fn amd_card_is_gone(&self, item: &SysItem) -> bool {
+        let SysItem::AmdSetting { gpu, .. } = item else {
+            return false;
+        };
+        self.resolver
+            .system()
+            .amd_gpus()
+            .is_ok_and(|cards| !cards.iter().any(|c| c.id == *gpu))
+    }
+
+    /// True for an NVIDIA setting when the PC no longer has an NVIDIA driver:
+    /// the settings lived in it, so there is nothing to put back.
+    fn nvidia_is_gone(&self, item: &SysItem) -> bool {
+        matches!(item, SysItem::NvidiaSetting { .. })
+            && matches!(
+                self.resolver.system().read(item),
+                Err(EngineError::Blocked { reason }) if reason.code == crate::types::BlockedCode::HardwareUnsupported
+            )
+    }
+
+    /// True when `e` was allowed only through a `*` target and the key the `*`
+    /// stood for (an adapter, a device instance) no longer exists. Writing it
+    /// back would create a key for hardware that is gone, and under `Enum`
+    /// Windows refuses that, so Undo could never finish.
+    fn per_pc_key_is_gone(&self, e: &JournalEntry) -> Result<bool> {
+        let literal = self
+            .allowlist
+            .iter()
+            .any(|t| t.root == e.root && path_eq(&t.key, &e.key_path));
+        if literal {
+            return Ok(false);
+        }
+        let parts = components(&e.key_path);
+        for t in self.allowlist.iter().filter(|t| t.root == e.root) {
+            let pattern = components(&t.key);
+            if let Some(i) = pattern.iter().position(|c| *c == WILDCARD) {
+                if pattern_eq(&t.key, &e.key_path) && !self.resolver.key_exists(e.root, &parts[..=i].join("\\"))? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Add a note to the history, durably.
+    fn note(&mut self, text: String) -> Result<()> {
+        let rec = NoteRecord {
+            seq: self.journal.take_seq(),
+            tx_id: self.tx_id,
+            unix_ms: now_ms(),
+            tweak_id: self.tweak_id.clone(),
+            text,
+        };
+        self.journal.append_note(rec)
+    }
+
+    /// The target key matches `key`: with one `*` segment, except under
+    /// `HKEY_CLASSES_ROOT`, where `*` is a real key (every file type).
+    fn target_matches(t: &RegTarget, root: RegRoot, key: &str) -> bool {
+        t.root == root
+            && if root == RegRoot::ClassesRoot {
+                path_eq(&t.key, key)
+            } else {
+                pattern_eq(&t.key, key)
+            }
+    }
+
+    /// Keep a copy of a file's content with the backups; the state names it
+    /// (relative to the journal directory) and its checksum.
+    fn keep_file_copy(&mut self, bytes: &[u8], which: &str) -> Result<SysState> {
+        let seq = self.journal.take_seq();
+        let name = format!("{seq}_{}_{which}.file", sanitise(&self.tweak_id));
+        let path = self.session_dir.join(name);
+        crate::fsutil::create_dir_durable(&self.session_dir)?;
+        crate::fsutil::write_durable(&path, bytes)?;
+        let backup = path
+            .strip_prefix(self.journal.root())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        Ok(SysState::File {
+            backup,
+            sha256: hex_sha256(bytes),
+        })
+    }
+
+    /// The tweak's declared non-registry items.
+    fn check_sys_allowed(&self, item: &SysItem) -> Result<()> {
+        if self.sys_allowlist.iter().any(|p| item.matches(p)) {
+            Ok(())
+        } else {
+            Err(EngineError::ContextViolation {
+                tweak_id: self.tweak_id.clone(),
+                detail: format!("the {} is not in this tweak's declared targets", item.describe()),
+            })
+        }
+    }
+
     /// Keys on the way to `key` that do not exist yet, shallowest first.
     fn missing_ancestors(&self, root: RegRoot, key: &str) -> Result<Vec<String>> {
         let parts = components(key);
@@ -360,7 +812,7 @@ impl<'a> Transaction<'a> {
         let allowed = self
             .allowlist
             .iter()
-            .any(|t| t.root == root && path_eq(&t.key, key) && t.values.iter().any(|v| v.eq_ignore_ascii_case(name)));
+            .any(|t| Self::target_matches(t, root, key) && t.values.iter().any(|v| value_name_matches(v, name)));
         if allowed {
             Ok(())
         } else {
@@ -379,10 +831,14 @@ impl<'a> Transaction<'a> {
     fn check_key_removable(&self, root: RegRoot, key: &str) -> Result<()> {
         self.guard_context(root)?;
         let ok = !components(key).is_empty()
-            && self
-                .allowlist
-                .iter()
-                .any(|t| t.root == root && is_ancestor_or_equal(key, &t.key));
+            && self.allowlist.iter().any(|t| {
+                t.root == root
+                    && if root == RegRoot::ClassesRoot {
+                        is_ancestor_or_equal(key, &t.key)
+                    } else {
+                        pattern_is_ancestor_or_equal(key, &t.key)
+                    }
+            });
         if ok {
             Ok(())
         } else {
@@ -416,13 +872,14 @@ impl<'a> Transaction<'a> {
 /// leaving out `closing`, a tweak whose revert is about to commit. Also run at
 /// start-up, which catches up after an apply that a crash cut short.
 pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal, closing: Option<&str>) -> Result<()> {
-    let outstanding: Vec<(String, Vec<JournalEntry>)> = journal
+    let outstanding: Vec<offline::Outstanding> = journal
         .applied_tweaks_newest_first()
         .into_iter()
         .filter(|id| Some(id.as_str()) != closing)
-        .map(|id| {
-            let writes = journal.outstanding(&id).to_vec();
-            (id, writes)
+        .map(|id| offline::Outstanding {
+            writes: journal.outstanding(&id).to_vec(),
+            changes: journal.outstanding_changes(&id).to_vec(),
+            tweak_id: id,
         })
         .collect();
     let mut facts = offline::Facts {
@@ -433,7 +890,7 @@ pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal,
         system_drive: std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()),
         profiles: Default::default(),
     };
-    for e in outstanding.iter().flat_map(|(_, w)| w) {
+    for e in outstanding.iter().flat_map(|o| &o.writes) {
         if let Some(sid) = e
             .display_path
             .strip_prefix("HKEY_USERS\\")
@@ -450,6 +907,11 @@ pub(crate) fn refresh_offline_set(resolver: &ContextResolver, journal: &Journal,
         }
     }
     offline::refresh(journal.root(), &offline::plan(&outstanding, &facts))
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Registry value names allow characters that filenames do not. Also capped so

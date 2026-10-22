@@ -61,6 +61,32 @@ async function open(view) {
   await driver.wait(until.elementLocated(heading(view)), 15_000);
 }
 
+/** The innermost section around a heading, looked up afresh each time (React re-renders it). */
+const sectionOf = (title) =>
+  By.xpath(`//*[self::h2 or self::h3][normalize-space()='${title}']/ancestor::section[1]`);
+
+/** Wait until the section shows one of `done` and nothing in it is busy, or
+ * shows an engine error; fail on the error and return the section's text. */
+async function settled(title, done, ms) {
+  let error = null;
+  await driver.wait(async () => {
+    const section = await driver.findElement(sectionOf(title));
+    const t = await section.getText();
+    // Once the result is on screen, an alert in it is part of the result
+    // (the connection check shows "Neither public server answered" as one
+    // when a runner blocks echoes), so only wait for the work to end.
+    if (done.some((d) => t.includes(d))) {
+      return (await section.findElements(By.css("[aria-busy='true']"))).length === 0;
+    }
+    const alerts = await section.findElements(By.css("[role='alert']"));
+    if (alerts.length > 0) error = await alerts[0].getText();
+    return error !== null;
+  }, ms);
+  const t = await (await driver.findElement(sectionOf(title))).getText();
+  assert.equal(error, null, `${title}: ${error}\n${t}`);
+  return t;
+}
+
 async function show(view) {
   const t = await bodyText();
   console.log(`\n===== ${view} =====\n${t.slice(0, 1500)}\n`);
@@ -126,11 +152,120 @@ try {
     assert.ok(server || client, "neither the restore step nor the no-System-Restore notice is shown");
   });
 
+  await step("Home shows live readings of this machine", async () => {
+    // Real readings: the processor and memory meters, and the graphics card
+    // as read (a runner has no NVIDIA card, so it says why).
+    const cpu = await driver.wait(
+      until.elementLocated(By.xpath("//*[@role='meter' and starts-with(@aria-label, 'Processor: ')]")),
+      30_000,
+    );
+    const memory = await driver.findElement(By.xpath("//*[@role='meter' and starts-with(@aria-label, 'Memory: ')]"));
+    const section = await driver.findElement(sectionOf("Right now")).getText();
+    console.log(
+      `\n===== Right now =====\n${await cpu.getAttribute("aria-label")}\n${await memory.getAttribute("aria-label")}\n${section.slice(0, 600)}\n`,
+    );
+  });
+
   await step("Tools lists the real catalogue", async () => {
     await open("Tools");
     await driver.wait(until.elementLocated(text("Pointer precision")), 15_000);
+    await driver.wait(until.elementLocated(text("TCP settings: auto-tuning and RSS on, ECN off")), 15_000);
   });
   await show("Tools");
+
+  await step("every tool's state is read on this machine", async () => {
+    const tweaks = await ipc("list_tweaks");
+    assert.ok(tweaks.ok, `list_tweaks failed: ${JSON.stringify(tweaks.error)}`);
+    const why = (s) =>
+      s.status === "blocked" ? ` (${s.reason.code}) ${s.reason.message}` : s.status === "unknown" ? `: ${s.detail}` : "";
+    const lines = tweaks.value.map((t) => `${t.id}: ${t.state.status}${why(t.state)}`);
+    console.log(`\n===== Tool states (${tweaks.value.length}) =====\n${lines.join("\n")}\n`);
+    const unread = tweaks.value.filter((t) => t.state.status === "unknown").map((t) => t.id);
+    assert.deepEqual(unread, [], "these tools could not be read on this machine");
+  });
+
+  // Tools' read-only sections, through the real commands on this machine:
+  // each shows what it found or its own error, never "Checking" for good.
+  await step("Tools lists this PC's startup apps", async () => {
+    const found = await settled(
+      "Startup apps",
+      ["start when you sign in.", "Nothing starts when you sign in.", "Some places could not be read"],
+      60_000,
+    );
+    console.log(`\n===== Startup apps =====\n${found.slice(0, 800)}\n`);
+  });
+
+  await step("Tools measures the junk files without deleting any", async () => {
+    const found = await settled("Clear out junk files", ["Selected: "], 180_000);
+    console.log(`\n===== Junk files =====\n${found.slice(0, 1200)}\n`);
+    assert.ok(!found.includes("Cleared "), "a cleanup ran");
+  });
+
+  await step("Presets list what each would change on this PC (N116)", async () => {
+    const presets = By.xpath("//h2[normalize-space()='Presets']/ancestor::section[1]");
+    const found = await driver.wait(until.elementLocated(presets), 15_000).then((s) => s.getText());
+    console.log(`\n===== Presets =====\n${found.slice(0, 900)}\n`);
+    const review = await (await driver.findElement(presets)).findElements(By.xpath(".//button[starts-with(normalize-space(), 'Review ')]"));
+    if (review.length === 0) {
+      console.log("(nothing left to apply in any preset here)");
+      return;
+    }
+    await review[0].click();
+    const dialog = await driver.wait(until.elementLocated(By.css("[role='dialog']")), 10_000);
+    console.log(`\n===== Preset review =====\n${(await dialog.getText()).slice(0, 1500)}\n`);
+    // Looked at only: Cancel applies nothing.
+    await dialog.findElement(By.xpath(".//button[normalize-space()='Cancel']")).click();
+    await driver.wait(async () => (await driver.findElements(By.css("[role='dialog']"))).length === 0, 10_000);
+  });
+
+  await step("Clean memory empties the standby list on this machine (N115)", async () => {
+    const section = await driver.findElement(sectionOf("Clean memory"));
+    await driver.wait(async () => !(await section.getText()).includes("Reading memory"), 30_000);
+    await section.findElement(By.xpath(".//button[normalize-space()='Clean memory']")).click();
+    const found = await settled("Clean memory", ["Cleaned "], 120_000);
+    console.log(`\n===== Clean memory =====\n${found.slice(0, 1200)}\n`);
+  });
+
+  await step("Gaming Mode turns on and off from the top bar, and the engine keeps it (N114)", async () => {
+    const toggle = By.xpath("//header//button[@aria-pressed][.//span[normalize-space()='Gaming Mode']]");
+    const before = await ipc("get_settings");
+    assert.ok(before.ok, `get_settings failed: ${JSON.stringify(before.error)}`);
+    const was = before.value.gamingMode;
+    for (const want of [!was, was]) {
+      await driver.findElement(toggle).click();
+      await driver.wait(async () => {
+        const button = await driver.findElement(toggle);
+        return (
+          (await button.getAttribute("aria-pressed")) === String(want) && (await button.getAttribute("aria-busy")) !== "true"
+        );
+      }, 15_000);
+      const now = await ipc("get_settings");
+      assert.ok(now.ok && now.value.gamingMode === want, `the engine has gamingMode ${now.value?.gamingMode}, not ${want}`);
+      console.log(`\n(Gaming Mode ${want ? "on" : "off"}: ${await driver.findElement(toggle).getAttribute("title")})`);
+    }
+  });
+
+  await step("Advanced lists this PC's graphics cards and network adapters", async () => {
+    const advanced = By.xpath("//label[starts-with(normalize-space(), 'Advanced')]/input");
+    await driver.findElement(advanced).click();
+    const found = await settled(
+      "Devices",
+      ["MSI mode: ", "No graphics card or network adapter here can take this change.", "The devices could not be listed."],
+      60_000,
+    );
+    console.log(`\n===== Devices =====\n${found.slice(0, 1200)}\n`);
+    await driver.findElement(advanced).click();
+  });
+
+  // The one step here that goes online: ICMP echoes to the router and two
+  // public DNS servers, started by a click as the user would (catalogue E4).
+  // Azure runners may answer none of them; any reading is fine, an error is not.
+  await step("the connection check runs on this machine", async () => {
+    const check = By.xpath(".//button[normalize-space()='Check now']");
+    await (await driver.findElement(sectionOf("Check the connection"))).findElement(check).click();
+    const found = await settled("Check the connection", ["Checked "], 180_000);
+    console.log(`\n===== Connection check =====\n${found.slice(0, 1200)}\n`);
+  });
 
   await step("Games shows the firmware security features", async () => {
     await open("Games");
@@ -147,6 +282,42 @@ try {
     await driver.wait(until.elementLocated(text("Change record")), 15_000);
   });
   await show("Backups");
+
+  await step("Copy summary describes this machine", async () => {
+    // WebView2 may or may not grant the clipboard write; either outcome is a
+    // pass, and which one is printed. Reading the clipboard back would raise
+    // a permission prompt, so the text is checked only when it is shown.
+    await driver.findElement(By.xpath("//button[normalize-space()='Copy summary']")).click();
+    await driver.wait(
+      until.elementLocated(
+        By.xpath("//button[normalize-space()='Copied'] | //textarea[@aria-label='Summary of this PC and its changes']"),
+      ),
+      10_000,
+    );
+    const boxes = await driver.findElements(By.css("textarea[aria-label='Summary of this PC and its changes']"));
+    if (boxes.length) {
+      const summary = await boxes[0].getAttribute("value");
+      console.log(`\n===== Copy summary (clipboard refused, shown to copy by hand) =====\n${summary}\n`);
+      assert.ok(summary.startsWith("PeakTweaks summary, "), "a real PC's summary has no SAMPLE line");
+    } else {
+      console.log("\n===== Copy summary: copied to the clipboard =====\n");
+    }
+  });
+
+  await step("a pasted setup is checked against this PC's own list (N106)", async () => {
+    // Checked only: nothing is applied here (apply-undo.mjs covers applying).
+    const paste = await driver.findElement(By.css("textarea#setup-paste"));
+    await paste.sendKeys('{"peaktweaks-setup":1,"changes":["gaming.gamemode","not.a.real.change"]}');
+    await driver.findElement(By.xpath("//button[normalize-space()='Check it']")).click();
+    const plan = await driver.wait(
+      until.elementLocated(By.xpath("//*[@role='status'][contains(normalize-space(), 'Not available on this PC')]")),
+      10_000,
+    );
+    const shown = await plan.getText();
+    console.log(`\n===== Pasted setup, as checked here =====\n${shown}\n`);
+    assert.ok(shown.includes("Not available on this PC (1): not.a.real.change."), "an id this PC lacks is listed as not here");
+    assert.ok(!shown.includes("gaming.gamemode"), "a change on this PC's list is named by its name, not its id");
+  });
 
   // N10: the permission boundary, probed from inside the page the way injected
   // script would. This build's capability is the shipped one minus

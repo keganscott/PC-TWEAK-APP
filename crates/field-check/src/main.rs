@@ -149,8 +149,9 @@ Read-only unless a flag below says otherwise. Run from an elevated PowerShell.
     }
 
     fn system32(exe: &str) -> Result<PathBuf, String> {
-        let root = std::env::var_os("SystemRoot").ok_or("%SystemRoot% is not set")?;
-        Ok(PathBuf::from(root).join("System32").join(exe))
+        let dir =
+            peaktweaks_engine::sysdirs::system32().map_err(|e| format!("could not find the System32 folder: {e}"))?;
+        Ok(dir.join(exe))
     }
 
     fn run_tool(exe: &str, args: &[&str]) -> Result<Value, String> {
@@ -286,6 +287,31 @@ Read-only unless a flag below says otherwise. Run from an elevated PowerShell.
         section(&mut report, "powercfgList", || run_tool("powercfg.exe", &["/list"]));
         section(&mut report, "powercfgActive", || {
             run_tool("powercfg.exe", &["/getactivescheme"])
+        });
+
+        // N129-N132: the pro latency stack's facts on this PC, read-only:
+        // the MPO and foreground-priority values as they stand, and the
+        // PeakTweaks plan's own settings (boost mode, idle, parking) in
+        // Windows' words. The plan query fails when the plan is not there;
+        // the failure is the reading.
+        section(&mut report, "latencyStack", || {
+            let mut m = Map::new();
+            m.insert(
+                "dwm".into(),
+                reg_values(r"SOFTWARE\Microsoft\Windows\Dwm", &["OverlayTestMode"]),
+            );
+            m.insert(
+                "priorityControl".into(),
+                reg_values(
+                    r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+                    &["Win32PrioritySeparation"],
+                ),
+            );
+            m.insert(
+                "peaktweaksPlan".into(),
+                run_tool("powercfg.exe", &["/query", peaktweaks_engine::power::PEAKTWEAKS])?,
+            );
+            Ok(Value::Object(m))
         });
 
         // N22: the raw rows behind the memory and disk readings.

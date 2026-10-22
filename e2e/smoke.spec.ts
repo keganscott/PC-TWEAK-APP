@@ -23,7 +23,9 @@ async function expectNoSeriousA11yIssues(page: Page) {
 
 test("the SAMPLE label is always visible outside the app", async ({ page }) => {
   await open(page);
-  await expect(page.getByText("Demo data, not this PC")).toBeVisible();
+  // Exact: the printed scan's own SAMPLE line also contains these words, hidden
+  // on screen, and appears once the scan has loaded.
+  await expect(page.getByText("Demo data, not this PC", { exact: true })).toBeVisible();
 });
 
 test("every screen loads and passes an accessibility scan", async ({ page }) => {
@@ -34,6 +36,35 @@ test("every screen loads and passes an accessibility scan", async ({ page }) => 
     await nav(page, name);
     await expectNoSeriousA11yIssues(page);
   }
+  // Tools with Advanced on adds the Advanced changes and the Devices section.
+  await nav(page, "Tools");
+  await page.getByRole("switch", { name: /Advanced/ }).check();
+  await expect(page.getByText("MSI mode: Sample graphics card")).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  // A connection check's results: the reading and the table of targets.
+  await page.getByRole("button", { name: "Check now" }).click();
+  await expect(page.getByRole("rowheader", { name: /Your router/ })).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+});
+
+test("only the content area scrolls, never the whole window", async ({ page }) => {
+  // The page itself scrolling hides the top bar and leaves black space
+  // under the app (seen in a maximised window on Tools).
+  const pageScrolls = () =>
+    page.evaluate(() => {
+      const root = document.scrollingElement!;
+      return root.scrollHeight > root.clientHeight || root.scrollWidth > root.clientWidth;
+    });
+  await open(page);
+  expect(await pageScrolls()).toBe(false);
+  for (const name of ["Games", "Tools", "Proof", "Backups"]) {
+    await nav(page, name);
+    expect(await pageScrolls(), name).toBe(false);
+  }
+  await nav(page, "Tools");
+  await page.getByRole("switch", { name: /Advanced/ }).check();
+  await expect(page.getByText("MSI mode: Sample graphics card")).toBeVisible();
+  expect(await pageScrolls(), "Tools with Advanced on").toBe(false);
 });
 
 test("changes stay locked until a restore point exists, then apply and undo", async ({ page }) => {
@@ -43,14 +74,13 @@ test("changes stay locked until a restore point exists, then apply and undo", as
   const card = page.getByRole("listitem").filter({ hasText: "Sample setting A" });
   await expect(card.getByRole("button", { name: "Apply" })).toBeDisabled();
 
-  await page.getByRole("button", { name: "Make one on Home" }).click();
-  await page.getByRole("button", { name: "Make a restore point" }).click();
-  await expect(page.getByText(/Restore point #\d+ is ready\./)).toBeVisible();
+  // One click from the lock message itself, without leaving Tools (the first
+  // such button; the driver tool further down has one too).
+  await page.getByRole("main").getByRole("button", { name: "Make a restore point" }).first().click();
   await expect(page.getByText("Restore point ready")).toBeVisible();
-
-  await nav(page, "Tools");
+  await expect(page.getByText("Changes are locked until there is a restore point.")).toBeHidden();
   await card.getByRole("button", { name: "Apply" }).click();
-  await expect(card.getByText("Applied", { exact: true })).toBeVisible();
+  await expect(card.getByText("Optimized", { exact: true })).toBeVisible();
 
   await nav(page, "Backups");
   await page.getByRole("button", { name: "Undo all" }).click();
@@ -85,7 +115,60 @@ test("a proof comparison shows the engine's headline as given", async ({ page })
   await expect(page.getByRole("heading", { name: "Steps" })).toBeVisible();
   await expectNoSeriousA11yIssues(page);
   await page.getByRole("button", { name: "Compare" }).click();
-  await expect(page.getByTestId("verdict-headline")).toContainText(/^(Better|Worse|No measurable change|Not enough data)/);
+  const headline = page.getByTestId("verdict-headline");
+  await expect(headline).toContainText(/^(Better|Worse|No measurable change|Not enough data)/);
+  await expect(page.getByRole("img", { name: /^Average FPS\. Before runs:/ })).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  // The copied text carries the headline word for word and the run ids.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy result" }).click();
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain(await headline.innerText());
+  expect(copied).toMatch(/^SAMPLE DATA/);
+  expect(copied).toMatch(/Runs before \(\d+\): \S/);
+});
+
+test("a comparison set to record while playing says so and passes an accessibility scan", async ({ page }) => {
+  await open(page);
+  await nav(page, "Proof");
+  await page.getByRole("navigation", { name: "Comparisons" }).getByRole("button").first().click();
+  const card = page.getByRole("region", { name: "Record while you play" });
+  await card.getByRole("button", { name: "Record the before side while I play" }).click();
+  await expect(card.getByText("2 of 3 runs on the before side so far.")).toBeVisible();
+  await expect(card.getByText("Waiting for Fortnite to start. Play as you normally do.")).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  await card.getByRole("button", { name: "Stop recording while I play" }).click();
+  await expect(card.getByRole("button", { name: "Record the before side while I play" })).toBeVisible();
+});
+
+test("a Games card sets its game to record for Proof and opens Proof at the top", async ({ page }) => {
+  await open(page);
+  await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /^Games/ }).click();
+  const fortnite = page.locator("li").filter({ has: page.getByRole("heading", { name: "Fortnite", level: 3 }) });
+  await fortnite.getByRole("button", { name: "Record my next games" }).click();
+  await expect(page.getByRole("heading", { name: "Proof", level: 1 })).toBeInViewport();
+  const card = page.getByRole("region", { name: "Record while you play" });
+  await expect(card.getByText("0 of 3 runs on the before side so far.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "FortniteClient-Win64-Shipping.exe", level: 2 })).toBeVisible();
+});
+
+test("the mouse check counts the reports a moving mouse sends to the window", async ({ page }) => {
+  await open(page);
+  await nav(page, "Tools");
+  const card = page.getByRole("region", { name: "Mouse report rate" });
+  await card.getByRole("button", { name: "Count my mouse's reports" }).click();
+  await expect(card.getByText("Move the mouse in quick circles now")).toBeVisible();
+  // Circles until the check ends: a figure, or too few if this browser hands
+  // over fewer moves than a person's mouse would. Either way it ends.
+  const box = (await card.boundingBox())!;
+  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
+  for (let i = 0; i < 400 && !(await card.getByRole("button", { name: "Count again" }).isVisible()); i++) {
+    await page.mouse.move(cx + 80 * Math.cos(i / 6), cy + 40 * Math.sin(i / 6));
+  }
+  await expect(card.getByRole("button", { name: "Count again" })).toBeVisible({ timeout: 10_000 });
+  await expect(card.getByText(/reports counted\.|Too few reports to tell\./)).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
 });
 
 test("settings switch to technical wording and show registry targets", async ({ page }) => {
@@ -125,4 +208,42 @@ test("the welcome walks through its three steps and passes an accessibility scan
   }
   await page.getByRole("button", { name: "Get started" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("a setup pasted from another PC is checked against this list, then applied", async ({ page }) => {
+  await open(page);
+  await nav(page, "Backups");
+  const card = page.getByRole("region", { name: "Copy this setup to another PC" });
+  await card.getByLabel("Paste a setup from another PC").fill("not a setup");
+  await card.getByRole("button", { name: "Check it" }).click();
+  await expect(card.getByText("That is not a setup copied from PeakTweaks.")).toBeVisible();
+
+  await card
+    .getByLabel("Paste a setup from another PC")
+    .fill('{"peaktweaks-setup":1,"changes":["fixture.default","fixture.applied","fixture.blocked","elsewhere.only"]}');
+  await card.getByRole("button", { name: "Check it" }).click();
+  await expect(card.getByText("Can be applied here (1):")).toBeVisible();
+  await expect(card.getByText("Already in place here (1): Sample setting B.")).toBeVisible();
+  await expect(card.getByText("Not available on this PC (2): Sample setting D, elsewhere.only.")).toBeVisible();
+  await expectNoSeriousA11yIssues(page);
+  // Locked until a restore point exists, like every other change.
+  await expect(card.getByRole("button", { name: "Apply 1 change" })).toBeDisabled();
+  await page.getByRole("button", { name: "Home" }).first().click();
+  await page.getByRole("main").getByRole("button", { name: "Make a restore point" }).first().click();
+  await expect(page.getByText("Restore point ready")).toBeVisible();
+  await nav(page, "Backups");
+  await card.getByLabel("Paste a setup from another PC").fill('{"peaktweaks-setup":1,"changes":["fixture.default"]}');
+  await card.getByRole("button", { name: "Check it" }).click();
+  await card.getByRole("button", { name: "Apply 1 change" }).click();
+  await expect(card.getByText("Already in place here (1): Sample setting A.")).toBeVisible();
+  await expect(card.getByText("Nothing in it is left to apply here.")).toBeVisible();
+});
+
+test("a reminder put off with Not now leaves Home", async ({ page }) => {
+  await open(page);
+  const reminders = page.getByRole("region", { name: "Reminders" });
+  const driver = reminders.getByRole("note").filter({ hasText: "The Example GPU driver is dated" });
+  await expect(driver).toBeVisible();
+  await driver.getByRole("button", { name: "Not now" }).click();
+  await expect(driver).toBeHidden();
 });

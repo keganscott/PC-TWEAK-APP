@@ -4,13 +4,24 @@
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import { engine, onProgress, proof } from "../ipc";
+import { engine, onPlay, onProgress, onSettings, proof } from "../ipc";
 
+import type { AreaSize } from "../generated/AreaSize";
+import type { AutoRecordStatus } from "../generated/AutoRecordStatus";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
+import type { DriveOptimization } from "../generated/DriveOptimization";
+import type { DriverVendor } from "../generated/DriverVendor";
 import type { GameInfo } from "../generated/GameInfo";
+import type { GpuDriverInstall } from "../generated/GpuDriverInstall";
 import type { JournalEntry } from "../generated/JournalEntry";
 import type { JournalView } from "../generated/JournalView";
+import type { LiveReadings } from "../generated/LiveReadings";
+import type { MsiDeviceList } from "../generated/MsiDeviceList";
+import type { NetworkCheck } from "../generated/NetworkCheck";
+import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSession } from "../generated/ProofSession";
@@ -19,6 +30,9 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { StandbyPurge } from "../generated/StandbyPurge";
+import type { StartupList } from "../generated/StartupList";
+import type { SupportBundle } from "../generated/SupportBundle";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
 
@@ -29,7 +43,9 @@ export interface Backend {
   listTweaks(): Promise<TweakView[]>;
   listGames(): Promise<GameInfo[]>;
   getSettings(): Promise<Settings>;
-  setSettings(settings: Settings): Promise<Settings>;
+  /** Saves the fields of `settings` that differ from `base` (all of them
+   * without one) over what is saved now. */
+  setSettings(settings: Settings, base?: Settings): Promise<Settings>;
   selectTargetGame(gameId: string | null): Promise<TweakView[]>;
   rescan(): Promise<TweakView[]>;
   auditSystem(): Promise<SystemAudit>;
@@ -38,12 +54,41 @@ export interface Backend {
   revertTweak(id: string): Promise<JournalEntry[]>;
   revertAll(): Promise<RevertResult[]>;
   listJournal(): Promise<JournalView>;
+  /** Write the support bundle (one zip in the data folder); sends nothing. */
+  exportSupportBundle(): Promise<SupportBundle>;
+  purgeStandbyMemory(): Promise<StandbyPurge>;
+  cleanupMeasure(): Promise<AreaSize[]>;
+  cleanupRun(areas: CleanupArea[]): Promise<CleanupReport>;
+  optimizeDrive(): Promise<DriveOptimization>;
+  /** Startup apps (catalogue H12). Each entry has two switches, each a change: one turns it off, one turns back on what was turned off elsewhere; revertTweak puts either back. */
+  listStartupApps(): Promise<StartupList>;
+  /** MSI mode per device (catalogue H6). Each is a change: applyTweak / revertTweak. */
+  listMsiDevices(): Promise<MsiDeviceList>;
+  /** Live readings for Home: processor, memory, NVIDIA GPUs. Reads only. */
+  liveReadings(): Promise<LiveReadings>;
+  /** Connection check (catalogue E4): round trips, jitter and lost echoes. Changes nothing. */
+  checkConnection(): Promise<NetworkCheck>;
+  /** Ask Steam to start a game found in a Steam library, without PeakTweaks' administrator rights. */
+  launchGame(gameId: string): Promise<null>;
+  /** The card maker's driver page in the user's browser. Changes nothing. */
+  openDriverPage(vendor: DriverVendor): Promise<null>;
+  /** Clean install of an NVIDIA driver file the user picks; `null` when they cancel. Needs a restore point. */
+  installGpuDriver(): Promise<GpuDriverInstall | null>;
   proofBegin(exe: string, gameId: string | null, gameBuild: string | null): Promise<ProofSession>;
   proofCapture(sessionId: string, side: Side, seconds: number, delaySeconds: number): Promise<ProofRun>;
   proofCompare(sessionId: string): Promise<Comparison>;
   proofSessions(): Promise<ProofSessionSummary[]>;
   proofRuns(sessionId: string): Promise<ProofRun[]>;
+  proofAutoRecord(sessionId: string, side: Side): Promise<AutoRecordStatus>;
+  proofStopAutoRecord(): Promise<null>;
   onProgress(handler: (p: Progress) => void): Promise<UnlistenFn>;
+  /** The game watcher (catalogue step 5): which game runs and what is in effect for it. */
+  playStatus(): Promise<PlayStatus>;
+  /** Forget the kept game reports and this run's last game. */
+  forgetPlayHistory(): Promise<PlayStatus>;
+  onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn>;
+  /** Settings saved from outside the window (the tray icon's Gaming Mode). */
+  onSettings(handler: (s: Settings) => void): Promise<UnlistenFn>;
 }
 
 export function isTauri(): boolean {
@@ -60,7 +105,11 @@ export function tauriBackend(): Backend {
     proofCompare: proof.compare,
     proofSessions: proof.listSessions,
     proofRuns: proof.runs,
+    proofAutoRecord: proof.autoRecord,
+    proofStopAutoRecord: proof.stopAutoRecord,
     onProgress,
+    onPlay,
+    onSettings,
   };
 }
 

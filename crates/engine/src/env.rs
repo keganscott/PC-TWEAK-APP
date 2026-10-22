@@ -112,21 +112,89 @@ impl License {
 pub struct GameInfo {
     pub id: &'static str,
     pub name: &'static str,
+    /// One of the competitive shooters shown as buttons on Games; the rest
+    /// are in its list of the most-played games (Kegan, 2026-10-09).
+    pub featured: bool,
+    /// PeakTweaks looks for this game's install (`game_installs.rs`), so "not
+    /// found" means something. For the other games it is not looked for.
+    pub looked_for: bool,
 }
 
-/// Titles named in the plan's game cards. More are added only when Kegan
-/// decides which anti-cheat titles to support (plan section 11, item 5).
-pub const KNOWN_GAMES: &[GameInfo] = &[
+/// Kegan's answer to "Add Valorant, CS2 and Apex Legends to PeakTweaks' game
+/// list?" (plan section 11, item 5; NOTES N75): yes, 2026-10-09 ("5 options
+/// for top 5 most competitive FPS games like apex"). Offering a game lists it
+/// and lets it be picked; its per-game tools still wait on its anti-cheat
+/// (`games::anti_cheat_block`, N75).
+pub const OFFER_VALORANT_CS2_APEX: bool = true;
+
+const fn game(id: &'static str, name: &'static str, featured: bool, looked_for: bool) -> GameInfo {
     GameInfo {
-        id: "fortnite",
-        name: "Fortnite",
-    },
-    GameInfo {
-        id: "minecraft",
-        name: "Minecraft",
-    },
-    GameInfo {
-        id: "roblox",
-        name: "Roblox",
-    },
+        id,
+        name,
+        featured,
+        looked_for,
+    }
+}
+
+const FORTNITE: GameInfo = game("fortnite", "Fortnite", true, true);
+const MINECRAFT: GameInfo = game("minecraft", "Minecraft", false, true);
+const ROBLOX: GameInfo = game("roblox", "Roblox", false, true);
+
+/// Every game PeakTweaks can recognise, offered or not (`games.rs` has their
+/// anti-cheat and program files). The five featured shooters, then the
+/// most-played games on PC (Kegan asked for about 25; the list is mine, from
+/// public player-count charts as I recall them, NOTES N99). The first six
+/// have program files; the rest can be picked as the main game but have no
+/// per-game tools. Those sold on Steam are looked for in its libraries
+/// (`game_installs::STEAM_GAMES`).
+pub const ALL_GAMES: &[GameInfo] = &[
+    FORTNITE,
+    MINECRAFT,
+    ROBLOX,
+    game("valorant", "Valorant", true, true),
+    game("cs2", "Counter-Strike 2", true, true),
+    game("apex", "Apex Legends", true, true),
+    game("cod", "Call of Duty", true, true),
+    game("league", "League of Legends", false, false),
+    game("dota2", "Dota 2", false, true),
+    game("pubg", "PUBG: Battlegrounds", false, true),
+    game("overwatch", "Overwatch 2", false, true),
+    game("r6siege", "Rainbow Six Siege", false, true),
+    game("rocketleague", "Rocket League", false, true),
+    game("gta5", "Grand Theft Auto V", false, true),
+    game("marvelrivals", "Marvel Rivals", false, true),
+    game("destiny2", "Destiny 2", false, true),
+    game("rust", "Rust", false, true),
+    game("tarkov", "Escape from Tarkov", false, false),
+    game("thefinals", "The Finals", false, true),
+    game("tf2", "Team Fortress 2", false, true),
+    game("dbd", "Dead by Daylight", false, true),
+    game("warframe", "Warframe", false, true),
+    game("wow", "World of Warcraft", false, false),
+    game("genshin", "Genshin Impact", false, false),
+    game("eafc", "EA Sports FC", false, false),
+    game("helldivers2", "Helldivers 2", false, true),
+    game("poe2", "Path of Exile 2", false, true),
+    game("deltaforce", "Delta Force", false, true),
+    game("battlefield6", "Battlefield 6", false, true),
+    game("naraka", "Naraka: Bladepoint", false, true),
+    // Kegan, 2026-10-10: "one of my top games is Arc Raiders".
+    game("arcraiders", "ARC Raiders", false, true),
 ];
+
+/// The games offered. Ids are validated against this list.
+pub const KNOWN_GAMES: &[GameInfo] = if OFFER_VALORANT_CS2_APEX {
+    ALL_GAMES
+} else {
+    &[FORTNITE, MINECRAFT, ROBLOX]
+};
+
+/// A known game's name; its id when it is not one.
+pub fn game_name(id: &str) -> &str {
+    ALL_GAMES.iter().find(|g| g.id == id).map_or(id, |g| g.name)
+}
+
+/// True for a game in `KNOWN_GAMES`.
+pub fn is_offered(game_id: &str) -> bool {
+    KNOWN_GAMES.iter().any(|g| g.id == game_id)
+}

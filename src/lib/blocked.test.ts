@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BLOCKED_HINT } from "./blocked";
+import { BLOCKED_HINT, whyBlocked } from "./blocked";
 import { explain } from "./errors";
 
 describe("blocked reasons", () => {
@@ -16,5 +16,13 @@ describe("blocked reasons", () => {
       expect(text.title).toBe("Engine words.");
       expect(text.hint).toBe(hint);
     }
+  });
+
+  it("what this PC is comes before the plan", () => {
+    const plan = { code: "tier_required", trigger: null, message: "Pro." } as const;
+    const isProtected = { code: "protected_program", trigger: null, message: "This starts Windows Security." } as const;
+    expect(whyBlocked({ blocked: plan, state: { status: "blocked", reason: isProtected } })).toBe(isProtected);
+    expect(whyBlocked({ blocked: plan, state: { status: "default" } as never })).toBe(plan);
+    expect(whyBlocked({ blocked: null, state: { status: "default" } as never })).toBeNull();
   });
 });

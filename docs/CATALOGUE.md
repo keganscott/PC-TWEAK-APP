@@ -34,16 +34,16 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | H18 | Xbox services off (for PCs without Game Pass) | `XblAuthManager`, `XblGameSave`, `XboxNetApiSvc`, `XboxGipSvc` | Service undo type; never offered when Game Pass is installed |
 | H19 | Fullscreen optimizations off per game | `AppCompatFlags\Layers\<game exe>="~ DISABLEDXMAXIMIZEDWINDOWEDMODE"` | Per installed game (exe from `game_installs.rs`) |
 | H20 | NVIDIA settings (low latency mode, power management "prefer maximum performance", shader cache size, texture filtering, threaded optimization, vertical sync) | NVIDIA driver profile (NvAPI DRS) | New undo type: previous setting values recorded |
-| H21 | AMD settings (Anti-Lag and others) | Per-adapter registry under the display class key | Per-device keys |
+| H21 | AMD settings (Anti-Lag and others) | ~~Per-adapter registry under the display class key~~ AMD's settings library ADLX, per graphics card (DECISIONS 15.24) | New undo type: previous setting values recorded |
 | H22 | Disable Nagle (Low Latency Mode) | `Tcpip\Parameters\Interfaces\{guid}\TcpAckFrequency=1`, `TCPNoDelay=1` | Per-adapter keys (wildcard allowlist) |
 | H23 | TCP settings | `netsh int tcp set global` (autotuning, RSS, ECN) | New undo type: previous `show global` values |
-| H24 | Network adapter settings (interrupt moderation, energy-efficient Ethernet, flow control, power saving) | Adapter advanced properties under `Class\{4d36e972-...}\00xx`, then adapter restart | Per-device keys + restart side effect |
+| H24 | Network adapter settings (interrupt moderation, energy-efficient Ethernet, flow control, power saving, receive segment coalescing) | Adapter advanced properties under `Class\{4d36e972-...}\00xx`, then adapter restart | Per-device keys + restart side effect; coalescing is `network.rsc` (`*RscIPv4`/`*RscIPv6`), N135 |
 | H25 | DNS (Cloudflare / Google) | Adapter DNS servers | New undo type: previous DNS servers per adapter |
-| H26 | QoS for game traffic | Policy-based QoS: DSCP 46 for the game's exe | Registry policy + policy refresh; see E3 |
+| H26 | QoS for game traffic | Policy-based QoS: DSCP 46 for the game's exe | ~~Registry policy + policy refresh~~ Windows' own `New-NetQosPolicy`, journalled as a non-registry change (N91); see E3 |
 | H27 | Explorer and quality-of-life (file extensions, classic context menu, web results off in Start, wallpaper quality 100) | `Explorer\Advanced`, `CLSID` override, `Search`, `Desktop\JPEGImportQuality` | ValueTweak |
 | H28 | Boost-Ups: junk cleaner (temp, Windows Update cache, thumbnail and DirectX shader caches, crash dumps) | File deletion | Cleanup action: shows sizes, asks once, cannot be undone (says so), journalled as an action |
 | H29 | Boost-Ups: drive optimisation | Windows' own `defrag /O` (TRIM on SSD) | Runs Windows' tool; nothing to undo |
-| H30 | Per-game "pro settings" (Fortnite, Valorant, CS2, Apex, Minecraft) | The game's own settings file | File undo type (backup of the whole file); `ini.rs` exists (N55) |
+| H30 | Per-game "pro settings" (Fortnite, Valorant, CS2, Apex, Minecraft) | The game's own settings file | File undo type (backup of the whole file); built for Fortnite and Apex (V-Sync off, `ini.rs`, `vdf.rs`, N55), behind the anti-cheat gate; ARC Raiders, CS2, Valorant not built (N128) |
 | H31 | Game process priority | `Image File Execution Options\<game exe>\PerfOptions` | Generalise the Fortnite tweak to every installed known game |
 
 ## ExitLag
@@ -56,6 +56,15 @@ Hone's own groups: FPS and latency, network and ping, quality of life, privacy, 
 | E4 | Network Analyzer | Ping, jitter and packet loss to the game's servers; local network quality | ICMP echo (`IcmpSendEcho`, no networking library) to the router and to published game-region addresses; Wi-Fi vs cable and Wi-Fi signal |
 | E5 | Multi-Internet | Several connections at once, failover | Without servers, only failover: prefer the cable over Wi-Fi (interface metric), warn when a game runs on Wi-Fi |
 | E6 | RAM Cleaner | Frees memory | One-shot: empty the standby list and trim working sets (Windows' memory-list API); nothing to undo |
+
+## Added beyond Hone and ExitLag
+
+| Tool | What it changes | How PeakTweaks builds it |
+|---|---|---|
+| Multiplane overlay (MPO) off (`display.mpo`) | `SOFTWARE\Microsoft\Windows\Dwm` `OverlayTestMode` 5, so the desktop window manager composes every window instead of handing some straight to the graphics card; NVIDIA's support guidance uses this switch for screen flicker | ValueTweak; needs a restart; VERIFY against a real PC (N129) |
+| Foreground program priority (`scheduling.foreground`) | `SYSTEM\CurrentControlSet\Control\PriorityControl` `Win32PrioritySeparation` 38: short, variable processor turns with the program in front favoured most | ValueTweak; needs a restart; VERIFY (N130) |
+| Aggressive processor boost in the PeakTweaks power plan (part of `power.plan`, H7) | The plan copy's `be337238-0d82-4146-a960-4f3749d470c7` (Processor performance boost mode) set to 2, Aggressive, plugged in only | A fifth setting on the plan copy; VERIFY the value list (N131) |
+| Processor idle states off (`power.idle`, Advanced) | The plan copy's `5d76a2ca-e8c0-402f-a133-2158492d58ad` (Processor idle disable) set to 1, plugged in only, so cores stay out of deep idle states while on the PeakTweaks plan | Its own tool on the plan copy; needs the plan first; VERIFY the GUID (N132) |
 
 ## Not built, even though another app has it
 

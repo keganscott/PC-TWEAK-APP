@@ -46,6 +46,11 @@ pub enum EngineError {
     /// writes, so its contents cannot be trusted and mutation is refused.
     InsecureStorage { path: String, detail: String },
 
+    /// A settings file outside PeakTweaks (a game's) could not be read or
+    /// replaced, or is not one PeakTweaks will touch: a link, a hard link,
+    /// read-only (`settings_file.rs`).
+    SettingsFile { path: String, detail: String },
+
     /// The journal has no record of this tweak, so there is nothing to restore.
     NoJournalEntry { tweak_id: String },
 
@@ -82,6 +87,16 @@ pub enum EngineError {
     /// Another PeakTweaks engine (the app or the field-check tool) is already
     /// running on this PC (`instance.rs`). Only one may write the journal.
     AlreadyRunning,
+
+    /// A change failed part way, and putting back what it had already changed
+    /// failed too. Those changes stay in the record as made, so Undo can put
+    /// them back (`detail` is why the change failed, `undo_detail` why putting
+    /// back failed).
+    PartlyApplied {
+        tweak_id: String,
+        detail: String,
+        undo_detail: String,
+    },
 }
 
 impl fmt::Display for EngineError {
@@ -113,6 +128,7 @@ impl fmt::Display for EngineError {
             Self::InsecureStorage { path, detail } => {
                 write!(f, "{path} is not safe to trust: {detail}")
             }
+            Self::SettingsFile { path, detail } => write!(f, "{path}: {detail}"),
             Self::NoJournalEntry { tweak_id } => {
                 write!(f, "no journal entry for {tweak_id}")
             }
@@ -132,6 +148,14 @@ impl fmt::Display for EngineError {
             },
             Self::Wmi { namespace, detail, .. } => write!(f, "WMI {namespace}: {detail}"),
             Self::Internal { detail } => write!(f, "internal error: {detail}"),
+            Self::PartlyApplied {
+                tweak_id,
+                detail,
+                undo_detail,
+            } => write!(
+                f,
+                "{tweak_id} failed part way ({detail}) and what it had changed could not be put back ({undo_detail}); Undo can put it back"
+            ),
         }
     }
 }

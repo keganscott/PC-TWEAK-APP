@@ -4,24 +4,39 @@
 //! The Windows-only pieces (`identity`, `registry::windows`, the ProgramData
 //! ACL code) sit behind `cfg(windows)`.
 
+pub mod adlx;
 pub mod background;
+pub mod boot;
+pub mod cleanup;
 pub mod context;
+pub mod drive_optimize;
 pub mod engine;
 pub mod env;
 pub mod error;
 pub mod fsutil;
 pub mod game_installs;
+pub mod games;
 pub mod gpu_choice;
 pub mod gpu_driver;
+pub mod gpu_install;
 pub mod hardware;
+pub mod held;
 pub mod ini;
 pub mod instance;
 pub mod journal;
+pub mod launch;
+pub mod live;
+pub mod memory;
+pub mod netcheck;
+pub mod nvapi;
 pub mod offline;
+pub mod play;
+pub mod play_history;
 pub mod power;
 pub mod probe;
 pub mod proc;
 pub mod profile;
+pub mod profile_pack;
 pub mod proof;
 pub mod reg_export;
 pub mod registry;
@@ -30,13 +45,23 @@ pub mod scanner;
 pub mod secure_dir;
 pub mod security;
 pub mod settings;
+pub mod settings_file;
+pub mod signed;
+pub mod startup;
+pub mod support;
+pub mod sysdirs;
 pub mod sysprobe;
+pub mod system;
 pub mod timeutil;
 pub mod transaction;
 pub mod tweaks;
 pub mod types;
+pub mod vdf;
+pub mod window_place;
 pub mod wmi;
 
+#[cfg(windows)]
+pub mod display_win;
 #[cfg(windows)]
 pub mod identity;
 #[cfg(windows)]
@@ -45,10 +70,11 @@ pub mod osfacts;
 pub mod restore_win;
 #[cfg(windows)]
 pub mod shell;
+#[cfg(windows)]
+pub mod system_win;
 
 #[cfg(test)]
 mod contract;
-#[cfg(test)]
 mod copy_lint;
 #[cfg(test)]
 mod model_tests;
@@ -56,6 +82,8 @@ mod model_tests;
 mod network_audit;
 #[cfg(test)]
 mod never_do_audit;
+#[cfg(test)]
+mod per_game_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

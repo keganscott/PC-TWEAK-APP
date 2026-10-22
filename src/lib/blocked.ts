@@ -5,6 +5,7 @@
 
 import type { BlockedCode } from "../generated/BlockedCode";
 import type { BlockedReason } from "../generated/BlockedReason";
+import type { TweakView } from "../generated/TweakView";
 
 export const BLOCKED_HINT = {
   anti_cheat_requirement:
@@ -19,8 +20,20 @@ export const BLOCKED_HINT = {
   no_restore_point: "Make a restore point on Home first. Changes unlock as soon as Windows confirms it.",
   unsafe_for_device: "PeakTweaks does not make this change on this kind of device.",
   tier_required: "This change is not included in your current plan.",
+  needed_by_installed_app: "An app on this PC relies on this, so PeakTweaks leaves it as it is.",
+  game_not_installed: "PeakTweaks did not find this game on this PC. If it is installed, Check again on Home finds it.",
+  protected_program: "PeakTweaks never turns off security software or a game's anti-cheat.",
+  set_by_policy: "An administrator or a policy on this PC set this, so only they can change it.",
 } as const satisfies Record<BlockedCode, string>;
 
 export function blockedHint(reason: BlockedReason): string {
   return BLOCKED_HINT[reason.code];
+}
+
+/** Why the engine does not offer a change, if it does not. What this PC is
+ * (protected software, no such hardware, a policy), read from its state, comes
+ * before the change's own rules (plan, anti-cheat): a plan line on Windows
+ * Security's startup entry would suggest another plan could turn it off. */
+export function whyBlocked(t: Pick<TweakView, "blocked" | "state">): BlockedReason | null {
+  return (t.state.status === "blocked" ? t.state.reason : null) ?? t.blocked;
 }

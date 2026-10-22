@@ -24,6 +24,14 @@ use super::wmi::WmiRow;
 pub(crate) const WQL_PROCESSES: &str = "SELECT Name, IDProcess, CreatingProcessID, PercentProcessorTime, \
      WorkingSetPrivate, Timestamp_Sys100NS FROM Win32_PerfRawData_PerfProc_Process";
 
+/// Used when the performance counters cannot be read. Some tuning tools set
+/// `Disable Performance Counters` under `Perflib`, and then every
+/// `Win32_PerfRawData` query fails with "invalid query" (0x80041017); seen on
+/// Kegan's PC in the field check of 2026-10-15. `Win32_Process` comes from
+/// WMI's own process provider, so this still opens no process from PeakTweaks.
+pub(crate) const WQL_PROCESSES_FALLBACK: &str = "SELECT Name, ProcessId, ParentProcessId, KernelModeTime, \
+     UserModeTime, WorkingSetSize FROM Win32_Process";
+
 /// One process at one moment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcTimes {
@@ -107,6 +115,73 @@ pub fn snapshot_from(rows: &Result<Vec<WmiRow>>) -> Result<ProcessSnapshot> {
         })
         .collect();
     Ok(ProcessSnapshot { wall_100ns, procs })
+}
+
+/// One snapshot from `Win32_Process` rows (the fallback). CPU time is
+/// `KernelModeTime + UserModeTime` (100 ns units); these rows carry no clock,
+/// so the caller passes the wall clock. Names lose `.exe` so they read the
+/// same as the counters' instance names. Memory is the whole working set,
+/// not only the private part the counters give.
+pub fn snapshot_from_processes(rows: &Result<Vec<WmiRow>>, wall_100ns: u64) -> Result<ProcessSnapshot> {
+    let rows = rows
+        .as_ref()
+        .map_err(|e| EngineError::Internal { detail: e.to_string() })?;
+    let procs = rows
+        .iter()
+        .filter_map(|r| {
+            let raw = r.str("Name")?;
+            let name = match raw.len().checked_sub(4) {
+                Some(cut) if raw.is_char_boundary(cut) && raw[cut..].eq_ignore_ascii_case(".exe") => &raw[..cut],
+                _ => raw,
+            };
+            Some(ProcTimes {
+                pid: u32::try_from(r.u64("ProcessId")?).ok()?,
+                parent_pid: r
+                    .u64("ParentProcessId")
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0),
+                name: name.to_owned(),
+                cpu_100ns: match (r.u64("KernelModeTime"), r.u64("UserModeTime")) {
+                    (Some(k), Some(u)) => Some(k.saturating_add(u)),
+                    _ => None,
+                },
+                working_set_bytes: r.u64("WorkingSetSize"),
+            })
+        })
+        .collect();
+    Ok(ProcessSnapshot { wall_100ns, procs })
+}
+
+/// A snapshot from the counters, or from `Win32_Process` when the counters
+/// cannot be read. Once it has fallen back it stays there (`fell_back`), so
+/// the two snapshots of one sample come from the same source.
+pub fn snapshot_via(
+    query: &dyn Fn(&str) -> Result<Vec<WmiRow>>,
+    wall_100ns: &dyn Fn() -> u64,
+    fell_back: &std::cell::Cell<bool>,
+) -> Result<ProcessSnapshot> {
+    if !fell_back.get() {
+        match snapshot_from(&query(WQL_PROCESSES)) {
+            Ok(s) => return Ok(s),
+            Err(counters) => {
+                fell_back.set(true);
+                return snapshot_from_processes(&query(WQL_PROCESSES_FALLBACK), wall_100ns()).map_err(|e| {
+                    EngineError::Internal {
+                        detail: format!("performance counters: {counters}; Win32_Process: {e}"),
+                    }
+                });
+            }
+        }
+    }
+    snapshot_from_processes(&query(WQL_PROCESSES_FALLBACK), wall_100ns())
+}
+
+/// The wall clock in 100 ns units, for [`snapshot_from_processes`].
+pub fn wall_clock_100ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_nanos() / 100).min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
 }
 
 /// How many programs a finding lists.
@@ -349,6 +424,80 @@ mod tests {
         assert_eq!(snap.procs[1], p(4321, 4000, "chrome", Some(5_000_000), 104_857_600));
         assert!(snapshot_from(&Ok(vec![])).is_err(), "no timestamp, no snapshot");
         assert!(snapshot_from(&Err(EngineError::Internal { detail: "x".into() })).is_err());
+    }
+
+    #[test]
+    fn process_rows_become_a_snapshot_with_the_given_clock() {
+        use crate::wmi::WmiValue;
+        let row = |pairs: Vec<(&str, WmiValue)>| WmiRow(pairs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect());
+        let s = |t: &str| WmiValue::Str(t.into());
+        let rows = vec![
+            row(vec![
+                ("Name", s("chrome.EXE")),
+                ("ProcessId", WmiValue::UInt(4321)),
+                ("ParentProcessId", WmiValue::UInt(4000)),
+                ("KernelModeTime", s("1000000")),
+                ("UserModeTime", s("4000000")),
+                ("WorkingSetSize", s("104857600")),
+            ]),
+            // A protected process: WMI leaves the times empty.
+            row(vec![
+                ("Name", s("System")),
+                ("ProcessId", WmiValue::UInt(4)),
+                ("WorkingSetSize", s("1")),
+            ]),
+        ];
+        let snap = snapshot_from_processes(&Ok(rows), 42).unwrap();
+        assert_eq!(snap.wall_100ns, 42);
+        assert_eq!(snap.procs[0], p(4321, 4000, "chrome", Some(5_000_000), 104_857_600));
+        assert_eq!(snap.procs[1].name, "System");
+        assert_eq!(snap.procs[1].cpu_100ns, None);
+    }
+
+    /// Kegan's PC (field check 2026-10-15): the counters are switched off, so
+    /// the counter query fails and every later snapshot uses `Win32_Process`.
+    #[test]
+    fn switched_off_counters_fall_back_to_win32_process_and_stay_there() {
+        use crate::wmi::WmiValue;
+        use std::cell::{Cell, RefCell};
+        let asked = RefCell::new(Vec::new());
+        let query = |q: &str| -> Result<Vec<WmiRow>> {
+            asked.borrow_mut().push(q.to_owned());
+            if q == WQL_PROCESSES {
+                return Err(EngineError::Internal {
+                    detail: "0x80041017".into(),
+                });
+            }
+            Ok(vec![WmiRow(
+                [
+                    ("Name".to_owned(), WmiValue::Str("game.exe".into())),
+                    ("ProcessId".to_owned(), WmiValue::UInt(7)),
+                    ("KernelModeTime".to_owned(), WmiValue::Str("1".into())),
+                    ("UserModeTime".to_owned(), WmiValue::Str("2".into())),
+                ]
+                .into_iter()
+                .collect(),
+            )])
+        };
+        let fell_back = Cell::new(false);
+        let first = snapshot_via(&query, &|| 10, &fell_back).unwrap();
+        let second = snapshot_via(&query, &|| 20, &fell_back).unwrap();
+        assert!(fell_back.get());
+        assert_eq!((first.wall_100ns, second.wall_100ns), (10, 20));
+        assert_eq!(first.procs[0].cpu_100ns, Some(3));
+        assert_eq!(
+            *asked.borrow(),
+            vec![WQL_PROCESSES, WQL_PROCESSES_FALLBACK, WQL_PROCESSES_FALLBACK],
+            "the counters are asked once, not on every snapshot"
+        );
+
+        // Both failing names both reasons.
+        let none = |_: &str| -> Result<Vec<WmiRow>> { Err(EngineError::Internal { detail: "down".into() }) };
+        let err = snapshot_via(&none, &|| 0, &Cell::new(false)).unwrap_err().to_string();
+        assert!(
+            err.contains("performance counters") && err.contains("Win32_Process"),
+            "{err}"
+        );
     }
 
     #[test]

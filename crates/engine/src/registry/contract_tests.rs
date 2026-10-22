@@ -85,6 +85,14 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
         !reg.delete_key_if_empty(HIVE, "").unwrap(),
         "a hive root is never deleted",
     );
+    check(
+        reg.value_names(HIVE, base).unwrap().is_empty(),
+        "an absent key lists no values",
+    );
+    check(
+        reg.subkey_names(HIVE, base).unwrap().is_empty(),
+        "an absent key lists no subkeys",
+    );
 
     // Byte-exact round trips of every supported type, creating parents.
     let vals = format!(r"{base}\Values\Deeper");
@@ -100,6 +108,36 @@ fn contract(reg: &dyn RegistryBackend, base: &str, seed_foreign: &dyn Fn(&str, &
         reg.key_exists(HIVE, &format!(r"{base}\Values")).unwrap(),
         "write creates missing parents",
     );
+    reg.create_key(HIVE, &format!(r"{base}\Values\Other")).unwrap();
+    let mut subkeys: Vec<String> = reg
+        .subkey_names(HIVE, &format!(r"{base}\Values"))
+        .unwrap()
+        .iter()
+        .map(|k| k.to_ascii_lowercase())
+        .collect();
+    subkeys.sort();
+    check(
+        subkeys == ["deeper", "other"],
+        &format!("subkey_names lists the direct subkeys only: {subkeys:?}"),
+    );
+    check(
+        reg.delete_key_if_empty(HIVE, &format!(r"{base}\Values\Other")).unwrap(),
+        "the empty subkey deletes",
+    );
+    let mut names = reg.value_names(HIVE, &vals).unwrap();
+    names.sort();
+    let mut wanted: Vec<String> = samples().into_iter().map(|(n, _)| n.to_owned()).collect();
+    wanted.sort();
+    check(
+        names == wanted,
+        &format!("value_names lists every value as written: {names:?}"),
+    );
+    reg.write_value(HIVE, &vals, "", &RawValue::sz("default")).unwrap();
+    check(
+        reg.value_names(HIVE, &vals).unwrap().iter().any(String::is_empty),
+        "the default value is listed as \"\"",
+    );
+    check(reg.delete_value(HIVE, &vals, "").unwrap(), "the default value deletes");
 
     // Writes are exact every time, not by luck of what follows the buffer in
     // memory (WinRegistry::set_exact): rewrite the unterminated strings often.
@@ -694,8 +732,8 @@ mod real {
             e
         };
         let outstanding = vec![
-            (
-                "t.user".to_owned(),
+            offline::Outstanding::registry(
+                "t.user",
                 vec![write(
                     5,
                     "t.user",
@@ -704,8 +742,8 @@ mod real {
                     Some(RawValue::sz("before")),
                 )],
             ),
-            (
-                "t.machine".to_owned(),
+            offline::Outstanding::registry(
+                "t.machine",
                 vec![
                     write(
                         1,

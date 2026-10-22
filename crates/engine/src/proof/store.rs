@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::auto::AutoRecord;
 use super::metrics::FrameStats;
 use super::nvml::ThrottleSummary;
 use crate::error::{EngineError, Result};
@@ -174,6 +175,36 @@ impl ProofStore {
     pub fn discard_run(&self, session_id: &str, run_id: &str) {
         if let Ok(dir) = self.run_dir(session_id, run_id) {
             let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    fn auto_path(&self) -> PathBuf {
+        self.root.join("auto-record.json")
+    }
+
+    /// The side set to record while its game runs (`auto.rs`), if any.
+    pub fn auto_record(&self) -> Result<Option<AutoRecord>> {
+        let path = self.auto_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let record: AutoRecord = self.read_json(&path)?;
+        // Checked like an id from the webview, as it names a folder.
+        self.session_dir(&record.session_id)?;
+        Ok(Some(record))
+    }
+
+    pub fn save_auto_record(&self, record: &AutoRecord) -> Result<()> {
+        self.session_dir(&record.session_id)?;
+        self.write_json(self.auto_path(), record)
+    }
+
+    pub fn clear_auto_record(&self) -> Result<()> {
+        let path = self.auto_path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(EngineError::storage(path.display().to_string(), e)),
         }
     }
 

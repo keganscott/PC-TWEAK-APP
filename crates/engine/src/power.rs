@@ -15,12 +15,16 @@ use super::registry::{Hive, RegistryBackend};
 const KEY: &str = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes";
 const VALUE: &str = "ActivePowerScheme";
 
-/// The four schemes Windows itself ships. GUIDs are from Microsoft's
-/// documentation of `powercfg` (from memory; VERIFY on a real machine, N43).
+/// The four schemes Windows itself ships. Balanced, High performance and Power
+/// saver are in Microsoft's "Power Policy Settings" table (checked
+/// 2026-10-08); Ultimate Performance's GUID is from memory (VERIFY, N43).
 const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
 const HIGH_PERFORMANCE: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 const POWER_SAVER: &str = "a1841308-3541-4fab-bc81-f71556f20b4a";
 const ULTIMATE_PERFORMANCE: &str = "e9a42b02-d5df-448d-aa00-03f14749eb61";
+/// The plan PeakTweaks makes (`tweaks/power.rs`, CATALOGUE H7). Fixed, so the
+/// same copy is found again and Undo deletes exactly it.
+pub const PEAKTWEAKS: &str = "e9967d09-6feb-4c0b-b700-7d99023a1542";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
@@ -30,6 +34,8 @@ pub enum PowerPlanKind {
     HighPerformance,
     PowerSaver,
     UltimatePerformance,
+    /// The PeakTweaks power plan (`tweaks/power.rs`).
+    PeakTweaks,
     /// A plan we do not recognise: one the user, the PC maker or another tool made.
     Custom,
 }
@@ -49,6 +55,7 @@ fn kind_of(guid: &str) -> PowerPlanKind {
         HIGH_PERFORMANCE => PowerPlanKind::HighPerformance,
         POWER_SAVER => PowerPlanKind::PowerSaver,
         ULTIMATE_PERFORMANCE => PowerPlanKind::UltimatePerformance,
+        PEAKTWEAKS => PowerPlanKind::PeakTweaks,
         _ => PowerPlanKind::Custom,
     }
 }
@@ -98,12 +105,13 @@ mod tests {
     }
 
     #[test]
-    fn the_four_shipped_plans_are_recognised_whatever_the_case_or_braces() {
+    fn the_shipped_plans_and_ours_are_recognised_whatever_the_case_or_braces() {
         for (guid, kind) in [
             (BALANCED, PowerPlanKind::Balanced),
             (HIGH_PERFORMANCE, PowerPlanKind::HighPerformance),
             (POWER_SAVER, PowerPlanKind::PowerSaver),
             (ULTIMATE_PERFORMANCE, PowerPlanKind::UltimatePerformance),
+            (PEAKTWEAKS, PowerPlanKind::PeakTweaks),
         ] {
             for text in [guid.to_owned(), guid.to_ascii_uppercase(), format!("{{{guid}}}")] {
                 let p = probe_power_plan(&with(Some(RawValue::sz(&text))));

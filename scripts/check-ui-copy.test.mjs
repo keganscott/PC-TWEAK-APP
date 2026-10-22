@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { findClaim, lintSource, loadClaimWords } from "./check-ui-copy.mjs";
+import { findClaim, findMojibake, lintSource, loadClaimWords } from "./check-ui-copy.mjs";
 
 const words = loadClaimWords();
 const lint = (src, file = "x.tsx") => lintSource(file, src, words).map((h) => h.word);
@@ -19,6 +19,13 @@ test("words match at word starts; symbols match anywhere (same rule as Rust)", (
   assert.equal(findClaim("It improves things", words), "improv");
   assert.equal(findClaim("Up to 30% more", words), "% ");
   assert.equal(findClaim("Turns off pointer acceleration", words), null);
+});
+
+test("a Windows feature's own name is not a claim, the same word elsewhere is", () => {
+  assert.equal(findClaim("\\Microsoft\\Windows\\Customer Experience Improvement Program\\UsbCeip", words), null);
+  assert.equal(findClaim("The Customer Experience Improvement Program improves games", words), "improv");
+  assert.equal(findClaim("Radeon Anti-Lag: on (Anti-Lag, not Anti-Lag Next)", words), null);
+  assert.equal(findClaim("Radeon Anti-Lag cuts lag", words), "lag");
 });
 
 test("JSX text, attributes shown to users, and plain strings are copy", () => {
@@ -62,4 +69,9 @@ test("an allow comment needs a reason and covers its own or the next line", () =
 test("hits report the line of the offending text", () => {
   const hits = lintSource("x.ts", `const a = 1;\nconst b = "boost";`, words);
   assert.equal(hits[0].line, 2);
+});
+
+test("garbled UTF-8 is found, real punctuation and accents are not", () => {
+  assert.deepEqual(findMojibake("ok\nsearch for \u00e2\u20ac\u0153Create\u00e2\u20ac\u009d\ncaf\u00c3\u00a9"), [2, 3]);
+  assert.deepEqual(findMojibake("search for \u201cCreate\u201d, caf\u00e9, 5\u00b0C \u2014 \u00c2"), []);
 });

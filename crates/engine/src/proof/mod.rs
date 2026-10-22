@@ -5,6 +5,7 @@
 //! decides "Better / No measurable change / Worse" only when the difference is
 //! larger than the run-to-run spread actually measured.
 
+pub mod auto;
 pub mod capture;
 pub mod metrics;
 pub mod nvml;

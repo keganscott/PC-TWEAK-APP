@@ -113,6 +113,27 @@ impl RegistryBackend for WinRegistry {
         }
     }
 
+    fn value_names(&self, hive: Hive, path: &str) -> Result<Vec<String>> {
+        let Some(key) = open_read(hive, path)? else {
+            return Ok(Vec::new());
+        };
+        key.enum_values()
+            .map(|v| {
+                v.map(|(name, _)| name)
+                    .map_err(|e| EngineError::registry(display(hive, path), None, e))
+            })
+            .collect()
+    }
+
+    fn subkey_names(&self, hive: Hive, path: &str) -> Result<Vec<String>> {
+        let Some(key) = open_read(hive, path)? else {
+            return Ok(Vec::new());
+        };
+        key.enum_keys()
+            .map(|k| k.map_err(|e| EngineError::registry(display(hive, path), None, e)))
+            .collect()
+    }
+
     fn write_value(&self, hive: Hive, path: &str, name: &str, value: &RawValue) -> Result<()> {
         let Some(vtype) = reg_type(value.vtype) else {
             return Err(EngineError::UnsupportedValueType {

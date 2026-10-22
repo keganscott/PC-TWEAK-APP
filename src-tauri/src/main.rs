@@ -3,6 +3,9 @@
 #[cfg(test)]
 mod command_audit;
 mod commands;
+mod play;
+mod tray;
+mod window_place;
 
 use peaktweaks_engine::env::License;
 use peaktweaks_engine::tweaks;
@@ -88,13 +91,38 @@ fn main() {
                     commands::EngineHandle::failed(e)
                 }
             };
+            let status = play::new_status();
+            // Placed where it was last closed, then shown. Without an engine
+            // nothing is remembered, but the window still shows its reason.
+            let store = handle
+                .shared()
+                .and_then(|e| e.lock().ok().map(|e| e.window_store()))
+                .unwrap_or_default();
+            if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
+                tauri::Manager::manage(app, window_place::restore(&window, store));
+            }
+            // The icon by the clock (Gaming Mode, Open). A tray that cannot
+            // be made leaves the app as it was without one.
+            if let Err(e) = tray::build(app, handle.shared()) {
+                eprintln!("tray icon not shown: {e}");
+            }
+            // Started after the icon exists, so the icon hears of the first
+            // game it sees.
+            if let Some(engine) = handle.shared() {
+                play::start(app.handle().clone(), engine, status.clone());
+            }
             tauri::Manager::manage(app, handle);
+            tauri::Manager::manage(app, status);
             Ok(())
         })
+        .on_window_event(window_place::on_event)
         .invoke_handler(tauri::generate_handler![
             commands::engine_context,
             commands::list_tweaks,
             commands::list_games,
+            commands::live_readings,
+            commands::play_status,
+            commands::forget_play_history,
             commands::get_settings,
             commands::set_settings,
             commands::select_target_game,
@@ -106,10 +134,23 @@ fn main() {
             commands::proof_compare,
             commands::proof_list_sessions,
             commands::proof_runs,
+            commands::proof_auto_record,
+            commands::proof_stop_auto_record,
             commands::apply_tweak,
             commands::revert_tweak,
             commands::revert_all,
             commands::list_journal,
+            commands::export_support_bundle,
+            commands::purge_standby_memory,
+            commands::cleanup_measure,
+            commands::cleanup_run,
+            commands::optimize_drive,
+            commands::list_startup_apps,
+            commands::list_msi_devices,
+            commands::launch_game,
+            commands::check_connection,
+            commands::open_driver_page,
+            commands::install_gpu_driver,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PeakTweaks");

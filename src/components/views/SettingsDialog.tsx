@@ -1,7 +1,9 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
+import type { Accent } from "../../generated/Accent";
 import type { Language } from "../../generated/Language";
 import type { RigClass } from "../../generated/RigClass";
+import { ACCENTS } from "../../lib/accent";
 import { explain } from "../../lib/errors";
 import { probeValue, RIG_LABEL } from "../../lib/format";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
@@ -23,20 +25,29 @@ export function SettingsDialog({
   const { saveSettings } = useActions();
   const [language, setLanguage] = useState<Language>("plain");
   const [rig, setRig] = useState<RigClass | "">("");
+  const [reminders, setReminders] = useState(true);
+  const [accent, setAccent] = useState<Accent>("violet");
   const rigId = useId();
 
-  // Start from what is stored each time the dialog opens.
+  // Start from what is stored each time the dialog opens. Not again while it
+  // is open: a switch from the tray icon changes the settings meanwhile and
+  // must not wipe a choice not saved yet.
+  const filled = useRef(false);
   useEffect(() => {
-    if (open && settings) {
+    if (!open) filled.current = false;
+    else if (settings && !filled.current) {
+      filled.current = true;
       setLanguage(settings.language);
       setRig(settings.rigClassOverride ?? "");
+      setReminders(!settings.remindersOff);
+      setAccent(settings.accent);
     }
   }, [open, settings]);
 
   const save = async () => {
     // Stay open on failure so the error is seen next to what was chosen.
     // Only what this dialog edits changes; anything else stored is kept.
-    if (settings && (await saveSettings({ ...settings, language, rigClassOverride: rig || null }))) onClose();
+    if (settings && (await saveSettings({ ...settings, language, accent, rigClassOverride: rig || null, remindersOff: !reminders }, settings))) onClose();
   };
 
   return (
@@ -81,6 +92,36 @@ export function SettingsDialog({
             ))}
           </div>
         </fieldset>
+        <fieldset>
+          <legend className="font-medium">Colour</legend>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {ACCENTS.map((a) => (
+              <label
+                key={a.id}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                  accent === a.id ? "border-line-strong bg-surface-2" : "border-line"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="accent"
+                  checked={accent === a.id}
+                  onChange={() => setAccent(a.id)}
+                  className="sr-only"
+                />
+                <span
+                  aria-hidden
+                  className="size-4 rounded-full border border-white/20"
+                  style={{ backgroundColor: a.swatch }}
+                />
+                {a.name}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-ink-faint">
+            The colour of buttons and highlights. Green stays "ready" and red stays an error, whatever you pick.
+          </p>
+        </fieldset>
         <div>
           <label htmlFor={rigId} className="font-medium">
             PC class
@@ -100,12 +141,27 @@ export function SettingsDialog({
             Changes defaults and wording only. It never turns off a safety check.
           </p>
         </div>
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={reminders}
+            onChange={(e) => setReminders(e.target.checked)}
+            className="mt-1 accent-accent"
+          />
+          <span>
+            <span className="font-medium">Gentle reminders on Home</span>
+            <span className="block text-xs text-ink-faint">
+              When junk files were last cleared a month ago or more, and when a graphics driver is more than six months old.
+            </span>
+          </span>
+        </label>
         <div>
           <Button variant="ghost" onClick={onShowWelcome}>
             Show the welcome again
           </Button>
         </div>
         {settingsOp.status === "failed" && <ErrorCallout text={explain(settingsOp.error)} technical={technical} />}
+        <p className="border-t border-line pt-4 text-xs text-ink-faint">PeakTweaks {__APP_BUILD__}</p>
       </div>
     </Dialog>
   );

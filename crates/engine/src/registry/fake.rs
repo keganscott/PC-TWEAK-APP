@@ -19,6 +19,8 @@ struct Inner {
     mutations: usize,
     /// Fail the mutation whose 1-based ordinal equals this.
     fail_at: Option<usize>,
+    /// With `fail_at`: keep failing every mutation after it too.
+    fail_on: bool,
 }
 
 #[derive(Default)]
@@ -45,11 +47,22 @@ impl FakeRegistry {
     pub fn fail_mutation_number(&self, n: usize) {
         let mut g = self.inner.lock().unwrap();
         g.fail_at = Some(g.mutations + n);
+        g.fail_on = false;
+    }
+
+    /// Make the `n`th mutating call from now fail, and every one after it,
+    /// until `clear_faults`.
+    pub fn fail_mutations_from(&self, n: usize) {
+        let mut g = self.inner.lock().unwrap();
+        g.fail_at = Some(g.mutations + n);
+        g.fail_on = true;
     }
 
     /// Disarm any pending injected failure.
     pub fn clear_faults(&self) {
-        self.inner.lock().unwrap().fail_at = None;
+        let mut g = self.inner.lock().unwrap();
+        g.fail_at = None;
+        g.fail_on = false;
     }
 
     pub fn mutation_count(&self) -> usize {
@@ -67,6 +80,17 @@ impl FakeRegistry {
             .get_mut(&key_id(hive, path))
             .unwrap()
             .insert(name.to_ascii_lowercase(), (name.to_owned(), value));
+    }
+
+    /// Delete a key and everything under it, as if a device were removed.
+    pub fn remove_key_external(&self, hive: Hive, path: &str) {
+        let (h, p) = key_id(hive, path);
+        let prefix = format!("{p}\\");
+        self.inner
+            .lock()
+            .unwrap()
+            .keys
+            .retain(|(kh, kp), _| !(*kh == h && (*kp == p || kp.starts_with(&prefix))));
     }
 
     pub fn remove_external(&self, hive: Hive, path: &str, name: &str) {
@@ -106,8 +130,13 @@ impl FakeRegistry {
 impl Inner {
     fn tick(&mut self, hive: Hive, path: &str, name: Option<&str>) -> Result<()> {
         self.mutations += 1;
-        if self.fail_at == Some(self.mutations) {
-            self.fail_at = None;
+        if self
+            .fail_at
+            .is_some_and(|at| at == self.mutations || (self.fail_on && at < self.mutations))
+        {
+            if !self.fail_on {
+                self.fail_at = None;
+            }
             return Err(EngineError::registry_msg(
                 format!("{}\\{}", hive.name(), path),
                 name,
@@ -129,6 +158,30 @@ impl RegistryBackend for FakeRegistry {
             .get(&key_id(hive, path))
             .and_then(|k| k.get(&name.to_ascii_lowercase()))
             .map(|(_, v)| v.clone()))
+    }
+
+    fn value_names(&self, hive: Hive, path: &str) -> Result<Vec<String>> {
+        let g = self.inner.lock().unwrap();
+        Ok(g.keys
+            .get(&key_id(hive, path))
+            .map(|k| k.values().map(|(name, _)| name.clone()).collect())
+            .unwrap_or_default())
+    }
+
+    fn subkey_names(&self, hive: Hive, path: &str) -> Result<Vec<String>> {
+        // Keys are kept in lower case, so names come back in lower case.
+        let (_, parent) = key_id(hive, path);
+        let g = self.inner.lock().unwrap();
+        Ok(g.keys
+            .keys()
+            .filter(|(h, _)| *h == hive)
+            .filter_map(|(_, k)| match parent.as_str() {
+                "" => Some(k.as_str()),
+                p => k.strip_prefix(p)?.strip_prefix('\\'),
+            })
+            .filter(|rest| !rest.is_empty() && !rest.contains('\\'))
+            .map(str::to_owned)
+            .collect())
     }
 
     fn write_value(&self, hive: Hive, path: &str, name: &str, value: &RawValue) -> Result<()> {

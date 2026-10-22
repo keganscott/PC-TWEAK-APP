@@ -18,8 +18,10 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use super::error::{EngineError, Result};
+use super::game_installs::GameInstall;
 use super::registry::{Hive, RegistryBackend};
-use super::types::{RawValue, RegRoot};
+use super::system::{SysItem, SysState, SystemBackend, Unavailable};
+use super::types::{BlockedCode, BlockedReason, RawValue, RegRoot};
 
 /// How we found the interactive user. Surfaced to the UI, because "which hive
 /// did you write to" is the first question during a support escalation.
@@ -49,6 +51,12 @@ pub struct ContextResolver {
     user: UserContext,
     elevated: bool,
     backend: Arc<dyn RegistryBackend>,
+    /// Non-registry changes (`system.rs`). `Unavailable` unless one is given.
+    system: Arc<dyn SystemBackend>,
+    /// The games found on this PC at the engine's last probe; `None` until
+    /// they were looked for. The engine sets this (`set_game_installs`), so a
+    /// per-game tweak reads the same installs its predicate saw.
+    games: Option<Vec<GameInstall>>,
 }
 
 impl ContextResolver {
@@ -57,7 +65,106 @@ impl ContextResolver {
             user,
             elevated,
             backend,
+            system: Arc::new(Unavailable),
+            games: None,
         }
+    }
+
+    /// Use `system` for changes that are not registry values.
+    pub fn with_system(mut self, system: Arc<dyn SystemBackend>) -> Self {
+        self.system = system;
+        self
+    }
+
+    /// The non-registry backend, for `Transaction`. Tweaks read through
+    /// `read_system` / `read_file` below.
+    pub(crate) fn system(&self) -> &dyn SystemBackend {
+        self.system.as_ref()
+    }
+
+    /// The current state of a non-registry item (safe for tweaks).
+    pub fn read_system(&self, item: &SysItem) -> Result<SysState> {
+        self.system.read(item)
+    }
+
+    /// Physical network adapters (safe for tweaks).
+    pub fn network_adapters(&self) -> Result<Vec<super::system::NetAdapter>> {
+        self.system.network_adapters()
+    }
+
+    /// Graphics cards and network adapters on the PCI bus (safe for tweaks).
+    pub fn pci_devices(&self) -> Result<Vec<super::system::PciDevice>> {
+        self.system.pci_devices()
+    }
+
+    /// Displays connected to the desktop now (safe for tweaks).
+    pub fn displays(&self) -> Result<Vec<super::system::Display>> {
+        self.system.displays()
+    }
+
+    /// AMD graphics cards, empty without one (safe for tweaks).
+    pub fn amd_gpus(&self) -> Result<Vec<crate::adlx::AmdGpu>> {
+        self.system.amd_gpus()
+    }
+
+    /// A file's bytes, `None` when absent (safe for tweaks).
+    pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.system.read_file(path)
+    }
+
+    /// The signed-in user's profile folder, from the machine's list of
+    /// profiles (`ProfileList`, which only administrators can change), never
+    /// from the user's own settings: a file path built on it cannot be steered
+    /// by the user into a folder they could not write.
+    pub fn user_profile_dir(&self) -> Result<String> {
+        let key = format!(
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{}",
+            self.user.sid
+        );
+        let raw = self
+            .read_string(RegRoot::LocalMachine, &key, "ProfileImagePath")?
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| EngineError::UserContextUnresolved {
+                detail: format!("Windows lists no profile folder for {}", self.user.sid),
+            })?;
+        let path = super::profile::expand_percent_vars(&raw, |name| std::env::var(name).ok());
+        Ok(path.trim_end_matches('\\').to_owned())
+    }
+
+    /// A path declared as `<profile>\...` (`system::PROFILE_PREFIX`), made
+    /// concrete for the signed-in user. Any other path is returned as it is.
+    pub fn profile_path(&self, declared: &str) -> Result<String> {
+        match declared.strip_prefix(super::system::PROFILE_PREFIX) {
+            Some(rest) => Ok(format!("{}\\{rest}", self.user_profile_dir()?)),
+            None => Ok(declared.to_owned()),
+        }
+    }
+
+    /// The engine's latest game installs (`Engine::rescan`).
+    pub(crate) fn set_game_installs(&mut self, games: Option<Vec<GameInstall>>) {
+        self.games = games;
+    }
+
+    /// The full path of the program file a found game runs, as Windows
+    /// writes it (safe for tweaks). Blocked when the games were not looked
+    /// for yet, the game was not found, or its program file was not.
+    pub fn game_program(&self, game_id: &str) -> Result<String> {
+        let not_found = |message: String| EngineError::Blocked {
+            reason: BlockedReason::new(BlockedCode::GameNotInstalled, message).with_trigger(game_id),
+        };
+        let name = crate::games::name(game_id);
+        let games = self
+            .games
+            .as_ref()
+            .ok_or_else(|| not_found(format!("PeakTweaks has not looked for {name} on this PC yet.")))?;
+        let install = games
+            .iter()
+            .find(|g| g.game_id == game_id)
+            .ok_or_else(|| not_found(format!("PeakTweaks did not find {name} on this PC.")))?;
+        install
+            .exe
+            .clone()
+            .ok_or_else(|| not_found(crate::game_installs::program_file_missing(install)))
     }
 
     /// Resolve the interactive user with Win32 and bind the real registry.
@@ -71,7 +178,7 @@ impl ContextResolver {
         if !user.is_self && !backend.key_exists(Hive::Users, &user.sid)? {
             return Err(EngineError::UserHiveNotLoaded { sid: user.sid });
         }
-        Ok(Self::new(user, elevated, backend))
+        Ok(Self::new(user, elevated, backend).with_system(Arc::new(super::system_win::WinSystem::new())))
     }
 
     pub fn user(&self) -> &UserContext {
@@ -122,6 +229,18 @@ impl ContextResolver {
     pub fn key_exists(&self, root: RegRoot, path: &str) -> Result<bool> {
         let (hive, full) = self.route(root, path);
         self.backend.key_exists(hive, &full)
+    }
+
+    /// The names of the values under the key; empty when it is absent.
+    pub fn value_names(&self, root: RegRoot, path: &str) -> Result<Vec<String>> {
+        let (hive, full) = self.route(root, path);
+        self.backend.value_names(hive, &full)
+    }
+
+    /// The names of the key's direct subkeys; empty when it is absent.
+    pub fn subkey_names(&self, root: RegRoot, path: &str) -> Result<Vec<String>> {
+        let (hive, full) = self.route(root, path);
+        self.backend.subkey_names(hive, &full)
     }
 
     /// `Ok(None)` when the key or value is absent.

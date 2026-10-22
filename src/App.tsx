@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RotateCcw } from "lucide-react";
 
+import { applyAccent } from "./lib/accent";
 import { explain } from "./lib/errors";
 import { useActions, useStore } from "./store/hooks";
 import { Logo } from "./components/brand/Logo";
@@ -39,7 +40,7 @@ export function App() {
   const closeWelcome = useCallback(() => {
     setWelcomeClosed(true);
     setWelcomeAgain(false);
-    if (settings && !settings.welcomeSeen) void saveSettings({ ...settings, welcomeSeen: true });
+    if (settings && !settings.welcomeSeen) void saveSettings({ ...settings, welcomeSeen: true }, settings);
   }, [settings, saveSettings]);
   const showWelcome = useCallback(() => {
     setSettingsOpen(false);
@@ -49,6 +50,11 @@ export function App() {
   useEffect(() => {
     void start();
   }, [start]);
+
+  // The picked accent colour, on the page as soon as Settings load.
+  useEffect(() => {
+    if (settings) applyAccent(settings.accent);
+  }, [settings]);
 
   if (boot.status === "loading") return <BootScreen />;
   if (boot.status === "failed") {

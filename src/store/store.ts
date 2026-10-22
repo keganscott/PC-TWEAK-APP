@@ -12,11 +12,22 @@
 // - Nothing here decides what the engine allows. The store asks; the engine
 //   answers, including "blocked".
 
+import type { AreaSize } from "../generated/AreaSize";
+import type { AutoRecordStatus } from "../generated/AutoRecordStatus";
+import type { CleanupArea } from "../generated/CleanupArea";
+import type { CleanupReport } from "../generated/CleanupReport";
 import type { Comparison } from "../generated/Comparison";
 import type { ContextInfo } from "../generated/ContextInfo";
+import type { DriveOptimization } from "../generated/DriveOptimization";
+import type { DriverVendor } from "../generated/DriverVendor";
 import type { EngineError } from "../generated/EngineError";
 import type { GameInfo } from "../generated/GameInfo";
+import type { GpuDriverInstall } from "../generated/GpuDriverInstall";
 import type { JournalView } from "../generated/JournalView";
+import type { SupportBundle } from "../generated/SupportBundle";
+import type { MsiDeviceList } from "../generated/MsiDeviceList";
+import type { NetworkCheck } from "../generated/NetworkCheck";
+import type { PlayStatus } from "../generated/PlayStatus";
 import type { Progress } from "../generated/Progress";
 import type { ProofRun } from "../generated/ProofRun";
 import type { ProofSession } from "../generated/ProofSession";
@@ -25,9 +36,12 @@ import type { RestoreOutcome } from "../generated/RestoreOutcome";
 import type { RevertResult } from "../generated/RevertResult";
 import type { Settings } from "../generated/Settings";
 import type { Side } from "../generated/Side";
+import type { LiveReadings } from "../generated/LiveReadings";
+import type { StandbyPurge } from "../generated/StandbyPurge";
+import type { StartupList } from "../generated/StartupList";
 import type { SystemAudit } from "../generated/SystemAudit";
 import type { TweakView } from "../generated/TweakView";
-import { toEngineError } from "../lib/errors";
+import { explain, toEngineError } from "../lib/errors";
 import type { Backend } from "../services/backend";
 
 export type Op<T = null> =
@@ -60,6 +74,10 @@ export interface ProofState {
   /** Per comparison. The engine records one capture at a time; `capturingSession` says which. */
   captureOps: Readonly<Record<string, Op<ProofRun>>>;
   capturingSession: string | null;
+  /** Setting or stopping "Record while I play"; what is set shows in `play.autoRecord`. */
+  autoOp: Op<AutoRecordStatus | null>;
+  /** The comparison Proof should open on (set from a Games card), until it does. */
+  focus: string | null;
   /** The last failure to load sessions or runs, until a load succeeds. */
   loadError: EngineError | null;
 }
@@ -85,12 +103,53 @@ export interface State {
   refreshError: EngineError | null;
   tweakOps: Readonly<Record<string, Op<"apply" | "revert">>>;
   revertAllOp: Op<RevertResult[]>;
+  /** "Apply all basic changes", "Apply recommended" and the result card's Undo. */
+  applyManyOp: Op<null>;
+  /** "Empty the standby list" (catalogue E6); keeps the last result for its card. */
+  standbyOp: Op<StandbyPurge>;
+  /** "Clear out junk files" (catalogue H28): what each area holds now. */
+  cleanupSizesOp: Op<AreaSize[]>;
+  /** The last cleanup, for its card. */
+  cleanupOp: Op<CleanupReport>;
+  /** "Optimize the Windows drive" (catalogue H29); keeps the last run for its card. */
+  driveOp: Op<DriveOptimization>;
+  /** "Check the connection" (catalogue E4); keeps the last check for its card. */
+  netcheckOp: Op<NetworkCheck>;
+  /** "Play" on a game found in a Steam library, per game id. */
+  launchOps: Readonly<Record<string, Op>>;
+  /** "Record my next games" per game: the comparison set to record. */
+  measureOps: Readonly<Record<string, Op<string>>>;
+  /** The driver tool's "Open ... driver page" buttons. */
+  driverPageOp: Op;
+  /** The driver tool's clean install; `null` when the file dialog was cancelled. */
+  driverInstallOp: Op<GpuDriverInstall | null>;
   lastChange: ChangeResult | null;
   proof: ProofState;
+  /** The game watcher (catalogue step 5); null until it first answers. */
+  play: PlayStatus | null;
+  /** "Forget these games": the kept game reports. */
+  forgetHistoryOp: Op;
+  /** Startup apps (H12), once the Tools section has asked. Kept on screen
+   * while it is read again; `startupOp` says how the latest read went. */
+  startup: StartupList | null;
+  startupOp: Op;
+  /** MSI mode per device (H6), once the Advanced devices section has asked. */
+  msi: MsiDeviceList | null;
+  msiOp: Op;
+  /** The last support bundle written, for its card in Backups (N137). */
+  supportOp: Op<SupportBundle>;
+  /** Home's live readings: the newest answer, kept while the next is read. */
+  live: LiveReadings | null;
+  liveOp: Op;
+  /** The last `LIVE_HISTORY` readings, oldest first, for Home's graphs. Only
+   * what was read while a page asked; nothing is kept on disk. */
+  liveHistory: LiveReadings[];
   bus: BusEntry[];
 }
 
 export const BUS_LIMIT = 200;
+/** Readings kept for Home's live graphs: two minutes at one every three seconds. */
+export const LIVE_HISTORY = 40;
 
 export function initialState(sample: boolean): State {
   return {
@@ -111,10 +170,103 @@ export function initialState(sample: boolean): State {
     refreshError: null,
     tweakOps: {},
     revertAllOp: IDLE,
+    applyManyOp: IDLE,
+    standbyOp: IDLE,
+    cleanupSizesOp: IDLE,
+    cleanupOp: IDLE,
+    driveOp: IDLE,
+    netcheckOp: IDLE,
+    launchOps: {},
+    measureOps: {},
+    driverPageOp: IDLE,
+    driverInstallOp: IDLE,
     lastChange: null,
-    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, loadError: null },
+    proof: { sessions: [], runs: {}, comparisons: {}, beginOp: IDLE, captureOps: {}, capturingSession: null, autoOp: IDLE, focus: null, loadError: null },
+    play: null,
+    forgetHistoryOp: IDLE,
+    startup: null,
+    startupOp: IDLE,
+    msi: null,
+    msiOp: IDLE,
+    supportOp: IDLE,
+    live: null,
+    liveHistory: [],
+    liveOp: IDLE,
     bus: [],
   };
+}
+
+/**
+ * The changes "Apply all basic changes" (Home) and "Apply recommended" make: safe-tier,
+ * not yet in effect, not refused by the engine. A setting the PC already has
+ * (foreign) or one changed after we applied it (drifted) is left alone.
+ * DECISIONS 15.22: "recommended" stands in for evidence grades A and B until
+ * the tweak dictionary gives grades (N2). Look-and-feel changes are left out,
+ * and so are changes with a cost line: a one-click set shows no lines, so
+ * those are applied one at a time in Tools, where the line is read first.
+ */
+export function recommendedIds(tweaks: readonly TweakView[]): string[] {
+  return tweaks
+    .filter(
+      (t) =>
+        t.safety === "safe" &&
+        t.category !== APPEARANCE &&
+        !t.tradeoff &&
+        !t.blocked &&
+        t.state.status === "default",
+    )
+    .map((t) => t.id);
+}
+
+/**
+ * The basic changes Home recommends: what `recommendedIds` would apply, plus
+ * those already in effect (applied here, or set before), so Home can show how many are in place. Not yet made first,
+ * then the larger effect first, then by name.
+ */
+export function basicTweaks(tweaks: readonly TweakView[]): TweakView[] {
+  const offered = new Set(recommendedIds(tweaks));
+  const inPlace = (t: TweakView) => t.state.status === "applied" || t.state.status === "foreign";
+  return tweaks
+    .filter((t) => t.safety === "safe" && t.category !== APPEARANCE && !t.tradeoff && (offered.has(t.id) || inPlace(t)))
+    .sort(
+      (a, b) =>
+        Number(inPlace(a)) - Number(inPlace(b)) ||
+        Number(b.impact === "extreme") - Number(a.impact === "extreme") ||
+        a.name.localeCompare(b.name),
+    );
+}
+
+/**
+ * The drift check: changes PeakTweaks made that Windows no longer has (a
+ * Windows update or another program set them back). `again` are the ones
+ * applied again in one click: those that ask for no confirmation in Tools
+ * (DECISIONS 15.22) and that the engine does not refuse. The rest are
+ * listed and re-applied one at a time in Tools.
+ */
+export function driftedTweaks(tweaks: readonly TweakView[]): { all: TweakView[]; again: string[] } {
+  const all = tweaks.filter((t) => t.state.status === "drifted");
+  const again = all.filter((t) => !t.blocked && !(t.tradeoff && t.safety !== "safe")).map((t) => t.id);
+  return { all, again };
+}
+
+/** Look-and-feel changes: one click each in Tools, never part of a one-click
+ * set, so the safe set never changes how someone's desktop looks. */
+export const APPEARANCE = "appearance";
+
+/** Runs a side gets from "Record while I play" (`proof/auto.rs` `AUTO_RUNS`). */
+export const AUTO_RUNS = 3;
+
+/** Long work the engine runs one at a time (`Activity` in commands.rs). */
+export type LongWork = "proof" | "cleanup" | "drive" | "driver";
+
+/** The long work running now other than `own`, which would make the engine
+ * refuse `own`. */
+export function otherLongWork(s: State, own: LongWork): LongWork | null {
+  if (own !== "proof" && (s.proof.capturingSession !== null || s.play?.autoRecord?.recordingNow)) return "proof";
+  if (own !== "cleanup" && s.cleanupOp.status === "running") return "cleanup";
+  if (own !== "drive" && s.driveOp.status === "running") return "drive";
+  if (own !== "driver" && s.driverInstallOp.status === "running") return "driver";
+  return null;
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
@@ -125,6 +277,11 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
   const latest = new Map<string, number>();
   let busId = 0;
   let listening: Promise<() => void> | null = null;
+  let watchingPlay: Promise<() => void> | null = null;
+  let watchingSettings: Promise<() => void> | null = null;
+  /** Counts settings saved from the tray, so a window save that was in
+   * flight across one re-reads what the engine kept last. */
+  let traySaves = 0;
 
   const set = (update: (s: State) => State) => {
     const next = update(state);
@@ -196,9 +353,111 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     }
   }
 
-  /** After anything that changed the PC: re-read what the engine now reports. */
-  async function refreshAfterChange() {
-    await Promise.allSettled([refreshTweaks(), refreshAudit(), refreshJournal()]);
+  /** The watcher's status. An event is newer than any reply still in flight,
+   * so it takes the same channel. Gaming Mode starting or ending changes what
+   * Backups lists, so the change record is read again then. */
+  function showPlay(play: PlayStatus) {
+    tag("play");
+    const wasActive = state.play?.gamingModeActive;
+    const wasRecording = state.play?.autoRecord ?? null;
+    set((s) => ({ ...s, play }));
+    if (wasActive !== undefined && wasActive !== play.gamingModeActive) void refreshJournal();
+    if (wasRecording) void afterAutoSample(wasRecording, play.autoRecord);
+  }
+
+  /** "Record while I play" records without a request from here: when the
+   * watcher says a sample ended (or the side got its runs and stopped), the
+   * comparison's runs are read again and its old result dropped. A finished
+   * after side is compared at once, as the Compare button would. */
+  async function afterAutoSample(was: AutoRecordStatus, now: AutoRecordStatus | null) {
+    const sampled = was.recordingNow && (!now || !now.recordingNow || now.sessionId !== was.sessionId);
+    if (!sampled && now?.recorded === was.recorded) return;
+    const id = was.sessionId;
+    set((s) => {
+      if (!(id in s.proof.comparisons)) return s;
+      const { [id]: _stale, ...rest } = s.proof.comparisons;
+      return { ...s, proof: { ...s.proof, comparisons: rest } };
+    });
+    await Promise.allSettled([actions.loadRuns(id), actions.loadSessions()]);
+    const finished = sampled && !now && was.recorded + 1 >= was.wanted;
+    if (finished && was.side === "after") await actions.compare(id);
+  }
+
+  /** Settings saved from the tray icon. Not tagged: a save from the window
+   * still in flight keeps its own spinner and result, and re-reads the
+   * settings when it lands (the event and its reply can arrive in either
+   * order). Gaming Mode turned off puts its changes back, which changes what
+   * Backups lists. */
+  function showSettings(settings: Settings) {
+    traySaves += 1;
+    const before = state.settings;
+    set((s) => ({ ...s, settings }));
+    if (before && before.gamingMode !== settings.gamingMode) void Promise.allSettled([refreshAudit(), refreshJournal()]);
+  }
+
+  async function refreshPlay() {
+    const current = tag("play");
+    try {
+      const play = await backend.playStatus();
+      if (current()) set((s) => ({ ...s, play }));
+    } catch {
+      // Advisory: the section shows nothing until the watcher answers.
+    }
+  }
+
+  /** What each junk-file area holds now. The newest answer wins. */
+  async function refreshCleanupSizes() {
+    const current = tag("cleanup_sizes");
+    set((s) => ({ ...s, cleanupSizesOp: RUNNING }));
+    try {
+      const sizes = await backend.cleanupMeasure();
+      if (current()) set((s) => ({ ...s, cleanupSizesOp: { status: "done", value: sizes } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, cleanupSizesOp: failed(e) }));
+    }
+  }
+
+  /** The startup apps and their switches. The newest answer wins. */
+  async function refreshStartup() {
+    const current = tag("startup");
+    set((s) => ({ ...s, startupOp: RUNNING }));
+    try {
+      const startup = await backend.listStartupApps();
+      if (current()) set((s) => ({ ...s, startup, startupOp: { status: "done", value: null } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, startupOp: failed(e) }));
+    }
+  }
+
+  /** The graphics and network devices and their MSI mode. The newest answer wins. */
+  async function refreshMsi() {
+    const current = tag("msi");
+    set((s) => ({ ...s, msiOp: RUNNING }));
+    try {
+      const msi = await backend.listMsiDevices();
+      if (current()) set((s) => ({ ...s, msi, msiOp: { status: "done", value: null } }));
+    } catch (e) {
+      if (current()) set((s) => ({ ...s, msiOp: failed(e) }));
+    }
+  }
+
+  /** After anything that changed the PC: re-read what the engine now reports.
+   * The startup and device lists only once something has shown them.
+   *
+   * The tool list comes first, on its own: it is what the user is looking at,
+   * and the engine answers one request at a time, so a list queued behind the
+   * audit (seconds of probing) left a card showing its old state with its
+   * button live, and a second click applied or undid again (Kegan's
+   * "two clicks", 2026-10-09). `listed` runs once the new list is in. */
+  async function refreshAfterChange(listed?: () => void) {
+    await refreshTweaks();
+    listed?.();
+    await Promise.allSettled([
+      refreshAudit(),
+      refreshJournal(),
+      ...(state.startupOp.status === "idle" ? [] : [refreshStartup()]),
+      ...(state.msiOp.status === "idle" ? [] : [refreshMsi()]),
+    ]);
   }
 
   // ---- actions -------------------------------------------------------------
@@ -214,7 +473,9 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
           const entry: BusEntry = { ...p, id: busId, at: now() };
           set((s) => ({ ...s, bus: [...s.bus, entry].slice(-BUS_LIMIT) }));
         });
-        await listening;
+        watchingPlay ??= backend.onPlay(showPlay);
+        watchingSettings ??= backend.onSettings(showSettings);
+        await Promise.all([listening, watchingPlay, watchingSettings]);
         const [context, settings, games, tweaks, journal, sessions] = await Promise.all([
           backend.context(),
           backend.getSettings(),
@@ -240,6 +501,7 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       // The audit probes the machine and can take seconds; the shell shows
       // skeletons until it lands instead of holding the whole boot.
       void refreshAudit();
+      void refreshPlay();
     },
 
     refreshAudit,
@@ -268,14 +530,23 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     },
 
     /** Resolves to true once the engine has stored the settings. */
-    async saveSettings(settings: Settings): Promise<boolean> {
+    /** Save `settings`, made from `base` (the settings the caller showed;
+     * the store's own by default). Only fields changed from `base` are
+     * saved over what the engine has now. */
+    async saveSettings(settings: Settings, base?: Settings): Promise<boolean> {
       const current = tag("settings");
       set((s) => ({ ...s, settingsOp: RUNNING }));
       try {
-        const saved = await backend.setSettings(settings);
+        const before = state.settings;
+        const trayBefore = traySaves;
+        // Saved against what this window showed, so a Gaming Mode switch
+        // made from the tray meanwhile is kept, not put back.
+        let saved = await backend.setSettings(settings, base ?? before ?? undefined);
+        if (traySaves !== trayBefore) saved = await backend.getSettings();
         if (!current()) return false;
         set((s) => ({ ...s, settings: saved, settingsOp: { status: "done", value: null } }));
-        await refreshAudit();
+        // Turning Gaming Mode off mid-game puts its changes back at once.
+        await Promise.allSettled([refreshAudit(), ...(before?.gamingMode !== saved.gamingMode ? [refreshJournal()] : [])]);
         return true;
       } catch (e) {
         if (current()) set((s) => ({ ...s, settingsOp: failed(e) }));
@@ -301,6 +572,235 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
 
     async revertTweak(id: string) {
       await change(id, "revert");
+    },
+
+    /** Apply each in turn; one failure does not stop the rest. */
+    async applyMany(ids: readonly string[]) {
+      await many(ids, "apply");
+    },
+
+    /** Home's one click on a first run: a restore point, then the basic
+     * changes still to make, read again after it (the engine checks the gate
+     * on each change as always). Nothing is applied if the point failed. */
+    async restoreThenApply() {
+      await actions.createRestorePoint();
+      if (state.restoreOp.status !== "done") return;
+      await many(recommendedIds(state.tweaks), "apply");
+    },
+
+    /** Undo each in turn (the result card's "Undo these"). */
+    async revertMany(ids: readonly string[]) {
+      await many(ids, "revert");
+    },
+
+    /** Empty Windows' standby list. Changes no setting, so nothing to undo; the change record gains a line. */
+    async purgeStandby() {
+      if (state.standbyOp.status === "running") return;
+      set((s) => ({ ...s, standbyOp: RUNNING }));
+      try {
+        const result = await backend.purgeStandbyMemory();
+        set((s) => ({ ...s, standbyOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, standbyOp: failed(e) }));
+      }
+      // The engine keeps a line in the change record whether it worked or not.
+      await refreshJournal();
+    },
+
+    /** Write the support bundle (one zip in the data folder). Changes
+     * nothing, sends nothing; the card in Backups shows where it is. */
+    async exportSupportBundle() {
+      if (state.supportOp.status === "running") return;
+      set((s) => ({ ...s, supportOp: RUNNING }));
+      try {
+        const result = await backend.exportSupportBundle();
+        set((s) => ({ ...s, supportOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, supportOp: failed(e) }));
+      }
+    },
+
+    /** Echoes to the router and two public DNS servers. Changes nothing and
+     * leaves no line in the change record. */
+    async checkConnection() {
+      if (state.netcheckOp.status === "running") return;
+      set((s) => ({ ...s, netcheckOp: RUNNING }));
+      try {
+        const result = await backend.checkConnection();
+        set((s) => ({ ...s, netcheckOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, netcheckOp: failed(e) }));
+      }
+    },
+
+    /** Forget the kept game reports and this run's last game. Only
+     * PeakTweaks' own record goes; the watcher's status is newer than any
+     * reply in flight, so this takes its channel. */
+    async forgetPlayHistory() {
+      if (state.forgetHistoryOp.status === "running") return;
+      set((s) => ({ ...s, forgetHistoryOp: RUNNING }));
+      try {
+        const play = await backend.forgetPlayHistory();
+        showPlay(play);
+        set((s) => ({ ...s, forgetHistoryOp: { status: "done", value: null } }));
+      } catch (e) {
+        set((s) => ({ ...s, forgetHistoryOp: failed(e) }));
+      }
+    },
+
+    /** Ask Steam to start a game found in a Steam library. Changes nothing
+     * and leaves no line in the change record. */
+    async launchGame(gameId: string) {
+      if (state.launchOps[gameId]?.status === "running") return;
+      const put = (op: Op) => set((s) => ({ ...s, launchOps: { ...s.launchOps, [gameId]: op } }));
+      put(RUNNING);
+      try {
+        await backend.launchGame(gameId);
+        put({ status: "done", value: null });
+      } catch (e) {
+        put(failed(e));
+      }
+    },
+
+    /** "Record my next games" from a Games card: the newest comparison for
+     * the game found here, when a side is still short of runs (else a new one), is
+     * set to record while playing, and Proof opens on it. Returns its id, or
+     * null when that failed (the op keeps why). */
+    async measureGame(gameId: string): Promise<string | null> {
+      const path = state.audit?.env.gameInstalls?.find((i) => i.gameId === gameId)?.exe;
+      if (!path || state.measureOps[gameId]?.status === "running") return null;
+      const exe = path.slice(path.lastIndexOf("\\") + 1);
+      const put = (op: Op<string>) => set((s) => ({ ...s, measureOps: { ...s.measureOps, [gameId]: op } }));
+      put(RUNNING);
+      try {
+        // Only the newest comparison is carried on, as the Games card and
+        // Proof's tile read it; an older one with room would mix setups.
+        const newest = (await backend.proofSessions())
+          .filter((c) => c.session.gameId === gameId && c.session.exe.toLowerCase() === exe.toLowerCase())
+          .sort((a, b) => b.session.createdUnixMs - a.session.createdUnixMs)[0];
+        const room = newest && (newest.beforeRuns < AUTO_RUNS || newest.afterRuns < AUTO_RUNS) ? newest : undefined;
+        const sessionId = room?.session.sessionId ?? (await backend.proofBegin(exe, gameId, null)).sessionId;
+        const side: Side = room && room.beforeRuns >= AUTO_RUNS ? "after" : "before";
+        const current = tag("play");
+        const status = await backend.proofAutoRecord(sessionId, side);
+        if (current()) set((s) => (s.play ? { ...s, play: { ...s.play, autoRecord: status } } : s));
+        // Proof opens with the comparison already in its list.
+        await actions.loadSessions();
+        setProof({ focus: sessionId });
+        put({ status: "done", value: sessionId });
+        return sessionId;
+      } catch (e) {
+        put(failed(e));
+        void actions.loadSessions();
+        return null;
+      }
+    },
+
+    /** Ask Proof to open on this comparison (the next time it shows). */
+    showComparison(sessionId: string) {
+      setProof({ focus: sessionId });
+    },
+
+    /** Proof opened the comparison it was asked to. */
+    clearProofFocus() {
+      if (state.proof.focus !== null) setProof({ focus: null });
+    },
+
+    /** Open the card maker's driver page in the user's browser. Changes nothing. */
+    async openDriverPage(vendor: DriverVendor) {
+      set((s) => ({ ...s, driverPageOp: RUNNING }));
+      try {
+        await backend.openDriverPage(vendor);
+        set((s) => ({ ...s, driverPageOp: { status: "done", value: null } }));
+      } catch (e) {
+        set((s) => ({ ...s, driverPageOp: failed(e) }));
+      }
+    },
+
+    /** Clean install of an NVIDIA driver file the user picks in Windows'
+     * dialog. The engine needs a restore point and journals it; the drivers,
+     * the changes (a clean install puts NVIDIA's settings back) and the record
+     * are read again after. */
+    async installGpuDriver() {
+      if (state.driverInstallOp.status === "running") return;
+      set((s) => ({ ...s, driverInstallOp: RUNNING }));
+      let ended: Op<GpuDriverInstall | null>;
+      try {
+        const result = await backend.installGpuDriver();
+        ended = { status: "done", value: result };
+        if (result === null) {
+          set((s) => ({ ...s, driverInstallOp: ended }));
+          return;
+        }
+      } catch (e) {
+        ended = failed(e);
+      }
+      // The result shows once the drivers are read again, so it can say
+      // whether Windows reports the new one yet.
+      await refreshAfterChange();
+      set((s) => ({ ...s, driverInstallOp: ended }));
+    },
+
+    /** Run Windows' own drive optimisation. Changes no setting, so nothing to undo. */
+    async optimizeDrive() {
+      if (state.driveOp.status === "running") return;
+      set((s) => ({ ...s, driveOp: RUNNING }));
+      try {
+        const result = await backend.optimizeDrive();
+        set((s) => ({ ...s, driveOp: { status: "done", value: result } }));
+      } catch (e) {
+        set((s) => ({ ...s, driveOp: failed(e) }));
+      }
+      await refreshJournal();
+    },
+
+    /** Read the startup apps. Reads only; a switch is turned with applyTweak / revertTweak. */
+    async loadStartup() {
+      await refreshStartup();
+    },
+
+    /** Read the graphics and network devices. Reads only; MSI mode is set with applyTweak / revertTweak. */
+    async loadMsi() {
+      await refreshMsi();
+    },
+
+    /** One live reading. `fresh`: also while a poll is out, since that one
+     * may have been read before a change (the newer request wins). */
+    async readLive(fresh = false) {
+      if (state.liveOp.status === "running" && !fresh) return;
+      const current = tag("live");
+      set((s) => ({ ...s, liveOp: RUNNING }));
+      try {
+        const live = await backend.liveReadings();
+        if (current()) {
+          set((s) => ({
+            ...s,
+            live,
+            liveHistory: [...s.liveHistory, live].slice(-LIVE_HISTORY),
+            liveOp: { status: "done", value: null },
+          }));
+        }
+      } catch (e) {
+        if (current()) set((s) => ({ ...s, liveOp: failed(e) }));
+      }
+    },
+
+    /** Look at what each junk-file area holds. Reads only. */
+    async measureCleanup() {
+      await refreshCleanupSizes();
+    },
+
+    /** Delete the junk in `areas`, then look again. Cannot be undone; the card asks first. */
+    async runCleanup(areas: readonly CleanupArea[]) {
+      if (areas.length === 0 || state.cleanupOp.status === "running") return;
+      set((s) => ({ ...s, cleanupOp: RUNNING }));
+      try {
+        const report = await backend.cleanupRun([...areas]);
+        set((s) => ({ ...s, cleanupOp: { status: "done", value: report } }));
+      } catch (e) {
+        set((s) => ({ ...s, cleanupOp: failed(e) }));
+      }
+      await Promise.allSettled([refreshCleanupSizes(), refreshJournal()]);
     },
 
     async revertAll() {
@@ -398,6 +898,35 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
       await Promise.allSettled([actions.loadRuns(sessionId), actions.loadSessions()]);
     },
 
+    /** "Record while I play": the game watcher records this side by itself
+     * while the comparison's game is in front, in place of any other. The
+     * reply shows at once; the watcher's next status takes over. */
+    async autoRecord(sessionId: string, side: Side) {
+      if (state.proof.autoOp.status === "running") return;
+      setProof({ autoOp: RUNNING });
+      const current = tag("play");
+      try {
+        const status = await backend.proofAutoRecord(sessionId, side);
+        setProof({ autoOp: { status: "done", value: status } });
+        if (current()) set((s) => (s.play ? { ...s, play: { ...s.play, autoRecord: status } } : s));
+      } catch (e) {
+        setProof({ autoOp: failed(e) });
+      }
+    },
+
+    async stopAutoRecord() {
+      if (state.proof.autoOp.status === "running") return;
+      setProof({ autoOp: RUNNING });
+      const current = tag("play");
+      try {
+        await backend.proofStopAutoRecord();
+        setProof({ autoOp: { status: "done", value: null } });
+        if (current()) set((s) => (s.play ? { ...s, play: { ...s.play, autoRecord: null } } : s));
+      } catch (e) {
+        setProof({ autoOp: failed(e) });
+      }
+    },
+
     async compare(sessionId: string) {
       const current = tag(`compare:${sessionId}`);
       setComparison(sessionId, RUNNING);
@@ -418,18 +947,54 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     set((s) => ({ ...s, proof: { ...s.proof, comparisons: { ...s.proof.comparisons, [sessionId]: op } } }));
   }
 
+  async function many(ids: readonly string[], kind: "apply" | "revert") {
+    if (state.applyManyOp.status === "running" || ids.length === 0) return;
+    set((s) => ({ ...s, applyManyOp: RUNNING }));
+    const done: string[] = [];
+    const failures: RevertResult[] = [];
+    // Each card keeps its spinner until the new list shows how it ended.
+    const ended: Record<string, Op<"apply" | "revert">> = {};
+    for (const id of ids) {
+      set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: RUNNING } }));
+      try {
+        await (kind === "apply" ? backend.applyTweak(id) : backend.revertTweak(id));
+        done.push(id);
+        ended[id] = { status: "done", value: kind };
+      } catch (e) {
+        const op = failed(e);
+        failures.push({ tweakId: id, ok: false, error: explain(op.error).title });
+        ended[id] = op;
+      }
+    }
+    await refreshAfterChange(() =>
+      set((s) => ({
+        ...s,
+        tweakOps: { ...s.tweakOps, ...ended },
+        applyManyOp: { status: "done", value: null },
+        lastChange: { kind, at: now(), tweakIds: done, failed: failures },
+      })),
+    );
+  }
+
   async function change(id: string, kind: "apply" | "revert") {
     if (state.tweakOps[id]?.status === "running") return;
     const setOp = (op: Op<"apply" | "revert">) => set((s) => ({ ...s, tweakOps: { ...s.tweakOps, [id]: op } }));
     setOp(RUNNING);
+    let ended: Op<"apply" | "revert">;
     try {
       await (kind === "apply" ? backend.applyTweak(id) : backend.revertTweak(id));
-      setOp({ status: "done", value: kind });
-      set((s) => ({ ...s, lastChange: { kind, at: now(), tweakIds: [id], failed: [] } }));
+      ended = { status: "done", value: kind };
     } catch (e) {
-      setOp(failed(e));
+      ended = failed(e);
     }
-    await refreshAfterChange();
+    // The spinner stays until the card can show the result (refreshAfterChange).
+    await refreshAfterChange(() =>
+      set((s) => ({
+        ...s,
+        tweakOps: { ...s.tweakOps, [id]: ended },
+        ...(ended.status === "done" ? { lastChange: { kind, at: now(), tweakIds: [id], failed: [] } } : {}),
+      })),
+    );
   }
 
   return {
@@ -441,7 +1006,11 @@ export function createAppStore(backend: Backend, now: () => number = Date.now) {
     actions,
     dispose() {
       void listening?.then((off) => off());
+      void watchingPlay?.then((off) => off());
+      void watchingSettings?.then((off) => off());
       listening = null;
+      watchingPlay = null;
+      watchingSettings = null;
       listeners.clear();
     },
   };

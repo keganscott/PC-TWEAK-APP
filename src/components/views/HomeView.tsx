@@ -20,13 +20,24 @@ import type { Finding } from "../../generated/Finding";
 import type { FixBy } from "../../generated/FixBy";
 import type { Probe } from "../../generated/Probe";
 import type { SystemAudit } from "../../generated/SystemAudit";
-import type { BusEntry, State } from "../../store/store";
 import { explain } from "../../lib/errors";
-import { formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
+import { formatDate, formatDateTime, formatGiB, probeValue, RIG_LABEL } from "../../lib/format";
+import { playedReports, reportNotes } from "../../lib/playReport";
+import { DAY_MS, dueReminders, snooze, type Reminder } from "../../lib/reminders";
+import { restartCheck } from "../../lib/restartCheck";
 import { useActions, useStore, useTechnical } from "../../store/hooks";
+import { basicTweaks, driftedTweaks, recommendedIds } from "../../store/store";
 import { Facets } from "../brand/Facets";
+import { GamingModeCard } from "../shell/GamingModeButton";
+import { LastChange } from "./LastChange";
+import { LiveDashboard } from "./LiveDashboard";
 import { useNavigate } from "../shell/nav";
-import { Button, Callout, cx, ErrorCallout, Skeleton, StatusBadge, type Tone } from "../ui/primitives";
+import { RestorePointButton } from "../shell/RestorePointButton";
+import { Button, Callout, cx, ErrorCallout, SampleBadge, Skeleton, Spinner, StatusBadge, type Tone } from "../ui/primitives";
+import { TweakCard } from "./ToolsView";
+
+/** Device changes' ids (`tweaks/msi.rs` `ID_PREFIX`). */
+const MSI_PREFIX = "msi.";
 
 /** The small uppercase label used across the dashboard. */
 function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
@@ -40,7 +51,7 @@ export function HomeView() {
   const { rescan } = useActions();
 
   return (
-    <div className="flex max-w-[1240px] flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <Greeting
         audit={audit}
         failed={!audit && auditOp.status === "failed"}
@@ -51,7 +62,10 @@ export function HomeView() {
         }
       />
       {auditOp.status === "failed" && <ErrorCallout text={explain(auditOp.error)} technical={technical} />}
+      <GamingModeCard />
       <LastChange />
+      <DriftCheck />
+      <AfterRestart />
       <section aria-label="Safety and next step" className="grid gap-3.5 lg:grid-cols-[1.5fr_1fr] print:hidden">
         <NextStep />
         <div className="flex flex-col gap-3.5">
@@ -59,7 +73,12 @@ export function HomeView() {
           <ChangesCard />
         </div>
       </section>
+      <Recommended />
+      {/* A warning from the last game, then the gentle reminders. */}
+      <LastGame />
+      <Reminders />
       <YourPc audit={audit} />
+      <LiveDashboard />
       <div className="grid items-start gap-3.5 lg:grid-cols-[1.65fr_1fr]">
         <div className="flex min-w-0 flex-col gap-4">
           {audit ? <Findings findings={audit.scan.findings} /> : <FindingsSkeleton />}
@@ -130,7 +149,7 @@ function StateSentence({ audit }: { audit: SystemAudit }) {
   const rig = audit.effectiveRigClass ? `${RIG_LABEL[audit.effectiveRigClass]} rig` : "PC class not known";
   return (
     <>
-      {os ? os.caption.replace(/^Microsoft /, "") : "Windows"} · {rig} · {fine} of {findings.length} checks fine
+      {os ? os.caption.replace(/^Microsoft /, "") : "Windows"} · {rig} · {fine} of {findings.length} checks look good
     </>
   );
 }
@@ -156,9 +175,6 @@ function NextStep() {
   const audit = useStore((s) => s.audit);
   const restoreOp = useStore((s) => s.restoreOp);
   const targetGame = useStore((s) => s.targetGame);
-  const lastStage = useStore(currentRestoreStage);
-  const technical = useTechnical();
-  const { createRestorePoint } = useActions();
   const navigate = useNavigate();
 
   const auditFailed = useStore((s) => s.auditOp.status === "failed");
@@ -176,18 +192,18 @@ function NextStep() {
       </VioletCard>
     );
   }
-  if (!audit || !restore) {
-    return (
-      <VioletCard label="Next step">
-        <Eyebrow className="text-white">Next step</Eyebrow>
-        <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight">Checking this PC.</h2>
-        <p className="mt-2 max-w-md text-sm">The scan reads settings only. Nothing is changed.</p>
-      </VioletCard>
-    );
-  }
+  const checking = (
+    <VioletCard label="Next step">
+      <Eyebrow className="text-white">Next step</Eyebrow>
+      <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight">Checking this PC.</h2>
+      <p className="mt-2 max-w-md text-sm">The scan reads settings only. Nothing is changed.</p>
+    </VioletCard>
+  );
+  if (!audit) return checking;
 
   // The engine verified a new point before answering, so success counts at
-  // once, not only after the (slower) audit re-read agrees.
+  // once, not only after the (slower) audit re-read agrees. An open gate is
+  // all this card needs, with or without the restore status read.
   if (gateOpen || restoreOp.status === "done") {
     return (
       <VioletCard label="Next step">
@@ -196,7 +212,8 @@ function NextStep() {
           Choose the changes for this PC.
         </h2>
         <p className="mt-2 max-w-md text-sm">
-          Each one is recorded before it is made and can be undone on its own or all together from Backups.
+          Start with the basic changes below, or pick one by one in Tools. Each one is recorded before it is made and
+          can be undone on its own or all together from Backups.
         </p>
         <ol className="mt-4 flex flex-wrap gap-1.5 text-xs font-semibold">
           {STEPS.map((step, i) => (
@@ -231,6 +248,7 @@ function NextStep() {
     );
   }
 
+  if (!restore) return checking;
   if (restore.supported.state === "no") {
     return (
       <VioletCard label="Next step">
@@ -257,7 +275,6 @@ function NextStep() {
     );
   }
 
-  const running = restoreOp.status === "running";
   return (
     <VioletCard label="Next step">
       <Eyebrow className="text-white">Before the first change</Eyebrow>
@@ -266,36 +283,129 @@ function NextStep() {
       </h2>
       <p className="mt-2 max-w-lg text-sm">
         Before PeakTweaks changes anything it asks Windows for a restore point, so the whole PC can be put back the way
-        it is now. This turns on System Protection for the Windows drive if it is off, and can take a minute.
+        it is now. One click does it: this turns on System Protection for the Windows drive if it is off, and can take
+        a minute.
       </p>
-      {restoreOp.status === "failed" && (
-        <div className="mt-3">
-          <ErrorCallout text={explain(restoreOp.error)} technical={technical} />
-        </div>
-      )}
-      <div className="mt-auto flex flex-wrap items-center gap-4 pt-5">
-        <Button variant="go" busy={running} onClick={() => void createRestorePoint()}>
-          {restoreOp.status === "failed" ? "Try again" : "Make a restore point"}
-        </Button>
-        {running && lastStage && (
-          <span role="status" className="text-sm font-semibold">
-            {lastStage.message}
-          </span>
-        )}
-      </div>
+      <RestorePointButton variant="go" className="mt-auto pt-5" />
     </VioletCard>
   );
 }
 
-/** The newest restore progress message of the current attempt, or null. Returns
- * an entry already in state, so the selector is stable. */
-function currentRestoreStage(s: State): BusEntry | null {
-  for (let i = s.bus.length - 1; i >= 0; i -= 1) {
-    const e = s.bus[i]!;
-    if (e.id <= s.restoreSinceBusId) break;
-    if (e.stage.startsWith("restore_")) return e;
-  }
-  return null;
+
+// ---------------------------------------------------------------------------
+// Recommended: the basic changes in one place, applied in one click
+// (Kegan, 2026-10-09: "the top recommended settings ... the option to apply
+// all of basic ones with one click").
+// ---------------------------------------------------------------------------
+
+/** How many tiles show before "Show all". */
+const TOP = 6;
+
+function Recommended() {
+  const tweaks = useStore((s) => s.tweaks);
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen === true || s.restoreOp.status === "done");
+  const applyingMany = useStore((s) => s.applyManyOp.status === "running");
+  const restoring = useStore((s) => s.restoreOp.status === "running");
+  // Until the first check says whether a restore point is ready, neither
+  // button: offering to make one could start a needless minute-long one.
+  const checking = useStore((s) => s.audit === null && s.auditOp.status !== "failed" && s.restoreOp.status !== "done");
+  const sample = useStore((s) => s.sample);
+  const { applyMany, restoreThenApply } = useActions();
+  const navigate = useNavigate();
+  const [all, setAll] = useState(false);
+
+  const basic = basicTweaks(tweaks);
+  if (basic.length === 0) return null;
+  const todo = recommendedIds(tweaks);
+  const done = basic.length - todo.length;
+  const restarts = basic.filter((t) => todo.includes(t.id) && t.requiresReboot).length;
+  const shown = all ? basic : basic.slice(0, TOP);
+
+  return (
+    <section aria-labelledby="recommended-title" className="rounded-2xl border border-line bg-surface-1 p-5 print:hidden">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Eyebrow>Recommended for this PC</Eyebrow>
+            {sample && <SampleBadge />}
+          </div>
+          <h2 id="recommended-title" className="mt-2 text-xl font-extrabold tracking-tight">
+            {todo.length === 0
+              ? "Every basic change is in place."
+              : `${todo.length} basic ${todo.length === 1 ? "change" : "changes"} to make`}
+          </h2>
+          <p className="mt-1 max-w-xl text-sm text-ink-muted">
+            Well-supported Windows settings with nothing to weigh up. Each is recorded before it is made and can be
+            undone from Backups.
+          </p>
+        </div>
+        <div className="w-44 shrink-0" role="img" aria-label={`${done} of ${basic.length} in place`}>
+          <p className="text-right text-sm font-bold tabular-nums">
+            {done} of {basic.length} <span className="font-semibold text-ink-muted">in place</span>
+          </p>
+          <div aria-hidden className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-3">
+            <div className="h-full rounded-full bg-lime" style={{ width: `${(done / basic.length) * 100}%` }} />
+          </div>
+        </div>
+      </div>
+      <ul className="mt-4 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+        {shown.map((t) => {
+          const inPlace = !todo.includes(t.id);
+          return (
+            <li
+              key={t.id}
+              className={cx("flex gap-3 rounded-xl border p-3", inPlace ? "border-line bg-surface-2/50" : "border-line bg-surface-2")}
+            >
+              {inPlace ? (
+                <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-lime" strokeWidth={3} />
+              ) : (
+                <CircleDot aria-hidden className="mt-0.5 size-4 shrink-0 text-violet-soft" />
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-bold">{t.name}</p>
+                <p className="mt-0.5 line-clamp-2 text-xs text-ink-muted">{t.summary}</p>
+                {inPlace && (
+                  <div className="mt-1.5">
+                    <StatusBadge tone="ok">{t.state.status === "applied" ? "Optimized" : "Already optimized"}</StatusBadge>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {todo.length > 0 &&
+          (checking ? (
+            <Spinner label="Checking for a restore point" />
+          ) : gateOpen ? (
+            <Button variant="go" busy={applyingMany} onClick={() => void applyMany(todo)}>
+              Apply all basic changes ({todo.length})
+            </Button>
+          ) : (
+            <Button variant="go" busy={restoring || applyingMany} onClick={() => void restoreThenApply()}>
+              Make a restore point, then apply {todo.length}
+            </Button>
+          ))}
+        {basic.length > TOP && (
+          <Button variant="ghost" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? "Show fewer" : `Show all ${basic.length}`}
+          </Button>
+        )}
+        <LinkButton onClick={() => navigate("tools")}>Competitive and Privacy presets, or one by one, in Tools</LinkButton>
+      </div>
+      {todo.length > 0 && !gateOpen && !checking && (
+        <p className="mt-2 text-xs text-ink-muted">
+          Windows makes the restore point first, which can take a minute; the changes are made only once it is ready.
+        </p>
+      )}
+      {todo.length > 0 && restarts > 0 && (
+        <p className="mt-2 text-xs text-ink-muted">
+          {restarts === 1 ? "One of them takes" : `${restarts} of them take`} effect after a restart.
+        </p>
+      )}
+    </section>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +546,11 @@ function YourPc({ audit }: { audit: SystemAudit | null }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Right now: live readings, read every few seconds while Home is on screen
+// (real readings only, plan section 7; `live.rs`)
+// ---------------------------------------------------------------------------
+
 function Tile({
   label,
   icon: Icon,
@@ -462,7 +577,7 @@ function Tile({
           <Eyebrow>{label}</Eyebrow>
         </span>
         {status === "warn" && <StatusBadge tone="warn">Worth a look</StatusBadge>}
-        {status === "ok" && <StatusBadge tone="ok">Fine</StatusBadge>}
+        {status === "ok" && <StatusBadge tone="ok">Good</StatusBadge>}
       </div>
       <p className="mt-3 truncate text-xl font-bold tracking-tight">{value}</p>
       <div className="mt-auto pt-2 text-xs text-ink-muted">{children}</div>
@@ -583,43 +698,237 @@ function DisplayTile({ probe, status }: { probe: SystemAuditDisplay; status: Ton
 }
 
 // ---------------------------------------------------------------------------
-// Result card after a change (plan section 7)
+// Drift check: changes Windows set back after PeakTweaks made them
 // ---------------------------------------------------------------------------
 
-function LastChange() {
-  const change = useStore((s) => s.lastChange);
+function DriftCheck() {
   const tweaks = useStore((s) => s.tweaks);
-  const { dismissChange } = useActions();
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen === true || s.restoreOp.status === "done");
+  const applyingMany = useStore((s) => s.applyManyOp.status === "running");
+  const { applyMany } = useActions();
   const navigate = useNavigate();
-  if (!change) return null;
+  const { all, again } = driftedTweaks(tweaks);
+  if (all.length === 0) return null;
 
-  const name = (id: string) => tweaks.find((t) => t.id === id)?.name ?? id;
-  const verb = change.kind === "apply" ? "Applied" : "Undid";
-  const what = change.tweakIds.length ? change.tweakIds.map(name).join(", ") : "nothing";
+  const one = all.length === 1;
   return (
-    <Callout
-      tone={change.failed.length ? "warn" : "ok"}
-      title={`${verb}: ${what}`}
-      action={
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => navigate("backups")}>Undo or review in Backups</Button>
-          {change.kind === "apply" && <Button onClick={() => navigate("proof")}>Check the effect in Proof</Button>}
-          <Button variant="ghost" onClick={dismissChange}>
-            Dismiss
-          </Button>
-        </div>
-      }
-    >
-      {change.failed.length > 0 && (
-        <ul className="list-disc pl-5">
-          {change.failed.map((f) => (
-            <li key={f.tweakId}>
-              {name(f.tweakId)} could not be undone: {f.error ?? "no reason given"}
+    <section aria-label="Changes set back" className="print:hidden">
+      <Callout
+        tone="warn"
+        title={
+          one
+            ? "1 change was set back outside PeakTweaks."
+            : `${all.length} changes were set back outside PeakTweaks.`
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            {again.length > 0 && (
+              <Button busy={applyingMany} disabled={!gateOpen} onClick={() => void applyMany(again)}>
+                {again.length === all.length ? "Apply again" : `Apply ${again.length} again`}
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => navigate("tools")}>
+              Review in Tools
+            </Button>
+          </div>
+        }
+      >
+        <p>
+          A Windows update or another program changed {one ? "it" : "them"} after PeakTweaks applied{" "}
+          {one ? "it" : "them"}. Undo in Backups still puts back what was there before.
+        </p>
+        <ul className="mt-1.5 list-disc pl-5">
+          {all.map((t) => (
+            <li key={t.id}>
+              {t.name}
+              {!again.includes(t.id) && <span className="text-ink-muted"> (apply it again in Tools)</span>}
             </li>
           ))}
         </ul>
+        {again.length > 0 && !gateOpen && (
+          <p className="mt-1.5 text-ink-muted">Make a restore point first, in the step below.</p>
+        )}
+      </Callout>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The check after a restart
+// ---------------------------------------------------------------------------
+
+const names = (list: { name: string }[]) => list.map((c) => c.name).join(", ");
+
+function AfterRestart() {
+  const context = useStore((s) => s.context);
+  const settings = useStore((s) => s.settings);
+  const tweaks = useStore((s) => s.tweaks);
+  const journal = useStore((s) => s.journal);
+  const msi = useStore((s) => s.msi);
+  const msiIdle = useStore((s) => s.msiOp.status === "idle");
+  const saving = useStore((s) => s.settingsOp.status === "running");
+  const { saveSettings, loadMsi } = useActions();
+  const navigate = useNavigate();
+  // A device change (MSI mode) waits for a restart too; its state is in the
+  // device list, which is otherwise read only in Tools.
+  const deviceApplied = journal?.applied.some((a) => a.tweakId.startsWith(MSI_PREFIX)) ?? false;
+  useEffect(() => {
+    if (deviceApplied && msiIdle) void loadMsi();
+  }, [deviceApplied, msiIdle, loadMsi]);
+  const listed = msi ? [...tweaks, ...msi.devices.map((d) => d.tweak)] : tweaks;
+  const check = restartCheck(context, settings, listed, journal);
+  if (!check || !settings) return null;
+
+  const fine = check.setBack.length === 0 && check.unreadable.length === 0;
+  const one = check.waited.length === 1;
+  const all = check.unchecked.length === 0;
+  return (
+    <section aria-label="After the restart" className="print:hidden">
+      <Callout
+        tone={fine ? "ok" : "warn"}
+        title={
+          fine
+            ? all
+              ? "Windows restarted, and every change PeakTweaks made is still in place."
+              : "Windows restarted, and every change PeakTweaks checked is still in place."
+            : "Windows restarted, and not every change PeakTweaks made is as it left it."
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button busy={saving} onClick={() => void saveSettings({ ...settings, restartCheckSeenBoot: check.booted }, settings)}>
+              Got it
+            </Button>
+            <Button variant="ghost" onClick={() => navigate("backups")}>
+              Open Backups
+            </Button>
+          </div>
+        }
+      >
+        <p>
+          {one ? "This change" : "These changes"} waited for the restart: {names(check.waited)}.
+        </p>
+        {check.setBack.length > 0 && <p className="mt-1.5">Set back since: {names(check.setBack)}.</p>}
+        {check.unreadable.length > 0 && <p className="mt-1.5">Could not be read now: {names(check.unreadable)}.</p>}
+        {!all && <p className="mt-1.5">Not checked here: {check.unchecked.join(", ")}. Backups lists them.</p>}
+        <p className="mt-1.5 text-ink-muted">
+          If something does not work as it did before, undo {one ? "it" : "these"} first, in Backups, then restart again.
+        </p>
+      </Callout>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gentle reminders
+// ---------------------------------------------------------------------------
+
+function Reminders() {
+  const settings = useStore((s) => s.settings);
+  const audit = useStore((s) => s.audit);
+  const journal = useStore((s) => s.journal);
+  const saving = useStore((s) => s.settingsOp.status === "running");
+  const { saveSettings } = useActions();
+  const navigate = useNavigate();
+  const now = Date.now();
+  const due = dueReminders(settings, audit, journal, now);
+  if (!settings || due.length === 0) return null;
+
+  const later = (kind: Reminder["kind"]) => void saveSettings(snooze(settings, kind, Date.now()), settings);
+  const notNow = (kind: Reminder["kind"]) => (
+    <Button variant="ghost" busy={saving} onClick={() => later(kind)}>
+      Not now
+    </Button>
+  );
+  return (
+    <section aria-label="Reminders" className="flex flex-col gap-3 print:hidden">
+      {due.map((r) =>
+        r.kind === "cleanup" ? (
+          <Callout
+            key="cleanup"
+            tone="info"
+            title={
+              r.lastUnixMs === null
+                ? "Junk files have not been cleared with PeakTweaks yet."
+                : `Junk files were last cleared ${Math.floor((now - r.lastUnixMs) / DAY_MS)} days ago.`
+            }
+            action={
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => navigate("tools")}>Open Tools</Button>
+                {notNow("cleanup")}
+              </div>
+            }
+          >
+            <p>
+              Clear out junk files is in Tools, under One-time actions. It shows how much each area holds before it deletes
+              anything.
+            </p>
+          </Callout>
+        ) : (
+          <Callout
+            key={`driver-${r.card}`}
+            tone="info"
+            title={`The ${r.card} driver is dated ${r.date}.`}
+            action={
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => navigate("tools")}>Open Tools</Button>
+                {notNow("driver")}
+              </div>
+            }
+          >
+            <p>
+              That is more than six months ago. {r.maker}'s own app or website shows whether a newer driver is out. Graphics
+              driver in Tools opens {r.maker}'s driver page
+              {r.maker === "NVIDIA" ? " and does a clean install of the file you download." : "."}
+            </p>
+          </Callout>
+        ),
       )}
-    </Callout>
+      <p className="text-xs text-ink-faint">Not now puts a reminder off for a month. Settings can turn them off.</p>
+    </section>
+  );
+}
+
+/** A warning from the last game's graphics card readings (N110), so heat
+ * is seen without opening Tools. Shown until PeakTweaks closes or "Got it". */
+function LastGame() {
+  const report = useStore((s) => s.play?.lastSession ?? null);
+  const games = useStore((s) => s.games);
+  const sample = useStore((s) => s.sample);
+  const navigate = useNavigate();
+  const [seen, setSeen] = useState<number | null>(null);
+  if (!report || seen === report.endedUnixMs) return null;
+  const warnings = reportNotes(report).filter((n) => n.tone === "warn");
+  const first = warnings[0];
+  if (!first) return null;
+  const name = games.find((g) => g.id === report.game)?.name ?? report.game;
+  return (
+    <section aria-label="Last game" className="print:hidden">
+      <Callout
+        tone="warn"
+        title={
+          <>
+            During {name}: {first.title.charAt(0).toLowerCase() + first.title.slice(1)}
+            {sample && (
+              <>
+                {" "}
+                <SampleBadge />
+              </>
+            )}
+          </>
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => navigate("tools")}>Open Tools</Button>
+            <Button variant="ghost" onClick={() => setSeen(report.endedUnixMs)}>
+              Got it
+            </Button>
+          </div>
+        }
+      >
+        <p>{first.text}</p>
+        {warnings.length > 1 && <p className="mt-1">Tools, under While you play, has the rest of what was read.</p>}
+      </Callout>
+    </section>
   );
 }
 
@@ -630,7 +939,7 @@ function LastChange() {
 const STATUS: Record<Finding["status"], { tone: Tone; label: string }> = {
   attention: { tone: "warn", label: "Worth a look" },
   unknown: { tone: "neutral", label: "Could not tell" },
-  fine: { tone: "ok", label: "Fine" },
+  fine: { tone: "ok", label: "Good" },
 };
 
 /** Who can act on a finding (plan 6.4: "fixed by us / fixable by you / needs
@@ -664,7 +973,7 @@ function Findings({ findings }: { findings: Finding[] }) {
   const attention = findings.filter((f) => f.status === "attention");
   // The top bar, which labels demo data, does not print; the printout says it.
   const sample = useStore((s) => s.sample);
-  // "What is already right" is folded on screen, but a printed scan must show
+  // "Already good" is folded on screen, but a printed scan must show
   // all of it: open it for printing, whether from the button or Ctrl+P.
   const [fineOpen, setFineOpen] = useState(false);
   useEffect(() => {
@@ -732,7 +1041,7 @@ function Findings({ findings }: { findings: Finding[] }) {
             <span aria-hidden className="grid size-[18px] place-items-center rounded-[5px] bg-lime">
               <Check className="size-3 text-black" strokeWidth={3.5} />
             </span>
-            What is already right ({fine.length})
+            Already good ({fine.length})
           </summary>
           <ul className="divide-y divide-line border-t border-line">
             {fine.map((f) => (
@@ -795,7 +1104,21 @@ function FindingRow({ finding, nested = false, showStatus = false }: { finding: 
         </div>
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">{finding.reading}</p>
         {finding.remedy && <p className="mt-1.5 text-xs leading-relaxed text-ink">{finding.remedy}</p>}
+        {finding.status === "attention" && finding.fixTweakId && <FixTool id={finding.fixTweakId} />}
       </div>
+    </div>
+  );
+}
+
+/** The tool a finding names as its one-click fix, the same card as in Tools.
+ * Nothing when the engine does not list it (yet). */
+function FixTool({ id }: { id: string }) {
+  const tool = useStore((s) => s.tweaks.find((t) => t.id === id));
+  const gateOpen = useStore((s) => s.audit?.env.restoreGateOpen ?? null);
+  if (!tool) return null;
+  return (
+    <div className="mt-3 print:hidden">
+      <TweakCard tweak={tool} gateOpen={gateOpen} />
     </div>
   );
 }
@@ -818,6 +1141,8 @@ function YourGames() {
   const installs = useStore((s) => s.audit?.env.gameInstalls ?? null);
   const target = useStore((s) => s.targetGame);
   const sample = useStore((s) => s.sample);
+  const play = useStore((s) => s.play);
+  const played = playedReports(play);
   const navigate = useNavigate();
   return (
     <section aria-labelledby="your-games-title" className="print:hidden">
@@ -836,6 +1161,7 @@ function YourGames() {
           <ul className="divide-y divide-line">
             {installs.map((g, i) => {
               const disk = probeValue(g.disk);
+              const last = played.filter((r) => r.game === g.gameId).at(-1);
               return (
                 <li key={g.gameId} className="flex items-center gap-3.5 px-5 py-3.5">
                   <span
@@ -852,6 +1178,7 @@ function YourGames() {
                     <p className="mt-0.5 truncate text-xs text-ink-muted">
                       {g.drive}
                       {disk ? (disk.media === "hdd" ? " hard drive" : " solid-state drive") : ""}
+                      {last && ` · last played ${formatDate(last.endedUnixMs)}`}
                     </p>
                   </div>
                   {target === g.gameId && <StatusBadge tone="ok">Main game</StatusBadge>}

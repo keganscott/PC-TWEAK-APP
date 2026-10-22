@@ -33,6 +33,55 @@
   --font-sans: "Plus Jakarta Sans Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --font-display: "Exo 2", "Plus Jakarta Sans Variable", "Segoe UI", sans-serif;
   --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  /* Gaming Mode's button (GamingModeButton.tsx): a ring that turns and a
+     glow that breathes while it is on, a burst when it comes on, and a sheen
+     while a game runs. Reduced motion stops them (below); the on look is the
+     lime fill and border, not the movement. */
+  --animate-gm-spin: gm-spin 2.8s linear infinite;
+  --animate-gm-glow: gm-glow 2.2s ease-in-out infinite;
+  --animate-gm-burst: gm-burst 0.8s ease-out forwards;
+  --animate-gm-sheen: gm-sheen 2.6s ease-in-out infinite;
+  /* One pass of the sheen, when a one-time action finishes. */
+  --animate-sweep-once: gm-sheen 1.2s ease-out 1 forwards;
+
+  @keyframes gm-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes gm-glow {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 0 rgb(198 255 52 / 0.45),
+        0 0 16px 2px rgb(126 59 237 / 0.35);
+    }
+    50% {
+      box-shadow:
+        0 0 0 5px rgb(198 255 52 / 0),
+        0 0 30px 8px rgb(126 59 237 / 0.6);
+    }
+  }
+  @keyframes gm-burst {
+    from {
+      transform: scale(0.7);
+      opacity: 0.9;
+    }
+    to {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+  @keyframes gm-sheen {
+    0% {
+      transform: translateX(-120%) skewX(-20deg);
+    }
+    60%,
+    100% {
+      transform: translateX(320%) skewX(-20deg);
+    }
+  }
 }
 
 @layer base {
@@ -52,6 +101,51 @@
     background: var(--color-violet);
     color: var(--color-white);
   }
+}
+
+/* Accent colours (Settings > Colour; `Settings.accent`): the violet family
+   is the accent, so picking a colour re-points those tokens. Lime stays the
+   "ready / done" colour and red stays errors, whatever accent is picked.
+   Violet itself needs no rule: it is the theme's own. */
+[data-accent="blue"] {
+  --color-violet: #2563eb;
+  --color-violet-strong: #1d4ed8;
+  --color-violet-soft: #93c5fd;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-warn: #93c5fd;
+}
+[data-accent="teal"] {
+  --color-violet: #0d9488;
+  --color-violet-strong: #0f766e;
+  --color-violet-soft: #5eead4;
+  --color-accent: #0d9488;
+  --color-accent-strong: #0f766e;
+  --color-warn: #5eead4;
+}
+[data-accent="green"] {
+  --color-violet: #16a34a;
+  --color-violet-strong: #15803d;
+  --color-violet-soft: #86efac;
+  --color-accent: #16a34a;
+  --color-accent-strong: #15803d;
+  --color-warn: #86efac;
+}
+[data-accent="amber"] {
+  --color-violet: #d97706;
+  --color-violet-strong: #b45309;
+  --color-violet-soft: #fcd34d;
+  --color-accent: #d97706;
+  --color-accent-strong: #b45309;
+  --color-warn: #fcd34d;
+}
+[data-accent="pink"] {
+  --color-violet: #db2777;
+  --color-violet-strong: #be185d;
+  --color-violet-soft: #f9a8d4;
+  --color-accent: #db2777;
+  --color-accent-strong: #be185d;
+  --color-warn: #f9a8d4;
 }
 
 /* The two flat textures from the palette sheet: fine diagonal lines on black,

@@ -11,23 +11,33 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
+use crate::cleanup::{AreaCleanup, AreaSize, CleanupArea, CleanupReport};
 use crate::context::UserResolution;
+use crate::drive_optimize::DriveOptimization;
 use crate::engine::{ContextInfo, JournalView, Progress, RevertResult};
 use crate::env::EnvProbe;
 use crate::error::EngineError;
 use crate::hardware::{DisplayInfo, GpuAdapter, OsFacts, GIB};
 use crate::journal::{
-    CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind, Record, RestoreMethod,
-    RestorePointRecord,
+    ActionRecord, CommitAction, CommitRecord, JournalAction, JournalEntry, JournalWarning, JournalWarningKind,
+    OneTimeAction, Record, RestoreMethod, RestorePointRecord,
 };
+use crate::memory::{MemoryUse, StandbyPurge};
+use crate::netcheck::{read, summarize, NetworkCheck, PingTarget};
+use crate::play::{PlayReport, PlayStatus};
+use crate::probe::Probe;
+use crate::proof::auto::AutoRecordStatus;
 use crate::proof::metrics::compute_stats;
 use crate::proof::nvml::{ThrottleReason, ThrottleSeen, ThrottleSummary};
 use crate::proof::store::{ProofRun, ProofSession, ProofSessionSummary, Side};
 use crate::proof::verdict::{compare, RunSummary};
 use crate::registry::fake::FakeRegistry;
+use crate::registry::Hive;
 use crate::restore::{FakeRestoreOps, FixedClock, RestoreOutcome, RestoreService};
+use crate::startup::{StartupFolders, StartupList};
 use crate::sysprobe::{SystemAudit, SystemProbe};
 use crate::testutil::*;
+use crate::tweaks::startup::StartupToggle;
 use crate::types::{BlockedCode, BlockedReason, ExecutionContext, RawValue, RegRoot, Tweak};
 use crate::wmi::{FakeWmi, WmiValue, NS_CIMV2, NS_DEVICEGUARD, NS_STORAGE, NS_TPM};
 
@@ -66,6 +76,88 @@ fn views() -> Vec<crate::engine::TweakView> {
     h.fake
         .set_external(crate::registry::Hive::LocalMachine, "K3", "A", RawValue::dword(1));
     h.engine.list().unwrap()
+}
+
+const MIB: u64 = 1024 * 1024;
+
+/// A check as `netcheck` reads it, from illustrative round trips: the router
+/// answers all 20 echoes, Cloudflare loses one (SAMPLE in the UI).
+fn network_check_fixture() -> NetworkCheck {
+    let rtts = |base: u32, lost: Option<usize>| -> Vec<Option<u32>> {
+        (0..20)
+            .map(|i| (Some(i) != lost).then_some(base + [0, 1, 0, 2, 1][i % 5]))
+            .collect()
+    };
+    let mut router = summarize(PingTarget::Router, &rtts(1, None));
+    router.address = Some("192.168.1.1".into());
+    router.via = Some("Wi-Fi".into());
+    let results = vec![
+        router,
+        summarize(PingTarget::Cloudflare, &rtts(14, Some(7))),
+        summarize(PingTarget::Google, &rtts(17, None)),
+    ];
+    NetworkCheck {
+        reading: read(&results),
+        results,
+        unix_ms: 1_791_332_400_000,
+        wifi: crate::probe::Probe::yes(crate::netcheck::WifiSignal {
+            adapter: "Sample Wi-Fi 6 adapter".into(),
+            rssi_dbm: -69,
+            quality: crate::netcheck::signal_quality(-69),
+            carries_check: Some(true),
+        }),
+    }
+}
+
+/// The shape of real results; the numbers are illustrative (SAMPLE in the UI).
+fn cleanup_sizes() -> Vec<AreaSize> {
+    let size = |area, bytes, files| AreaSize {
+        area,
+        bytes,
+        files,
+        skipped: Vec::new(),
+    };
+    vec![
+        size(CleanupArea::UserTemp, 2 * GIB + 300 * MIB, 4_812),
+        size(CleanupArea::WindowsTemp, 640 * MIB, 233),
+        size(CleanupArea::Thumbnails, 180 * MIB, 9),
+        size(CleanupArea::ShaderCaches, GIB + 100 * MIB, 1_506),
+        AreaSize {
+            skipped: vec![LINKED_FOLDER.into()],
+            ..size(CleanupArea::CrashDumps, 3 * GIB, 4)
+        },
+    ]
+}
+
+const LINKED_FOLDER: &str =
+    r"C:\Users\Kegan\AppData\Local\CrashDumps is a link, junction or other redirect; left alone";
+
+fn cleanup_report() -> CleanupReport {
+    let done = |area, removed_bytes, removed_files| AreaCleanup {
+        area,
+        removed_bytes,
+        removed_files,
+        left_bytes: 0,
+        left_files: 0,
+        left_examples: Vec::new(),
+        skipped: Vec::new(),
+    };
+    CleanupReport {
+        areas: vec![
+            AreaCleanup {
+                left_bytes: 100 * MIB,
+                left_files: 22,
+                left_examples: vec![r"C:\Users\Kegan\AppData\Local\Temp\setup.log: The process cannot access the file because it is being used by another process. (os error 32)".into()],
+                ..done(CleanupArea::UserTemp, 2 * GIB + 200 * MIB, 4_790)
+            },
+            done(CleanupArea::WindowsTemp, 640 * MIB, 233),
+            AreaCleanup {
+                skipped: vec![LINKED_FOLDER.into()],
+                ..done(CleanupArea::CrashDumps, 3 * GIB, 4)
+            },
+        ],
+        unix_ms: 1_791_331_500_000,
+    }
 }
 
 fn journal_view() -> JournalView {
@@ -115,6 +207,13 @@ fn journal_view() -> JournalView {
                 description: "PeakTweaks: before changes".into(),
                 method: RestoreMethod::PowerShell,
                 protection_enabled_by_us: Some(true),
+            }),
+            Record::Action(ActionRecord {
+                seq: 6,
+                unix_ms: 1_700_000_002_000,
+                action: OneTimeAction::Cleanup,
+                done: Some(cleanup_report().done()),
+                error: None,
             }),
         ],
         warnings: vec![JournalWarning {
@@ -274,17 +373,36 @@ fn audit() -> SystemAudit {
         .with_game_folders(std::path::PathBuf::from("no-such-program-data"), None)
         .probe(true);
     // A game on a hard drive, so the sample shows that finding.
-    env.game_installs = Some(vec![crate::game_installs::GameInstall {
-        game_id: "fortnite".into(),
-        name: "Fortnite".into(),
-        path: r"D:\Epic Games\Fortnite".into(),
-        drive: "D:".into(),
-        disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
-            media: crate::hardware::DiskMedia::Hdd,
-            name: "Example HDD".into(),
-        }),
-        exe: Some(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe".into()),
-    }]);
+    env.game_installs = Some(vec![
+        crate::game_installs::GameInstall {
+            game_id: "fortnite".into(),
+            name: "Fortnite".into(),
+            path: r"D:\Epic Games\Fortnite".into(),
+            drive: "D:".into(),
+            disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
+                media: crate::hardware::DiskMedia::Hdd,
+                name: "Example HDD".into(),
+            }),
+            exe: Some(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe".into()),
+            steam_app: None,
+        },
+        // And one found in a Steam library, so the sample shows its Play button.
+        crate::game_installs::GameInstall {
+            game_id: "cs2".into(),
+            name: "Counter-Strike 2".into(),
+            path: r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive".into(),
+            drive: "C:".into(),
+            disk: crate::probe::Probe::yes(crate::hardware::BootDisk {
+                media: crate::hardware::DiskMedia::Ssd,
+                name: "Example SSD".into(),
+            }),
+            exe: Some(
+                r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
+                    .into(),
+            ),
+            steam_app: Some(730),
+        },
+    ]);
     env.gpu_choices = Some(vec![crate::gpu_choice::GameGpuChoice {
         game_id: "fortnite".into(),
         name: "Fortnite".into(),
@@ -430,6 +548,10 @@ fn errors() -> Vec<EngineError> {
             path: "p".into(),
             detail: "d".into(),
         },
+        EngineError::SettingsFile {
+            path: r"C:\Users\Kegan\AppData\Local\FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini".into(),
+            detail: "is read-only, so PeakTweaks leaves it as it is".into(),
+        },
         EngineError::NoJournalEntry { tweak_id: "t".into() },
         EngineError::Blocked {
             reason: BlockedReason::new(BlockedCode::AntiCheatEligibility, "m").with_trigger("fortnite"),
@@ -452,7 +574,113 @@ fn errors() -> Vec<EngineError> {
         },
         EngineError::Internal { detail: "d".into() },
         EngineError::AlreadyRunning,
+        EngineError::PartlyApplied {
+            tweak_id: "t".into(),
+            detail: "d".into(),
+            undo_detail: "u".into(),
+        },
     ]
+}
+
+/// A real engine's startup list: one starting at sign-in, one PeakTweaks
+/// turned off, one turned off in Task Manager, Windows Security (never
+/// offered) and a shortcut in the Startup folder. The names are SAMPLE.
+fn startup_list() -> StartupList {
+    const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const APPROVED_RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    let mut h = Harness::new(Vec::new());
+    let set = |hive, key, name: &str, value| h.fake.set_external(hive, key, name, value);
+    set(
+        Hive::CurrentUser,
+        RUN,
+        "Sample chat app",
+        RawValue::sz(r"C:\Sample\chat.exe --minimized"),
+    );
+    set(
+        Hive::CurrentUser,
+        RUN,
+        "Sample game launcher",
+        RawValue::sz(r"C:\Sample\launcher.exe -silent"),
+    );
+    set(
+        Hive::CurrentUser,
+        RUN,
+        "Sample updater",
+        RawValue::sz(r"C:\Sample\updater.exe"),
+    );
+    set(
+        Hive::CurrentUser,
+        APPROVED_RUN,
+        "Sample updater",
+        StartupToggle::off_for_test(),
+    );
+    set(
+        Hive::LocalMachine,
+        RUN,
+        "SecurityHealth",
+        RawValue::sz(r"%windir%\system32\SecurityHealthSystray.exe"),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Sample notes.lnk"), b"").unwrap();
+    // A Store app with a startup task, installed in a folder of its own.
+    let package = dir.path().join("package");
+    std::fs::create_dir(&package).unwrap();
+    std::fs::write(
+        package.join("AppxManifest.xml"),
+        r#"<Package><uap5:StartupTask TaskId="SampleStartup" Enabled="true" DisplayName="Sample Store app"/></Package>"#,
+    )
+    .unwrap();
+    h.fake.set_external(
+        Hive::CurrentUser,
+        &format!(r"{}\Sample.StoreApp_1.0.0.0_x64__sample", crate::startup::PACKAGES),
+        "PackageRootFolder",
+        RawValue::sz(&package.to_string_lossy()),
+    );
+    let folders = StartupFolders {
+        user: Some(dir.path().to_path_buf()),
+        machine: Some(dir.path().join("none")),
+    };
+    h.engine.startup_apps(&folders);
+    h.engine.apply("startup.user_run:Sample game launcher").unwrap();
+    h.engine.startup_apps(&folders)
+}
+
+/// A real engine's MSI mode list: a graphics card with MSI off and a network
+/// adapter whose driver has it on. The device names are SAMPLE.
+fn msi_devices() -> crate::tweaks::msi::MsiDeviceList {
+    use crate::system::{DeviceClass, PciDevice};
+    const GPU: &str = r"PCI\VEN_10DE&DEV_2484&SUBSYS_146710DE&REV_A1\4&2b0b1f0c&0&0008";
+    const NIC: &str = r"PCI\VEN_10EC&DEV_8125&SUBSYS_86771043&REV_05\01000000684CE00000";
+    let mut h = Harness::new(Vec::new());
+    for i in [GPU, NIC] {
+        h.fake.set_external(
+            Hive::LocalMachine,
+            &format!(r"SYSTEM\CurrentControlSet\Enum\{i}"),
+            "DeviceDesc",
+            RawValue::sz("SAMPLE"),
+        );
+    }
+    h.fake.set_external(
+        Hive::LocalMachine,
+        &format!(
+            r"SYSTEM\CurrentControlSet\Enum\{NIC}\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
+        ),
+        "MSISupported",
+        RawValue::dword(1),
+    );
+    h.sys.set_pci_devices(vec![
+        PciDevice {
+            instance_id: GPU.into(),
+            name: "Sample graphics card".into(),
+            class: DeviceClass::Display,
+        },
+        PciDevice {
+            instance_id: NIC.into(),
+            name: "Sample network adapter".into(),
+            class: DeviceClass::Net,
+        },
+    ]);
+    h.engine.msi_devices()
 }
 
 #[test]
@@ -460,15 +688,26 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
     let mut out = String::from(
         "// Generated by the engine test `contract::writes_fixtures_...`. Do not edit.\n\
          // Real serialized values, checked by `tsc` against the generated types.\n\
+         import type { AreaSize } from \"./AreaSize\";\n\
+         import type { AutoRecordStatus } from \"./AutoRecordStatus\";\n\
+         import type { CleanupReport } from \"./CleanupReport\";\n\
          import type { Comparison } from \"./Comparison\";\n\
          import type { ContextInfo } from \"./ContextInfo\";\n\
+         import type { DriveOptimization } from \"./DriveOptimization\";\n\
          import type { EngineError } from \"./EngineError\";\n\
+         import type { GameInfo } from \"./GameInfo\";\n\
+         import type { GpuDriverInstall } from \"./GpuDriverInstall\";\n\
          import type { JournalView } from \"./JournalView\";\n\
+         import type { MsiDeviceList } from \"./MsiDeviceList\";\n\
+         import type { NetworkCheck } from \"./NetworkCheck\";\n\
+         import type { PlayStatus } from \"./PlayStatus\";\n\
          import type { Progress } from \"./Progress\";\n\
          import type { ProofRun } from \"./ProofRun\";\n\
          import type { ProofSessionSummary } from \"./ProofSessionSummary\";\n\
          import type { RestoreOutcome } from \"./RestoreOutcome\";\n\
          import type { RevertResult } from \"./RevertResult\";\n\
+         import type { StandbyPurge } from \"./StandbyPurge\";\n\
+         import type { StartupList } from \"./StartupList\";\n\
          import type { SystemAudit } from \"./SystemAudit\";\n\
          import type { TweakView } from \"./TweakView\";\n\n",
     );
@@ -484,6 +723,7 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             is_self: false,
             elevated: true,
             tester_build: false,
+            booted_unix_ms: Some(1_700_000_100_000),
         },
     );
     ts_const(
@@ -525,6 +765,59 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             protection_enabled_by_us: None,
         },
     );
+    // The shape of a real result; the numbers are illustrative (SAMPLE in the UI).
+    ts_const(
+        &mut out,
+        "standbyPurge",
+        "StandbyPurge",
+        &StandbyPurge {
+            before: MemoryUse {
+                total_bytes: 16 * GIB,
+                available_bytes: 9 * GIB,
+                cached_bytes: 6 * GIB,
+            },
+            after: MemoryUse {
+                total_bytes: 16 * GIB,
+                available_bytes: 9 * GIB + GIB / 2,
+                cached_bytes: GIB,
+            },
+            unix_ms: 1_791_331_200_000,
+        },
+    );
+    // A real check's shape from a scripted network: the router answers every
+    // echo, one public server loses one (SAMPLE in the UI).
+    ts_const(&mut out, "networkCheck", "NetworkCheck", &network_check_fixture());
+    ts_const(&mut out, "cleanupSizes", "AreaSize[]", &cleanup_sizes());
+    ts_const(
+        &mut out,
+        "driveOptimization",
+        "DriveOptimization",
+        &DriveOptimization {
+            drive: "C:".into(),
+            unix_ms: 1_791_331_800_000,
+            seconds: 41,
+            report: vec![
+                "Invoking retrim on (C:)...".into(),
+                "Retrim:  100% complete.".into(),
+                "The operation completed successfully.".into(),
+            ],
+        },
+    );
+    ts_const(&mut out, "cleanupReport", "CleanupReport", &cleanup_report());
+    // The shape of a finished clean install; the file name is made up (SAMPLE
+    // in the UI), not a real NVIDIA release.
+    ts_const(
+        &mut out,
+        "gpuDriverInstall",
+        "GpuDriverInstall",
+        &crate::gpu_install::GpuDriverInstall {
+            file: "123.45-sample-driver.exe".into(),
+            version: Some("123.45".into()),
+            restart: true,
+            unix_ms: 1_791_332_400_000,
+            seconds: 184,
+        },
+    );
     ts_const(
         &mut out,
         "progressEvent",
@@ -535,6 +828,121 @@ fn writes_fixtures_that_typescript_checks_against_the_generated_types() {
             message: "Applying".into(),
         },
     );
+
+    // A game running with Gaming Mode on and the timer held at 0.5 ms, after
+    // a Fortnite session in which the card slowed for heat, with two earlier
+    // games kept in the history.
+    let last = PlayReport {
+        game: "fortnite".into(),
+        started_unix_ms: 1_786_280_400_000,
+        ended_unix_ms: 1_786_282_800_000,
+        gpu_throttle: Probe::yes(ThrottleSummary {
+            samples: 800,
+            seen: vec![
+                ThrottleSeen {
+                    reason: ThrottleReason::SoftwarePowerCap,
+                    samples: 760,
+                },
+                ThrottleSeen {
+                    reason: ThrottleReason::SoftwareThermalSlowdown,
+                    samples: 48,
+                },
+            ],
+        }),
+        heat_readings: 48,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::yes(84),
+        temperature_missed: None,
+        gpu_busy_average: Probe::yes(97),
+        cpu_busy_average: Probe::yes(41),
+        // 16 GiB with 1.5 GiB available at the fullest: 91% in use.
+        memory_peak: Probe::yes(crate::memory::MemoryUse {
+            total_bytes: 17_179_869_184,
+            available_bytes: 1_610_612_736,
+            cached_bytes: 1_073_741_824,
+        }),
+        // "Clean memory during games" was on and cleaned twice.
+        memory_cleans: 2,
+        memory_cleaned_bytes: 6_442_450_944,
+    };
+    let valorant = PlayReport {
+        game: "valorant".into(),
+        started_unix_ms: 1_786_190_400_000,
+        ended_unix_ms: 1_786_194_000_000,
+        gpu_throttle: Probe::yes(ThrottleSummary {
+            samples: 1_200,
+            seen: vec![ThrottleSeen {
+                reason: ThrottleReason::SoftwarePowerCap,
+                samples: 300,
+            }],
+        }),
+        heat_readings: 0,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::yes(71),
+        temperature_missed: None,
+        gpu_busy_average: Probe::yes(88),
+        cpu_busy_average: Probe::yes(52),
+        memory_peak: Probe::yes(crate::memory::MemoryUse {
+            total_bytes: 17_179_869_184,
+            available_bytes: 6_442_450_944,
+            cached_bytes: 3_221_225_472,
+        }),
+        memory_cleans: 0,
+        memory_cleaned_bytes: 0,
+    };
+    let earlier_fortnite = PlayReport {
+        game: "fortnite".into(),
+        started_unix_ms: 1_786_100_000_000,
+        ended_unix_ms: 1_786_101_800_000,
+        gpu_throttle: Probe::yes(ThrottleSummary {
+            samples: 600,
+            seen: vec![],
+        }),
+        heat_readings: 0,
+        hardware_readings: 0,
+        gpu_hottest_c: Probe::yes(76),
+        temperature_missed: None,
+        // Kept by a version that did not take these readings.
+        gpu_busy_average: crate::play::not_recorded(),
+        cpu_busy_average: crate::play::not_recorded(),
+        memory_peak: crate::play::not_recorded(),
+        memory_cleans: 0,
+        memory_cleaned_bytes: 0,
+    };
+    // Fortnite's before side, one sample recorded, the next due in three
+    // minutes, as the watcher shows it between samples.
+    let auto_record = AutoRecordStatus {
+        session_id: "session-1791332400000".into(),
+        side: Side::Before,
+        game_id: "fortnite".into(),
+        exe: crate::games::facts("fortnite").expect("Fortnite has facts").programs[0].into(),
+        recorded: 1,
+        wanted: crate::proof::auto::AUTO_RUNS,
+        recording_now: false,
+        next_unix_ms: Some(1_791_332_580_000),
+        problem: None,
+    };
+    ts_const(&mut out, "autoRecordStatus", "AutoRecordStatus", &auto_record);
+    ts_const(
+        &mut out,
+        "playStatus",
+        "PlayStatus",
+        &PlayStatus {
+            auto_record: Some(auto_record.clone()),
+            game: Some("fortnite".into()),
+            gaming_mode_active: true,
+            timer_held: Some(5_000),
+            problem: None,
+            last_session: Some(last.clone()),
+            history: vec![earlier_fortnite, valorant, last],
+            memory_cleans: 1,
+            ..PlayStatus::watching()
+        },
+    );
+
+    ts_const(&mut out, "games", "GameInfo[]", &crate::env::KNOWN_GAMES);
+    ts_const(&mut out, "startupList", "StartupList", &startup_list());
+    ts_const(&mut out, "msiDevices", "MsiDeviceList", &msi_devices());
 
     let dir = generated_dir();
     std::fs::create_dir_all(&dir).unwrap();
@@ -555,6 +963,7 @@ fn every_engine_error_variant_has_a_fixture() {
             | EngineError::Win32 { .. }
             | EngineError::Storage { .. }
             | EngineError::InsecureStorage { .. }
+            | EngineError::SettingsFile { .. }
             | EngineError::NoJournalEntry { .. }
             | EngineError::Blocked { .. }
             | EngineError::UnknownTweak { .. }
@@ -563,7 +972,8 @@ fn every_engine_error_variant_has_a_fixture() {
             | EngineError::Command { .. }
             | EngineError::Wmi { .. }
             | EngineError::Internal { .. }
-            | EngineError::AlreadyRunning => {}
+            | EngineError::AlreadyRunning
+            | EngineError::PartlyApplied { .. } => {}
         }
     }
 }

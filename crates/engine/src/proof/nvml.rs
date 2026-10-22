@@ -5,8 +5,10 @@
 //! Intel have no equivalent wired up yet; they report Unknown, they are not
 //! guessed at.
 //!
-//! The bit values are from NVML's `nvmlClocksThrottleReason*` constants, from
-//! memory and marked VERIFY in NOTES.md (N33).
+//! The bit values and function names match NVIDIA's `nvml.h` (13.x) and its
+//! `nvmlClocksEventReason*` constants (checked 2026-10-08, NOTES N33). Newer
+//! drivers also set 0x200 (board limit) and 0x400 (reliability), which this
+//! table does not decode yet.
 
 use std::collections::BTreeMap;
 
@@ -30,7 +32,7 @@ pub enum ThrottleReason {
     DisplayClock,
 }
 
-/// (bit, reason). VERIFY against nvml.h.
+/// (bit, reason), as `nvml.h` defines them.
 pub const REASON_BITS: [(u64, ThrottleReason); 9] = [
     (0x1, ThrottleReason::GpuIdle),
     (0x2, ThrottleReason::ApplicationClocks),
@@ -165,8 +167,46 @@ impl ThrottleTally {
     }
 }
 
+/// One NVIDIA GPU right now, for Home's live readings (`live.rs`). Each
+/// reading is its own probe: a driver that lacks one still gives the others.
+/// Layouts and names from NVIDIA's `nvml.h` (`nvmlUtilization_t`,
+/// `nvmlMemory_t`, `NVML_TEMPERATURE_GPU` = 0, a 96-byte name buffer), as
+/// shipped in NVIDIA/go-nvml `gen/nvml/nvml.h`, checked 2026-10-09. The
+/// clock (`NVML_CLOCK_GRAPHICS` = 0, MHz), power (milliwatts) and fan
+/// (percent of the fan's top speed) calls and `NVML_ERROR_NOT_SUPPORTED` = 3
+/// are from the same header, checked 2026-10-16.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuLive {
+    pub name: Probe<String>,
+    /// Share of the last sample period with work running on the GPU, 0-100.
+    pub busy_percent: Probe<u32>,
+    /// The GPU die's temperature in degrees Celsius.
+    pub temperature_c: Probe<u32>,
+    /// Graphics memory in use (reserved and allocated), and in all, in bytes.
+    pub memory_used_bytes: Probe<u64>,
+    pub memory_total_bytes: Probe<u64>,
+    /// The graphics clock right now, in MHz.
+    pub graphics_clock_mhz: Probe<u32>,
+    /// The whole board's power draw right now, in milliwatts. No on GPUs
+    /// that do not report it.
+    pub power_milliwatts: Probe<u32>,
+    /// The fan's speed as a share of its rated top speed (NVML: can pass
+    /// 100). No on GPUs without a fan NVML can read (most laptops).
+    pub fan_percent: Probe<u32>,
+}
+
 #[cfg(windows)]
 pub use real::NvmlSampler;
+
+/// The one NVML library handle for live readings and the game watcher, so it
+/// is loaded and initialised once.
+#[cfg(windows)]
+pub fn shared() -> &'static NvmlSampler {
+    static NVML: std::sync::OnceLock<NvmlSampler> = std::sync::OnceLock::new();
+    NVML.get_or_init(NvmlSampler::new)
+}
 
 #[cfg(windows)]
 mod real {
@@ -183,16 +223,33 @@ mod real {
 
     type NvmlReturn = i32;
     const NVML_SUCCESS: NvmlReturn = 0;
+    const NVML_ERROR_NOT_SUPPORTED: NvmlReturn = 3;
 
     type Init = unsafe extern "C" fn() -> NvmlReturn;
     type Count = unsafe extern "C" fn(*mut u32) -> NvmlReturn;
     type HandleByIndex = unsafe extern "C" fn(u32, *mut *mut c_void) -> NvmlReturn;
     type Reasons = unsafe extern "C" fn(*mut c_void, *mut u64) -> NvmlReturn;
+    type Utilization = unsafe extern "C" fn(*mut c_void, *mut [u32; 2]) -> NvmlReturn;
+    type Temperature = unsafe extern "C" fn(*mut c_void, u32, *mut u32) -> NvmlReturn;
+    /// `nvmlMemory_t`: total, free, used.
+    type Memory = unsafe extern "C" fn(*mut c_void, *mut [u64; 3]) -> NvmlReturn;
+    type Name = unsafe extern "C" fn(*mut c_void, *mut u8, u32) -> NvmlReturn;
+    type Clock = unsafe extern "C" fn(*mut c_void, u32, *mut u32) -> NvmlReturn;
+    /// Power in milliwatts, or fan speed in percent.
+    type OneValue = unsafe extern "C" fn(*mut c_void, *mut u32) -> NvmlReturn;
 
     struct Lib {
         get_count: Count,
         get_handle: HandleByIndex,
         get_reasons: Reasons,
+        // For the live readings only; a driver without one still loads.
+        get_utilization: Option<Utilization>,
+        get_temperature: Option<Temperature>,
+        get_memory: Option<Memory>,
+        get_name: Option<Name>,
+        get_clock: Option<Clock>,
+        get_power: Option<OneValue>,
+        get_fan: Option<OneValue>,
         // The module stays loaded for the life of the process.
         _module: HMODULE,
     }
@@ -260,7 +317,19 @@ mod real {
         let init: Init = sym!("nvmlInit_v2", Init);
         let get_count: Count = sym!("nvmlDeviceGetCount_v2", Count);
         let get_handle: HandleByIndex = sym!("nvmlDeviceGetHandleByIndex_v2", HandleByIndex);
-        let get_reasons: Reasons = sym!("nvmlDeviceGetCurrentClocksThrottleReasons", Reasons);
+        // NVML 13 marks the throttle-reasons call deprecated in favour of the
+        // clocks-event one, same signature and bits; older drivers have only
+        // the first.
+        let get_reasons: Reasons = match GetProcAddress(module, s!("nvmlDeviceGetCurrentClocksEventReasons")) {
+            Some(f) => std::mem::transmute::<unsafe extern "system" fn() -> isize, Reasons>(f),
+            None => sym!("nvmlDeviceGetCurrentClocksThrottleReasons", Reasons),
+        };
+        macro_rules! optional {
+            ($name:literal, $ty:ty) => {
+                GetProcAddress(module, s!($name))
+                    .map(|f| std::mem::transmute::<unsafe extern "system" fn() -> isize, $ty>(f))
+            };
+        }
         let rc = init();
         if rc != NVML_SUCCESS {
             return Err(format!("nvmlInit_v2 failed with code {rc}"));
@@ -269,8 +338,113 @@ mod real {
             get_count,
             get_handle,
             get_reasons,
+            get_utilization: optional!("nvmlDeviceGetUtilizationRates", Utilization),
+            // Marked deprecated in NVML 13 in favour of the V call, still exported.
+            get_temperature: optional!("nvmlDeviceGetTemperature", Temperature),
+            get_memory: optional!("nvmlDeviceGetMemoryInfo", Memory),
+            get_name: optional!("nvmlDeviceGetName", Name),
+            get_clock: optional!("nvmlDeviceGetClockInfo", Clock),
+            get_power: optional!("nvmlDeviceGetPowerUsage", OneValue),
+            get_fan: optional!("nvmlDeviceGetFanSpeed", OneValue),
             _module: module,
         })
+    }
+
+    impl NvmlSampler {
+        fn with_lib<T>(&self, f: impl FnOnce(&Lib) -> Probe<T>) -> Probe<T> {
+            let mut guard = match self.state.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            match guard.get_or_insert_with(|| unsafe { open() }) {
+                Ok(lib) => f(lib),
+                Err(e) => Probe::unknown(e.clone()),
+            }
+        }
+
+        /// Every NVIDIA GPU's live readings. No when NVML lists none.
+        pub fn live(&self) -> Probe<Vec<GpuLive>> {
+            self.with_lib(|lib| unsafe {
+                let mut count = 0u32;
+                let rc = (lib.get_count)(&mut count);
+                if rc != NVML_SUCCESS {
+                    return Probe::unknown(format!("nvmlDeviceGetCount_v2 failed with code {rc}"));
+                }
+                if count == 0 {
+                    return Probe::no("NVML reports no NVIDIA GPU");
+                }
+                let mut gpus = Vec::new();
+                for i in 0..count {
+                    let mut handle: *mut c_void = std::ptr::null_mut();
+                    let rc = (lib.get_handle)(i, &mut handle);
+                    if rc != NVML_SUCCESS {
+                        return Probe::unknown(format!("nvmlDeviceGetHandleByIndex_v2({i}) failed with code {rc}"));
+                    }
+                    gpus.push(gpu_live(lib, handle));
+                }
+                Probe::yes(gpus)
+            })
+        }
+    }
+
+    /// One reading through an optional NVML call.
+    fn read<F, T>(f: Option<F>, what: &str, call: impl FnOnce(F) -> (NvmlReturn, T)) -> Probe<T> {
+        let Some(f) = f else {
+            return Probe::unknown(format!("this NVIDIA driver's NVML has no {what} call"));
+        };
+        match call(f) {
+            (NVML_SUCCESS, value) => Probe::yes(value),
+            (rc, _) => Probe::unknown(format!("reading the {what} failed with code {rc}")),
+        }
+    }
+
+    /// As `read`, but a GPU that does not support the reading is a No.
+    fn read_or_no<F, T>(f: Option<F>, what: &str, call: impl FnOnce(F) -> (NvmlReturn, T)) -> Probe<T> {
+        let Some(f) = f else {
+            return Probe::unknown(format!("this NVIDIA driver's NVML has no {what} call"));
+        };
+        match call(f) {
+            (NVML_SUCCESS, value) => Probe::yes(value),
+            (NVML_ERROR_NOT_SUPPORTED, _) => Probe::no(format!("this GPU does not report its {what}")),
+            (rc, _) => Probe::unknown(format!("reading the {what} failed with code {rc}")),
+        }
+    }
+
+    unsafe fn gpu_live(lib: &Lib, handle: *mut c_void) -> GpuLive {
+        let memory = read(lib.get_memory, "memory use", |f| {
+            let mut m = [0u64; 3];
+            (f(handle, &mut m), m)
+        });
+        GpuLive {
+            name: read(lib.get_name, "name", |f| {
+                let mut buf = [0u8; 96];
+                let rc = f(handle, buf.as_mut_ptr(), buf.len() as u32);
+                let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                (rc, String::from_utf8_lossy(&buf[..end]).into_owned())
+            }),
+            busy_percent: read(lib.get_utilization, "utilization", |f| {
+                let mut u = [0u32; 2];
+                (f(handle, &mut u), u[0])
+            }),
+            temperature_c: read(lib.get_temperature, "temperature", |f| {
+                let mut t = 0u32;
+                (f(handle, 0, &mut t), t)
+            }),
+            memory_used_bytes: memory.clone().map(|m| m[2]),
+            memory_total_bytes: memory.map(|m| m[0]),
+            graphics_clock_mhz: read_or_no(lib.get_clock, "graphics clock", |f| {
+                let mut mhz = 0u32;
+                (f(handle, 0, &mut mhz), mhz)
+            }),
+            power_milliwatts: read_or_no(lib.get_power, "power draw", |f| {
+                let mut mw = 0u32;
+                (f(handle, &mut mw), mw)
+            }),
+            fan_percent: read_or_no(lib.get_fan, "fan speed", |f| {
+                let mut p = 0u32;
+                (f(handle, &mut p), p)
+            }),
+        }
     }
 
     impl ThrottleSampler for NvmlSampler {
@@ -302,9 +476,7 @@ mod real {
                     let mut mask = 0u64;
                     let rc = (lib.get_reasons)(handle, &mut mask);
                     if rc != NVML_SUCCESS {
-                        return Probe::unknown(format!(
-                            "nvmlDeviceGetCurrentClocksThrottleReasons failed with code {rc}"
-                        ));
+                        return Probe::unknown(format!("reading the clock limit reasons failed with code {rc}"));
                     }
                     all.extend(decode_reasons(mask));
                 }

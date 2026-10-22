@@ -9,12 +9,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { AreaSize } from "./generated/AreaSize";
+import type { AutoRecordStatus } from "./generated/AutoRecordStatus";
+import type { CleanupArea } from "./generated/CleanupArea";
+import type { CleanupReport } from "./generated/CleanupReport";
 import type { Comparison } from "./generated/Comparison";
 import type { ContextInfo } from "./generated/ContextInfo";
+import type { DriveOptimization } from "./generated/DriveOptimization";
+import type { DriverVendor } from "./generated/DriverVendor";
 import type { EngineError } from "./generated/EngineError";
 import type { GameInfo } from "./generated/GameInfo";
+import type { GpuDriverInstall } from "./generated/GpuDriverInstall";
 import type { JournalEntry } from "./generated/JournalEntry";
 import type { JournalView } from "./generated/JournalView";
+import type { LiveReadings } from "./generated/LiveReadings";
+import type { MsiDeviceList } from "./generated/MsiDeviceList";
+import type { NetworkCheck } from "./generated/NetworkCheck";
+import type { PlayStatus } from "./generated/PlayStatus";
 import type { Progress } from "./generated/Progress";
 import type { ProofRun } from "./generated/ProofRun";
 import type { ProofSession } from "./generated/ProofSession";
@@ -23,6 +34,9 @@ import type { RestoreOutcome } from "./generated/RestoreOutcome";
 import type { RevertResult } from "./generated/RevertResult";
 import type { Settings } from "./generated/Settings";
 import type { Side } from "./generated/Side";
+import type { StartupList } from "./generated/StartupList";
+import type { StandbyPurge } from "./generated/StandbyPurge";
+import type { SupportBundle } from "./generated/SupportBundle";
 import type { SystemAudit } from "./generated/SystemAudit";
 import type { TweakView } from "./generated/TweakView";
 
@@ -55,6 +69,7 @@ function describe(e: EngineError): string {
     case "win32":
     case "storage":
     case "insecure_storage":
+    case "settings_file":
     case "context_violation":
     case "command":
     case "wmi":
@@ -76,10 +91,16 @@ export const engine = {
   context: () => call<ContextInfo>("engine_context"),
   listTweaks: () => call<TweakView[]>("list_tweaks"),
   listGames: () => call<GameInfo[]>("list_games"),
+  /** Which known game is running and what is in effect for it. Also sent as `onPlay`. */
+  playStatus: () => call<PlayStatus>("play_status"),
+  /** Forget the kept game reports and this run's last game; resolves to the status now shown. */
+  forgetPlayHistory: () => call<PlayStatus>("forget_play_history"),
   /** Preferences: rig-class override and plain/technical wording. Never a gate or licence. */
   getSettings: () => call<Settings>("get_settings"),
   /** Replace the preferences; resolves to what is now stored. */
-  setSettings: (settings: Settings) => call<Settings>("set_settings", { settings }),
+  /** `base` is what the window showed: only fields changed from it are saved
+   * over what the engine has now (a tray switch made since is kept). */
+  setSettings: (settings: Settings, base?: Settings) => call<Settings>("set_settings", { settings, base: base ?? null }),
   /** Pick a known game, or `null` to clear. The id is validated in Rust. */
   selectTargetGame: (gameId: string | null) => call<TweakView[]>("select_target_game", { gameId }),
   /** Re-run every probe (nothing cached) and return the refreshed list. */
@@ -92,6 +113,30 @@ export const engine = {
   revertTweak: (id: string) => call<JournalEntry[]>("revert_tweak", { id }),
   revertAll: () => call<RevertResult[]>("revert_all"),
   listJournal: () => call<JournalView>("list_journal"),
+  /** Write the support bundle (one zip in the data folder) and say where it is. Reads only; sends nothing. */
+  exportSupportBundle: () => call<SupportBundle>("export_support_bundle"),
+  /** Empty Windows' standby list (catalogue E6). Changes no setting; nothing to undo. */
+  purgeStandbyMemory: () => call<StandbyPurge>("purge_standby_memory"),
+  /** What each junk-file area holds that a cleanup would delete now (catalogue H28). Reads only. */
+  cleanupMeasure: () => call<AreaSize[]>("cleanup_measure"),
+  /** Delete the junk files in these areas. Cannot be undone: ask the user first. */
+  cleanupRun: (areas: CleanupArea[]) => call<CleanupReport>("cleanup_run", { areas }),
+  /** Run Windows' own drive optimisation on the Windows drive (catalogue H29). Can take an hour or more on a hard drive. */
+  optimizeDrive: () => call<DriveOptimization>("optimize_drive"),
+  /** The programs Windows starts at sign-in, each with its switch (catalogue H12). Reads only; turn one off with applyTweak(its id). */
+  listStartupApps: () => call<StartupList>("list_startup_apps"),
+  /** MSI mode for each graphics card and network adapter (catalogue H6). Reads only; apply with applyTweak(its id). */
+  listMsiDevices: () => call<MsiDeviceList>("list_msi_devices"),
+  /** Processor, memory and NVIDIA GPU readings right now. Reads only; takes about half a second. */
+  liveReadings: () => call<LiveReadings>("live_readings"),
+  /** Echoes to the router and two public DNS servers (catalogue E4). Sends only echo requests; changes nothing. */
+  checkConnection: () => call<NetworkCheck>("check_connection"),
+  /** Ask Steam to start a game found in a Steam library. The engine builds the link and opens it as the signed-in user, without PeakTweaks' administrator rights. */
+  launchGame: (gameId: string) => call<null>("launch_game", { gameId }),
+  /** Open the card maker's own driver page in the user's browser. The engine holds the address; PeakTweaks opens no connection itself. */
+  openDriverPage: (vendor: DriverVendor) => call<null>("open_driver_page", { vendor }),
+  /** Clean install of an NVIDIA driver the user downloaded: the engine shows Windows' Open dialog, checks NVIDIA signed the file, needs a restore point. `null` when the dialog is cancelled. */
+  installGpuDriver: () => call<GpuDriverInstall | null>("install_gpu_driver"),
 };
 
 /** Measure whether a change did anything. Every number comes from stored runs. */
@@ -106,7 +151,21 @@ export const proof = {
   compare: (sessionId: string) => call<Comparison>("proof_compare", { sessionId }),
   listSessions: () => call<ProofSessionSummary[]>("proof_list_sessions"),
   runs: (sessionId: string) => call<ProofRun[]>("proof_runs", { sessionId }),
+  /** Record one side by itself while the comparison's game is in front ("Record while I play"); replaces any other. Records nothing now. */
+  autoRecord: (sessionId: string, side: Side) => call<AutoRecordStatus>("proof_auto_record", { sessionId, side }),
+  /** Stop recording while playing. A sample being recorded is finished and kept. */
+  stopAutoRecord: () => call<null>("proof_stop_auto_record"),
 };
+
+/** Subscribe to the game watcher: a game started or closed, or what is in effect changed. */
+export function onPlay(handler: (p: PlayStatus) => void): Promise<UnlistenFn> {
+  return listen<PlayStatus>("engine://play", (event) => handler(event.payload));
+}
+
+/** Settings saved from outside the window: Gaming Mode from the tray icon. */
+export function onSettings(handler: (s: Settings) => void): Promise<UnlistenFn> {
+  return listen<Settings>("engine://settings", (event) => handler(event.payload));
+}
 
 /** Subscribe to progress events from long-running commands. */
 export function onProgress(handler: (p: Progress) => void): Promise<UnlistenFn> {

@@ -225,3 +225,54 @@ The Cargo feature `tester` (`License::tester`) unlocks every plan and changes no
 
 Delivery: CI builds it last and uploads `peaktweaks-tester-exe`, and `scripts/build-tester.ps1` builds it on a Windows PC. The steps and what to send back are in `docs/TEST-ON-YOUR-PC.md`. The feature goes when real licensing lands.
 
+
+### 15.22 Every Hone and ExitLag feature, network use for the ExitLag ones, fewer warnings (2026-10-06)
+
+Kegan, in chat: "Any single feature that Hone has you can do", and "any single feature that ExitLag has, you can make". The list being built is `docs/CATALOGUE.md` (Hone H1-H31, ExitLag E1-E6).
+
+1. **Evidence.** A feature Hone ships counts as supported evidence for plan section 12's rule "no tweak whose only support is a forum post". Registry paths and values are still checked against Microsoft's documentation or a real PC before a VERIFY marker comes off.
+2. **Network.** The app may use the network for the ExitLag-style features: ping tests (Network Analyzer, E4) and traffic priority (QoS / Traffic Shaper, E3 and H26), started by the user. Nothing else goes online, and nothing about the user is sent anywhere. This replaces the old "never uses the network" description (C24, N40, `scripts/check-no-network-deps.sh`), which must be updated to say so honestly when E4 lands.
+3. **Fewer warnings.** No warning on well-supported changes; one short line only where there is a real cost (restart needed, battery, connection drops for a few seconds); one confirmation only for Advanced changes. The safety net is unchanged: a verified restore point before the first change, a `.reg` backup and journal record before each one, Undo and Undo all.
+4. **Never-do still stands.** Plan section 12's list is unchanged. If a Hone or ExitLag feature needs one of its items (Memory Integrity/VBS off, Secure Boot/TPM/IOMMU, game memory or injection, Roblox fast flags or FPS unlockers, game CPU affinity, BIOS, vulnerable drivers), it is not built; Kegan is asked first.
+5. **Not buildable:** E1 (ExitLag's routing over its own server network). It stays listed in the catalogue as such.
+
+### 15.23 While you play: session changes and the game watcher (Claude, 2026-10-08)
+
+Catalogue step 5 (NOTES N80).
+
+1. **Gaming Mode's changes are tweaks, not a side channel.** Each one is an internal tweak (`tweaks::session`) made through `Transaction`, so it keeps the safety net: restore point first, `.reg` backup and journal record before the write, listed in Backups while in effect, Undo and Undo all reach it. They are not listed in Tools because the watcher, not the user, makes them. A session that a crash or power cut left open is put back at the next start with no game running.
+2. **Off by default.** Gaming Mode and the game timer are switches in Tools, both off until the user turns them on, so nothing changes because a game started unless asked.
+3. **The timer request is not journalled.** It is held by the app's process and Windows drops it when the process ends, so there is nothing on disk to back up or undo.
+4. **Names only.** The watcher reads running program names; it never opens, reads or changes a game process (plan section 12). Programs whose name other software shares (Minecraft Java's `javaw.exe`) are not watched.
+5. **Not in Gaming Mode:** pausing Windows Update (Kegan's brief: never touch Windows Update) and raising the game's priority (the per-game tool H31).
+
+### 15.24 AMD settings through ADLX, not the registry (Claude, 2026-10-08)
+
+Catalogue H21 (NOTES N87). The catalogue planned per-adapter registry values under the display class key, as Hone does.
+
+1. **ADLX instead.** Those values are AMD's private storage: undocumented, named differently across driver versions, and AMD Software may not read a change made there until the driver reloads, if at all. ADLX (`amdadlx64.dll`, installed with AMD's driver) is the interface AMD publishes for changing these same settings, with a public SDK and headers. It is the same choice as NVIDIA's settings through NvAPI (H20) rather than raw driver files.
+2. **The safety net is unchanged.** Each card's previous value is read through ADLX and journalled before the write (`Transaction::set_system`), Undo sets it back, and a card that is no longer on the PC is skipped with a note. The restore point and `.reg` backup still come first, as for every change; they do not cover these values, which live in AMD's driver.
+3. **Loaded from System32 only.** AMD's own helper also searches the program's folder and the user's directories. An elevated program must not load a DLL from a folder a user could write to, so PeakTweaks looks only in System32, where the driver installs it (VERIFY, N87).
+4. **Two tools to start:** Radeon Anti-Lag on (safe) and Wait for Vertical Refresh always off (Advanced). Others ADLX offers (Radeon Chill, Boost, Image Sharpening, Enhanced Sync, frame rate target) change how games look or cap them; they wait for a reason to add them.
+5. **Plain Anti-Lag only.** Newer drivers have a second Anti-Lag level, "Anti-Lag Next", which AMD describes as "an advanced algorithm in supported DX11 and DX12 games", taken to be Anti-Lag+, the version that hooked into games (plan section 12 rules that out). The tool sets the level to plain Anti-Lag before turning Anti-Lag on, so it can never turn Next on.
+6. **No unrecorded side changes.** AMD's driver turns Radeon Chill off by itself when Anti-Lag goes on. Left to the driver, that change would have no journal record and Undo would not bring Chill back, so the tool turns Chill off itself first, recorded, and says so in its one cost line.
+
+### 15.25 Game settings files: held folders, not the user's token (Claude, 2026-10-09)
+
+Plan section 8 (Phase 6), NOTES N55. A game keeps its settings in the user's own folders, which the user and anything running as the user can change, and PeakTweaks writes there elevated. A junction swapped in between a check and the write could steer that write into a folder only administrators can change.
+
+1. **Hold the path, as the cleaner does.** N55 planned to read and write while impersonating the signed-in user's token taken from `explorer.exe`. The cleaner (H28) already solved the same problem another way, proven on Windows CI: every folder on the path is opened without sharing delete access and checked to be a real folder, so none can be renamed or swapped while held, and the last folder's final path must be the one asked for. Settings files use the same code (`held.rs`, moved out of `cleanup.rs`), so one mechanism is tested and maintained, and nothing depends on finding a shell process or duplicating its token, which fails under alternate admin credentials and Administrator Protection.
+2. **Only a plain file.** The file itself must not be a link, a folder or a hard link (one of several names for the same file), and its final path must be the one asked for (`settings_file.rs`).
+3. **Replace, never write through.** A new version is written beside it under a hidden PeakTweaks name, flushed and renamed over it: a crash leaves the old file or the new one, and the rename replaces the name rather than writing into whatever it points at.
+4. **Leave alone what someone chose.** A read-only settings file is refused with a plain reason: players set that on purpose so a game does not overwrite their settings. A folder that does not exist is not created: the game makes it the first time it saves.
+5. **What stays out.** Paths come from the tweak's own code (a user's profile, a known game's folder), never from a launcher manifest or the UI as a write target, because a manifest is a file the user can edit.
+
+### 15.26 The graphics driver tool: vendor pages, and a clean install of a file the user downloaded (Claude, 2026-10-10)
+
+Kegan asked for "a tool that allows you to uninstall your graphics driver and install one that you select", like the one he used to put an older GeForce driver on for Fortnite. Plan section 1 locks "Never host or redistribute GPU drivers. Link to vendor pages only", and the free build opens no connection. Claude asked whether to change that rule (decision card, 2026-10-10) and built the recommended option, which keeps it, while the card waits (NOTES N119).
+
+1. **Links, not downloads.** Tools' Graphics driver panel opens the card maker's own driver page in the user's browser through the desktop shell, as the signed-in user (`launch::open_unelevated`, as Play does). The engine holds the three addresses (`gpu_install.rs`); the UI sends only which maker. PeakTweaks itself downloads nothing.
+2. **A clean install of the user's own file, NVIDIA only.** The file is picked in Windows' own Open dialog, shown by the engine, so the path never comes from the UI. The engine copies it into the protected data folder under a fixed name and checks and runs only that copy, which no other account can change between the check and the run. It runs only if its Authenticode signature checks out and names NVIDIA; the check is offline (no revocation lookups, cached addresses only), so it opens no connection either. NVIDIA's installer runs with its silent clean-install switches (VERIFY) and the copy is deleted afterwards.
+3. **What stands in for the backup.** A driver install writes no registry value of PeakTweaks' own, so there is no `.reg` backup to make and nothing for Undo all to replay. The verified restore point is the way back (System Restore puts drivers back), so the install is refused without one, checked again after the dialog; a journal line is written before the installer starts and another when it ends, so the history shows an install the PC stopped part-way. Plan section 12's "verified restore point + `.reg` backup + journal record first" is read that way here; Kegan can say otherwise.
+4. **No claims.** The panel says PeakTweaks makes no claim about which driver version suits a game and points to Proof for a before-and-after on the PC.
+

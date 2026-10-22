@@ -20,10 +20,12 @@ pub(crate) const WQL_DEVICE_GUARD: &str = "SELECT SecurityServicesRunning, Secur
      AvailableSecurityProperties, VirtualizationBasedSecurityStatus FROM Win32_DeviceGuard";
 pub(crate) const WQL_TPM: &str = "SELECT IsEnabled_InitialValue, IsActivated_InitialValue, SpecVersion FROM Win32_Tpm";
 
-/// `SecurityServicesRunning` value meaning Memory Integrity / HVCI.
-/// VERIFY against Microsoft's Win32_DeviceGuard documentation (blocked from the
-/// build sandbox, see NOTES.md N20). From memory: 1 Credential Guard,
-/// 2 HVCI, 3 System Guard Secure Launch, 4 SMM Firmware Measurement.
+/// `SecurityServicesRunning` value meaning Memory Integrity / HVCI. Microsoft's
+/// "Enable memory integrity" page (learn.microsoft.com/windows/security/
+/// hardware-security/enable-virtualization-based-protection-of-code-integrity,
+/// checked 2026-10-08): "1 If present, Credential Guard is running", "2 If
+/// present, memory integrity is running", 3 System Guard Secure Launch, 4 SMM
+/// Firmware Measurement.
 const SERVICE_HVCI: u64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -289,8 +291,9 @@ struct Requirement {
     source: &'static str,
 }
 
-/// Requirements we know about. Only the plan's Fortnite entry exists; adding a
-/// title here is a product decision (plan section 11, item 5).
+/// Requirements we know about, one entry per `ALL_GAMES` game in the same
+/// order. Only the offered games are reported (`env::KNOWN_GAMES`); offering
+/// a title is a product decision (plan section 11, item 5; NOTES N75).
 const REQUIREMENTS: &[Requirement] = &[
     Requirement {
         game_id: "fortnite",
@@ -307,6 +310,181 @@ const REQUIREMENTS: &[Requirement] = &[
     },
     Requirement {
         game_id: "roblox",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "valorant",
+        requires: &[SecurityFeature::Tpm, SecurityFeature::SecureBoot],
+        scope: "playing on Windows 11",
+        // VERIFY against Riot's articles before offering Valorant (NOTES N75).
+        source: "Riot's support articles for the VAN 9001 and VAN 9003 errors, from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "cs2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "apex",
+        requires: &[],
+        scope: "",
+        source: "",
+    },    Requirement {
+        game_id: "cod",
+        requires: &[SecurityFeature::Tpm, SecurityFeature::SecureBoot],
+        scope: "Black Ops 7 and Warzone",
+        // VERIFY against the publisher's own page (NOTES N99).
+        source: "Activision's announcement for Black Ops 7, from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "league",
+        requires: &[SecurityFeature::Tpm, SecurityFeature::SecureBoot],
+        scope: "playing on Windows 11",
+        // VERIFY against the publisher's own page (NOTES N99).
+        source: "Riot Vanguard's requirements, the same as Valorant's, from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "dota2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "pubg",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "overwatch",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "r6siege",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "rocketleague",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "gta5",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "marvelrivals",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "destiny2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "rust",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "tarkov",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "thefinals",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "tf2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "dbd",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "warframe",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "wow",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "genshin",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "eafc",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "helldivers2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "poe2",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "deltaforce",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "battlefield6",
+        requires: &[SecurityFeature::SecureBoot],
+        scope: "playing",
+        // VERIFY against the publisher's own page (NOTES N99).
+        source: "EA's requirements for Battlefield 6 (EA Javelin), from memory. \
+                 Not independently verified.",
+    },
+    Requirement {
+        game_id: "naraka",
+        requires: &[],
+        scope: "",
+        source: "",
+    },
+    Requirement {
+        game_id: "arcraiders",
         requires: &[],
         scope: "",
         source: "",
@@ -358,6 +536,7 @@ pub fn anti_cheat_readiness(report: &SecurityReport) -> AntiCheatReadiness {
         iommu: report.iommu.clone(),
         per_game: REQUIREMENTS
             .iter()
+            .filter(|r| crate::env::is_offered(r.game_id))
             .map(|r| GameReadiness {
                 game_id: r.game_id.to_owned(),
                 requires: r.requires.to_vec(),
@@ -586,13 +765,19 @@ mod tests {
 
     #[test]
     fn per_game_table_covers_the_known_games_and_no_others() {
+        let table: Vec<&str> = REQUIREMENTS.iter().map(|r| r.game_id).collect();
+        let all: Vec<&str> = crate::env::ALL_GAMES.iter().map(|g| g.id).collect();
+        assert_eq!(
+            table, all,
+            "requirements table and ALL_GAMES must list the same games in the same order"
+        );
         let r = anti_cheat_readiness(&report(Probe::yes(()), tpm2(), Probe::unknown("?")));
         let ids: Vec<&str> = r.per_game.iter().map(|g| g.game_id.as_str()).collect();
         let known: Vec<&str> = crate::env::KNOWN_GAMES.iter().map(|g| g.id).collect();
-        assert_eq!(
-            ids, known,
-            "requirements table and KNOWN_GAMES must list the same games in the same order"
-        );
+        assert_eq!(ids, known, "only the offered games are reported");
         assert!(r.per_game[0].source.contains("Not independently verified"));
+        for req in REQUIREMENTS.iter().filter(|r| !r.requires.is_empty()) {
+            assert!(req.source.contains("Not independently verified"), "{}", req.game_id);
+        }
     }
 }

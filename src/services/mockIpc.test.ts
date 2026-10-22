@@ -82,6 +82,7 @@ const ALL_KINDS: Record<EngineError["kind"], true> = {
   win32: true,
   storage: true,
   insecure_storage: true,
+  settings_file: true,
   no_journal_entry: true,
   blocked: true,
   unknown_tweak: true,
@@ -91,6 +92,7 @@ const ALL_KINDS: Record<EngineError["kind"], true> = {
   wmi: true,
   internal: true,
   already_running: true,
+  partly_applied: true,
 };
 
 describe("error wording", () => {

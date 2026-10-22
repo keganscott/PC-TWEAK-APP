@@ -26,7 +26,9 @@ use crate::context::ContextResolver;
 use crate::error::{EngineError, Result};
 use crate::system::{SysItem, SysState};
 use crate::transaction::Transaction;
-use crate::types::{ExecutionContext, Impact, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState};
+use crate::types::{
+    BlockedCode, BlockedReason, ExecutionContext, Impact, RegTarget, SafetyTier, Tier, Tweak, TweakMetadata, TweakState,
+};
 
 /// Maximum pre-rendered frames (`PRERENDERLIMIT_ID`); 1 is Low Latency
 /// Mode "On".
@@ -53,6 +55,10 @@ pub const SHADER_CACHE: u32 = 0x0019_8FFF;
 /// to 0xFFFFFFFF (`PS_SHADERDISKCACHE_MAX_SIZE_MAX`); the driver's default is
 /// 0x4000.
 pub const SHADER_CACHE_SIZE: u32 = 0x00AC_8497;
+/// Max Frame Rate (`FRL_FPS_ID`): frames per second from 0, off
+/// (`FRL_FPS_DISABLED`), to 0x3ff (`FRL_FPS_MAX`); the driver's default is
+/// off.
+pub const FRAME_RATE_LIMIT: u32 = 0x1083_5002;
 
 pub struct NvidiaSetting {
     pub id: &'static str,
@@ -202,8 +208,107 @@ pub const SHADER_CACHE_UNLIMITED: NvidiaSetting = NvidiaSetting {
     values: &[(SHADER_CACHE, 1), (SHADER_CACHE_SIZE, 0xFFFF_FFFF)],
 };
 
+/// How far below the refresh rate the cap sits. Blur Busters' G-SYNC 101
+/// tests found 2 enough and recommend 3, at any refresh rate, because frame
+/// limiters overshoot a little.
+/// VERIFY (NOTES N144): that Control Panel shows the value written here as
+/// its Max Frame Rate.
+pub const FRAME_CAP_MARGIN: u32 = 3;
+
+pub const FRAME_CAP_ID: &str = "nvidia.framecap";
+
+/// Max Frame Rate a few frames per second below the main display's refresh
+/// rate, the rate it runs at now. The cap follows the display: when its rate
+/// changes, the tool reads as changed and applying it again sets the new cap.
+pub struct FrameCap;
+
+/// The cap for the main display, or why there is none.
+fn frame_cap(res: &ContextResolver) -> Result<std::result::Result<u32, BlockedReason>> {
+    let displays = res.displays()?;
+    let Some(main) = displays.iter().find(|d| d.primary).or(displays.first()) else {
+        return Ok(Err(BlockedReason::new(
+            BlockedCode::HardwareUnsupported,
+            "Windows lists no display on this PC.",
+        )));
+    };
+    if main.current_hz < 30 + FRAME_CAP_MARGIN {
+        return Ok(Err(BlockedReason::new(
+            BlockedCode::HardwareUnsupported,
+            format!(
+                "The main display runs at {} Hz, too low for a frame rate limit.",
+                main.current_hz
+            ),
+        )));
+    }
+    Ok(Ok((main.current_hz - FRAME_CAP_MARGIN).min(0x3ff)))
+}
+
+impl Tweak for FrameCap {
+    fn id(&self) -> &str {
+        FRAME_CAP_ID
+    }
+
+    fn metadata(&self) -> TweakMetadata {
+        TweakMetadata {
+            id: Cow::Borrowed(FRAME_CAP_ID),
+            name: Cow::Borrowed("NVIDIA frame rate limit: just under the refresh rate"),
+            summary: Cow::Borrowed(
+                "Sets Max Frame Rate in NVIDIA Control Panel's global settings to 3 frames per second below the \
+                 refresh rate the main display runs at, as Blur Busters' G-SYNC tests recommend: with G-SYNC or \
+                 FreeSync, games stay inside the range the display follows, and the graphics card does not draw \
+                 frames the display cannot show. If the refresh rate changes later, apply it again.",
+            ),
+            target: Cow::Borrowed("Manage 3D settings > Max Frame Rate: refresh rate minus 3"),
+            category: Cow::Borrowed("graphics"),
+            tier: Tier::Pro,
+            safety: SafetyTier::Safe,
+            impact: Impact::Moderate,
+            tradeoff: Some(Cow::Borrowed(
+                "No game runs above that frame rate. A lower cap set in a game still applies.",
+            )),
+            requires_reboot: false,
+        }
+    }
+
+    fn execution_context(&self) -> ExecutionContext {
+        ExecutionContext::Service
+    }
+
+    fn touches(&self) -> Vec<RegTarget> {
+        Vec::new()
+    }
+
+    fn system_targets(&self) -> Vec<SysItem> {
+        vec![item(FRAME_RATE_LIMIT)]
+    }
+
+    fn read_state(&self, res: &ContextResolver, has_journal_entry: bool) -> Result<TweakState> {
+        // The driver first, so a PC without NVIDIA says that.
+        let now = match res.read_system(&item(FRAME_RATE_LIMIT)) {
+            Ok(state) => state,
+            Err(EngineError::Blocked { reason }) => return Ok(TweakState::Blocked { reason }),
+            Err(e) => return Err(e),
+        };
+        let cap = match frame_cap(res)? {
+            Ok(cap) => cap,
+            Err(reason) => return Ok(TweakState::Blocked { reason }),
+        };
+        Ok(match (now == SysState::Dword { value: cap }, has_journal_entry) {
+            (false, _) => TweakState::Default,
+            (true, true) => TweakState::Applied,
+            (true, false) => TweakState::Foreign,
+        })
+    }
+
+    fn apply(&self, tx: &mut Transaction) -> Result<()> {
+        let cap = frame_cap(tx.resolver())?.map_err(|reason| EngineError::Blocked { reason })?;
+        tx.set_system(item(FRAME_RATE_LIMIT), SysState::Dword { value: cap })
+    }
+}
+
 pub fn all() -> Vec<Box<dyn Tweak>> {
     vec![
+        Box::new(FrameCap),
         Box::new(LOW_LATENCY),
         Box::new(POWER),
         Box::new(SHADER_CACHE_UNLIMITED),

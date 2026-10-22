@@ -3328,7 +3328,8 @@ mod nvidia_tools {
     use crate::journal::Record;
     use crate::system::{SysItem, SysState};
     use crate::tweaks::nvidia::{
-        self, LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, POWER_MANAGEMENT, PRERENDER_LIMIT, SHADER_CACHE, SHADER_CACHE_SIZE,
+        self, FRAME_RATE_LIMIT, LOW_LATENCY_STATE, LOW_LATENCY_ULTRA, POWER_MANAGEMENT, PRERENDER_LIMIT, SHADER_CACHE,
+        SHADER_CACHE_SIZE,
     };
     use crate::types::BlockedCode;
 
@@ -3448,6 +3449,66 @@ mod nvidia_tools {
             .records
             .iter()
             .any(|r| matches!(r, Record::Note(n) if n.text.contains("NVIDIA driver is no longer on this PC"))));
+    }
+
+    fn display(device: &str, primary: bool, hz: u32) -> crate::system::Display {
+        crate::system::Display {
+            device: device.into(),
+            name: "Generic PnP Monitor".into(),
+            primary,
+            width: 1920,
+            height: 1080,
+            current_hz: hz,
+            max_hz: 144,
+        }
+    }
+
+    #[test]
+    fn frame_cap_is_three_below_the_main_display_refresh_rate_and_undo_removes_it() {
+        let mut h = pc(true);
+        h.sys.set_displays(vec![
+            display(r"\\.\DISPLAY2", false, 60),
+            display(r"\\.\DISPLAY1", true, 144),
+        ]);
+        assert_eq!(state(&h, "nvidia.framecap"), TweakState::Default);
+        h.engine.apply("nvidia.framecap").unwrap();
+        assert_eq!(h.sys.get(&setting(FRAME_RATE_LIMIT)), v(141));
+        assert_eq!(state(&h, "nvidia.framecap"), TweakState::Applied);
+
+        h.engine.revert("nvidia.framecap").unwrap();
+        assert_eq!(h.sys.get(&setting(FRAME_RATE_LIMIT)), SysState::Absent);
+        assert_eq!(state(&h, "nvidia.framecap"), TweakState::Default);
+    }
+
+    #[test]
+    fn frame_cap_follows_a_changed_refresh_rate() {
+        let mut h = pc(true);
+        h.sys.set_displays(vec![display(r"\\.\DISPLAY1", true, 60)]);
+        h.engine.apply("nvidia.framecap").unwrap();
+        assert_eq!(h.sys.get(&setting(FRAME_RATE_LIMIT)), v(57));
+        // The display now runs at 165 Hz: the cap no longer fits it.
+        h.sys.set_displays(vec![display(r"\\.\DISPLAY1", true, 165)]);
+        assert_eq!(state(&h, "nvidia.framecap"), TweakState::Drifted);
+        h.engine.apply("nvidia.framecap").unwrap();
+        assert_eq!(h.sys.get(&setting(FRAME_RATE_LIMIT)), v(162));
+        h.engine.revert_all();
+        assert_eq!(h.sys.get(&setting(FRAME_RATE_LIMIT)), SysState::Absent);
+    }
+
+    #[test]
+    fn frame_cap_set_by_the_user_reads_as_already_set_and_without_a_display_is_not_offered() {
+        let mut h = pc(true);
+        h.sys.set_displays(vec![display(r"\\.\DISPLAY1", true, 144)]);
+        h.sys.set(&setting(FRAME_RATE_LIMIT), v(141));
+        assert_eq!(state(&h, "nvidia.framecap"), TweakState::Foreign);
+
+        h.sys.set_displays(Vec::new());
+        assert!(matches!(
+            state(&h, "nvidia.framecap"),
+            TweakState::Blocked { reason } if reason.code == BlockedCode::HardwareUnsupported
+        ));
+        assert!(h.engine.apply("nvidia.framecap").is_err());
+        assert!(h.engine.applied_tweak_ids().is_empty());
     }
 
     #[test]

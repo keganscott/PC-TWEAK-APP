@@ -11,7 +11,7 @@ import { APPEARANCE } from "../store/store";
  * a one-click set shows no lines. A preset is two clicks: its review lists every
  * change with its cost line, and Advanced ones need a tick that those were read.
  */
-export type PresetId = "basics" | "privacy" | "competitive";
+export type PresetId = "basics" | "privacy" | "competitive" | "lowend";
 
 export interface Preset {
   id: PresetId;
@@ -53,6 +53,31 @@ const COMPETITIVE = new Set([
   "amd.antilag",
 ]);
 
+/** The changes the Low-end PC preset adds to the basics (game plan
+ * 2026-10-22, B.5): fewer visual effects and background work, a power plan
+ * that keeps the processor out of power saving, and the graphics driver
+ * settings aimed at weaker cards (frame cap, AMD's driver upscaling, lighter
+ * texture filtering, a shader cache that keeps what it compiled). The engine
+ * only offers the driver ones on a PC with that card. Claude's pick, NOTES N145. */
+const LOW_END = new Set([
+  "display.animations",
+  "display.transparency",
+  "system.backgroundapps",
+  "system.powerthrottling",
+  "gaming.gamemode",
+  "gaming.capture",
+  "gaming.windowedgames",
+  "scheduling.systemresponsiveness",
+  "scheduling.gamestask",
+  "services.sysmain",
+  "power.plan",
+  "nvidia.framecap",
+  "nvidia.shadercache",
+  "nvidia.texturefiltering",
+  "amd.framecap",
+  "amd.rsr",
+]);
+
 export const PRESETS: readonly Preset[] = [
   {
     id: "basics",
@@ -65,6 +90,13 @@ export const PRESETS: readonly Preset[] = [
     name: "Competitive",
     blurb: "The basics plus game, network, power and graphics driver settings chosen for competitive play.",
     holds: (t) => basic(t) || COMPETITIVE.has(t.id),
+  },
+  {
+    id: "lowend",
+    name: "Low-end PC",
+    blurb:
+      "The basics plus fewer visual effects and background work, and graphics driver settings for laptops, integrated graphics and older cards.",
+    holds: (t) => basic(t) || LOW_END.has(t.id),
   },
   {
     id: "privacy",

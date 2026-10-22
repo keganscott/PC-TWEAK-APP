@@ -1,4 +1,4 @@
-import { Crosshair, EyeOff, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Crosshair, EyeOff, Feather, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 
 import type { TweakView } from "../../generated/TweakView";
@@ -6,7 +6,7 @@ import { needsTick, planPreset, PRESETS, type Preset, type PresetId } from "../.
 import { useActions, useStore } from "../../store/hooks";
 import { Button, cx, Dialog, SampleBadge, StatusBadge } from "../ui/primitives";
 
-const ICON: Record<PresetId, LucideIcon> = { basics: ShieldCheck, competitive: Crosshair, privacy: EyeOff };
+const ICON: Record<PresetId, LucideIcon> = { basics: ShieldCheck, competitive: Crosshair, lowend: Feather, privacy: EyeOff };
 
 /** Tools' presets: a card each, and a review before anything is applied. */
 export function PresetsSection({ gateOpen }: { gateOpen: boolean | null }) {

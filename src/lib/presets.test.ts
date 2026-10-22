@@ -22,6 +22,30 @@ function tool(id: string, over: Partial<TweakView> = {}): TweakView {
 }
 
 const competitive = PRESETS.find((p) => p.id === "competitive")!;
+const lowEnd = PRESETS.find((p) => p.id === "lowend")!;
+
+describe("the Low-end PC preset", () => {
+  it("holds the visual, background and graphics driver changes for a low-end PC", () => {
+    for (const id of [
+      "display.animations",
+      "display.transparency",
+      "system.backgroundapps",
+      "power.plan",
+      "nvidia.framecap",
+      "amd.framecap",
+      "amd.rsr",
+      "nvidia.texturefiltering",
+    ]) {
+      expect(lowEnd.holds(tool(id)), id).toBe(true);
+    }
+  });
+
+  it("leaves out the competitive network and latency changes", () => {
+    for (const id of ["network.nagle", "display.mpo", "nvidia.vsyncoff", "privacy.telemetry"]) {
+      expect(lowEnd.holds(tool(id)), id).toBe(false);
+    }
+  });
+});
 
 describe("the Competitive preset", () => {
   it("holds the pro latency tools and the power plan", () => {

@@ -38,7 +38,9 @@ function Build-Installer([string[]]$extra, [string]$name) {
     $bundleDir = Join-Path $root 'target\release\bundle\nsis'
     if (Test-Path $bundleDir) { Remove-Item $bundleDir -Recurse -Force }
     Write-Host "== tauri build $($extra -join ' ')"
-    npx tauri build @extra @configArgs
+    # To the console, not the pipeline: a function returns everything it
+    # outputs, so the log would become part of the path returned below.
+    npx tauri build @extra @configArgs | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "tauri build failed for $name" }
     $setup = Get-ChildItem $bundleDir -Filter '*-setup.exe' | Select-Object -First 1
     if (-not $setup) { throw "no NSIS installer was produced for $name" }

@@ -3,7 +3,9 @@
 //! a known game runs it keeps Gaming Mode's changes and the timer request in
 //! effect, as the user's settings say, and puts them back when the game closes.
 //! With "Clean memory during games" on, it also empties the standby list when
-//! free memory runs short (`memory::auto_clean_due`). With a Proof comparison
+//! free memory runs short or memory is fuller than the chosen percentage
+//! (`memory::auto_clean_due`); with "Also when no game is running", it does so
+//! between games too, less often (`memory::CleanRule::in_background`). With a Proof comparison
 //! set to "Record while I play", it records that comparison's samples while
 //! its game is in front (`proof::auto`).
 //! What it sees goes to the UI as the `engine://play` event and the
@@ -217,8 +219,9 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
     let mut ended = None;
     let mut first = true;
     loop {
-        // The game to clean memory for after this look, decided under the lock.
-        let mut clean_for = None;
+        // Whether to clean memory after this look, and for which game (none:
+        // in the background), decided under the lock.
+        let mut clean_for: Option<(Option<&str>, memory::CleanRule)> = None;
         let running = running_images().ok().and_then(|images| game_running(&images, &games));
         let event = watch.look(running);
         // The graphics card's readings, outside the engine lock: they read
@@ -298,9 +301,16 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
             // Not while a Proof recording measures: it would disturb it, as
             // the Clean memory button is refused then.
             let recording = e.proof_service().is_some_and(|p| p.is_capturing());
-            if settings.memory_auto_clean && !recording {
-                clean_for = watch.current();
-            } else {
+            let percent = settings.memory_clean_at_percent;
+            clean_for = match watch.current() {
+                _ if recording => None,
+                Some(game) if settings.memory_auto_clean || settings.memory_clean_always => {
+                    Some((Some(game), memory::CleanRule::during_games(percent)))
+                }
+                None if settings.memory_clean_always => Some((None, memory::CleanRule::in_background(percent))),
+                _ => None,
+            };
+            if clean_for.is_none() {
                 session.clean_problem = None;
             }
             if !e.play_session_open() {
@@ -348,23 +358,24 @@ fn watch(app: &AppHandle, engine: &SharedEngine, status: &SharedPlay) {
                 let _ = app.emit("engine://play", now);
             }
         }
-        if let Some(game) = clean_for {
-            clean_memory(game, &mut session, &mut reports);
+        if let Some((game, rule)) = clean_for {
+            clean_memory(game, rule, &mut session, &mut reports);
         }
         first = false;
         std::thread::sleep(LOOK_EVERY);
     }
 }
 
-/// "Clean memory during games": empty the standby list when the game is short
-/// of free memory, at most once a minute (`memory::auto_clean_due`), outside
-/// the engine lock. The game's report counts each clean; nothing is journalled,
-/// as no setting changes. The count and any failure show on the next look.
-fn clean_memory(game: &str, session: &mut Session, reports: &mut PlayReports) {
+/// "Clean memory during games": empty the standby list when memory is short
+/// or fuller than the chosen percentage, no more often than `rule` allows
+/// (`memory::auto_clean_due`), outside the engine lock. A game's report
+/// counts each clean made while it runs; nothing is journalled, as no setting
+/// changes. The count and any failure show on the next look.
+fn clean_memory(game: Option<&str>, rule: memory::CleanRule, session: &mut Session, reports: &mut PlayReports) {
     let lists = memory::system();
     let now = now_ms();
     let due = match lists.usage().and_then(|m| Ok((m, lists.free_bytes()?))) {
-        Ok((m, free)) => memory::auto_clean_due(&m, free, session.last_clean_ms, now),
+        Ok((m, free)) => memory::auto_clean_due(&m, free, session.last_clean_ms, now, rule),
         Err(err) => {
             session.clean_problem = Some(format!("Memory could not be read for cleaning: {err}"));
             return;
@@ -377,7 +388,9 @@ fn clean_memory(game: &str, session: &mut Session, reports: &mut PlayReports) {
     match memory::purge_standby(lists.as_ref(), now) {
         Ok(p) => {
             let freed = p.before.cached_bytes.saturating_sub(p.after.cached_bytes);
-            session.cleans = reports.note_clean(game, freed);
+            if let Some(game) = game {
+                session.cleans = reports.note_clean(game, freed);
+            }
             session.clean_problem = None;
         }
         Err(err) => session.clean_problem = Some(format!("Memory could not be cleaned: {err}")),

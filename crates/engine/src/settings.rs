@@ -74,6 +74,16 @@ pub struct Settings {
     /// Empty the standby list while a known game runs, when free memory is
     /// short (`memory::auto_clean_due`). Off unless the user turns it on.
     pub memory_auto_clean: bool,
+    /// Also clean when no known game runs, less often
+    /// (`memory::CleanRule::in_background`). Off unless the user turns it on.
+    pub memory_clean_always: bool,
+    /// Clean when memory is at least this full, in percent
+    /// (`memory::CleanRule`); `None` uses `memory::DEFAULT_CLEAN_PERCENT`.
+    pub memory_clean_at_percent: Option<u8>,
+    /// Closing the window quits PeakTweaks. Off by default: the window closes
+    /// and PeakTweaks keeps running by the clock (Kegan, 2026-10-24), so
+    /// Gaming Mode and memory cleaning carry on; Quit in the tray menu ends it.
+    pub quit_on_close: bool,
     /// The gentle reminders on Home (junk cleanup due, an old graphics
     /// driver) are turned off. On unless the user turns them off.
     pub reminders_off: bool,
@@ -218,6 +228,11 @@ mod tests {
         assert_eq!(s.language, Language::Plain);
         assert_eq!(s.rig_class_override, None);
         assert!(!s.gaming_mode && !s.game_timer && !s.memory_auto_clean);
+        assert!(!s.memory_clean_always && s.memory_clean_at_percent.is_none());
+        assert!(
+            !s.quit_on_close,
+            "closing the window keeps PeakTweaks running by the clock"
+        );
     }
 
     #[test]
@@ -240,6 +255,9 @@ mod tests {
             gaming_mode: true,
             game_timer: true,
             memory_auto_clean: true,
+            memory_clean_always: true,
+            memory_clean_at_percent: Some(80),
+            quit_on_close: true,
             reminders_off: true,
             cleanup_reminder_snoozed_until: Some(1_760_000_000_000),
             driver_reminder_snoozed_until: None,

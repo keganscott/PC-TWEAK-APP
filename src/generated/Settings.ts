@@ -34,6 +34,22 @@ gameTimer: boolean,
  */
 memoryAutoClean: boolean, 
 /**
+ * Also clean when no known game runs, less often
+ * (`memory::CleanRule::in_background`). Off unless the user turns it on.
+ */
+memoryCleanAlways: boolean, 
+/**
+ * Clean when memory is at least this full, in percent
+ * (`memory::CleanRule`); `None` uses `memory::DEFAULT_CLEAN_PERCENT`.
+ */
+memoryCleanAtPercent: number | null, 
+/**
+ * Closing the window quits PeakTweaks. Off by default: the window closes
+ * and PeakTweaks keeps running by the clock (Kegan, 2026-10-24), so
+ * Gaming Mode and memory cleaning carry on; Quit in the tray menu ends it.
+ */
+quitOnClose: boolean, 
+/**
  * The gentle reminders on Home (junk cleanup due, an old graphics
  * driver) are turned off. On unless the user turns them off.
  */

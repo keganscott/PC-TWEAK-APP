@@ -80,6 +80,12 @@ fn record_startup_failure(error: &peaktweaks_engine::error::EngineError) {
 fn main() {
     prepare_webview2_data_dir();
     tauri::Builder::default()
+        // First, so a second start ends here before it opens an engine: the
+        // running PeakTweaks brings its window back (or makes a new one).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let engine = tauri::Manager::try_state::<commands::EngineHandle>(app).and_then(|h| h.shared());
+            tray::show_window(app, engine);
+        }))
         .setup(|app| {
             let handle = match start_engine() {
                 Ok(engine) => commands::EngineHandle::ready(engine),
@@ -153,6 +159,16 @@ fn main() {
             commands::open_driver_page,
             commands::install_gpu_driver,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running PeakTweaks");
+        .build(tauri::generate_context!())
+        .expect("error while building PeakTweaks")
+        .run(|_app, event| {
+            // The last window closed: PeakTweaks runs on by the clock unless
+            // the user chose otherwise (`tray.rs`). An exit asked for in code
+            // (Quit) carries a code and is let through.
+            if let tauri::RunEvent::ExitRequested { api, code: None, .. } = event {
+                if tray::keep_running_without_window() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

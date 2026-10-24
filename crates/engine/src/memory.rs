@@ -92,9 +92,72 @@ pub const AUTO_GAP_MS: u64 = 60_000;
 /// `SystemCache`, which also counts the system's own working set and so read
 /// low enough to clean every minute on a PC with plenty free (review,
 /// 2026-10-11).
-pub fn auto_clean_due(m: &MemoryUse, free_bytes: u64, last_clean_ms: Option<u64>, now_ms: u64) -> bool {
-    let rested = last_clean_ms.is_none_or(|last| now_ms.saturating_sub(last) >= AUTO_GAP_MS);
-    rested && free_bytes < AUTO_FREE_BELOW && m.cached_bytes >= AUTO_CACHED_AT_LEAST
+///
+/// Also when memory is fuller than the user's percentage (Kegan,
+/// 2026-10-24: "if my memory goes up past a certain percentage"), counted as
+/// everything but the free lists, so files kept in memory count as full:
+/// emptying the standby list is what brings that number down. Task Manager's
+/// "In use" leaves those files out, so it reads lower.
+pub fn auto_clean_due(
+    m: &MemoryUse,
+    free_bytes: u64,
+    last_clean_ms: Option<u64>,
+    now_ms: u64,
+    rule: CleanRule,
+) -> bool {
+    let rested = last_clean_ms.is_none_or(|last| now_ms.saturating_sub(last) >= rule.gap_ms);
+    let short = free_bytes < AUTO_FREE_BELOW || filled_percent(m, free_bytes) >= rule.at_percent;
+    rested && short && m.cached_bytes >= AUTO_CACHED_AT_LEAST
+}
+
+/// How full memory is, in whole percent rounded down: all of it but the
+/// free lists.
+pub fn filled_percent(m: &MemoryUse, free_bytes: u64) -> u8 {
+    if m.total_bytes == 0 {
+        return 0;
+    }
+    let filled = m.total_bytes.saturating_sub(free_bytes);
+    u8::try_from(filled.saturating_mul(100) / m.total_bytes).unwrap_or(100)
+}
+
+/// The percentage offered, and the one used until the user picks one.
+/// PeakTweaks' own choice (NOTES N147).
+pub const DEFAULT_CLEAN_PERCENT: u8 = 85;
+pub const MIN_CLEAN_PERCENT: u8 = 60;
+pub const MAX_CLEAN_PERCENT: u8 = 95;
+/// With no game running, cleaning matters less and each clean makes Windows
+/// read some files from the drive again, so it waits longer.
+pub const BACKGROUND_GAP_MS: u64 = 5 * 60_000;
+
+/// When to clean: how full memory may get, and how long to wait between cleans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CleanRule {
+    pub at_percent: u8,
+    pub gap_ms: u64,
+}
+
+impl CleanRule {
+    fn percent(chosen: Option<u8>) -> u8 {
+        chosen
+            .unwrap_or(DEFAULT_CLEAN_PERCENT)
+            .clamp(MIN_CLEAN_PERCENT, MAX_CLEAN_PERCENT)
+    }
+
+    /// While a known game runs.
+    pub fn during_games(chosen: Option<u8>) -> Self {
+        Self {
+            at_percent: Self::percent(chosen),
+            gap_ms: AUTO_GAP_MS,
+        }
+    }
+
+    /// While no known game runs ("also when no game is running").
+    pub fn in_background(chosen: Option<u8>) -> Self {
+        Self {
+            at_percent: Self::percent(chosen),
+            gap_ms: BACKGROUND_GAP_MS,
+        }
+    }
 }
 
 /// The real thing on Windows; elsewhere, a refusal.
@@ -391,31 +454,81 @@ mod tests {
         assert_eq!(out.unix_ms, 7);
     }
 
-    #[test]
-    fn cleaning_during_a_game_waits_for_short_free_memory_a_big_list_and_a_minute() {
-        const GIB: u64 = 1 << 30;
-        let m = MemoryUse {
+    const GIB: u64 = 1 << 30;
+
+    /// 16 GB, 6 GB of it files kept in memory.
+    fn sixteen() -> MemoryUse {
+        MemoryUse {
             total_bytes: 16 * GIB,
             available_bytes: 6 * GIB + GIB / 2,
             cached_bytes: 6 * GIB,
-        };
+        }
+    }
+
+    #[test]
+    fn cleaning_during_a_game_waits_for_short_free_memory_a_big_list_and_a_minute() {
+        let m = sixteen();
+        let game = CleanRule::during_games(None);
         let short = GIB / 2;
-        assert!(auto_clean_due(&m, short, None, 1_000_000));
+        assert!(auto_clean_due(&m, short, None, 1_000_000, game));
         assert!(
-            !auto_clean_due(&m, short, Some(1_000_000 - AUTO_GAP_MS + 1), 1_000_000),
+            !auto_clean_due(&m, short, Some(1_000_000 - AUTO_GAP_MS + 1), 1_000_000, game),
             "within a minute"
         );
-        assert!(auto_clean_due(&m, short, Some(1_000_000 - AUTO_GAP_MS), 1_000_000));
-        assert!(!auto_clean_due(&m, 2 * GIB, None, 0), "2 GB free");
+        assert!(auto_clean_due(
+            &m,
+            short,
+            Some(1_000_000 - AUTO_GAP_MS),
+            1_000_000,
+            game
+        ));
         let small_list = MemoryUse {
             cached_bytes: GIB / 2,
             ..m
         };
-        assert!(!auto_clean_due(&small_list, short, None, 0), "little to let go");
+        assert!(!auto_clean_due(&small_list, short, None, 0, game), "little to let go");
         assert!(
-            !auto_clean_due(&m, short, Some(5), 0),
+            !auto_clean_due(&m, short, Some(5), 0, game),
             "a clock that went back is not a minute"
         );
+    }
+
+    #[test]
+    fn memory_fuller_than_the_chosen_percentage_is_cleaned_too() {
+        let m = sixteen();
+        // 2 GB free of 16: 87.5 full.
+        let free = 2 * GIB;
+        assert_eq!(filled_percent(&m, free), 87);
+        assert!(
+            auto_clean_due(&m, free, None, 0, CleanRule::during_games(None)),
+            "past the default 85"
+        );
+        assert!(
+            !auto_clean_due(&m, free, None, 0, CleanRule::during_games(Some(90))),
+            "under 90"
+        );
+        assert!(auto_clean_due(&m, free, None, 0, CleanRule::during_games(Some(80))));
+        // 4 GB free: 75 full, and more than 1 GB free.
+        assert!(!auto_clean_due(&m, 4 * GIB, None, 0, CleanRule::during_games(None)));
+    }
+
+    #[test]
+    fn a_percentage_outside_the_offered_range_uses_the_nearest_end() {
+        assert_eq!(CleanRule::during_games(Some(10)).at_percent, MIN_CLEAN_PERCENT);
+        assert_eq!(CleanRule::during_games(Some(100)).at_percent, MAX_CLEAN_PERCENT);
+        assert_eq!(CleanRule::during_games(None).at_percent, DEFAULT_CLEAN_PERCENT);
+    }
+
+    #[test]
+    fn with_no_game_running_it_cleans_at_most_every_five_minutes() {
+        let m = sixteen();
+        let idle = CleanRule::in_background(None);
+        let now = 10_000_000;
+        assert!(
+            !auto_clean_due(&m, GIB / 2, Some(now - AUTO_GAP_MS), now, idle),
+            "a minute is not enough"
+        );
+        assert!(auto_clean_due(&m, GIB / 2, Some(now - BACKGROUND_GAP_MS), now, idle));
     }
 
     #[test]

@@ -26,6 +26,7 @@ export function SettingsDialog({
   const [language, setLanguage] = useState<Language>("plain");
   const [rig, setRig] = useState<RigClass | "">("");
   const [reminders, setReminders] = useState(true);
+  const [keepRunning, setKeepRunning] = useState(true);
   const [accent, setAccent] = useState<Accent>("violet");
   const rigId = useId();
 
@@ -40,6 +41,7 @@ export function SettingsDialog({
       setLanguage(settings.language);
       setRig(settings.rigClassOverride ?? "");
       setReminders(!settings.remindersOff);
+      setKeepRunning(!settings.quitOnClose);
       setAccent(settings.accent);
     }
   }, [open, settings]);
@@ -47,7 +49,7 @@ export function SettingsDialog({
   const save = async () => {
     // Stay open on failure so the error is seen next to what was chosen.
     // Only what this dialog edits changes; anything else stored is kept.
-    if (settings && (await saveSettings({ ...settings, language, accent, rigClassOverride: rig || null, remindersOff: !reminders }, settings))) onClose();
+    if (settings && (await saveSettings({ ...settings, language, accent, rigClassOverride: rig || null, remindersOff: !reminders, quitOnClose: !keepRunning }, settings))) onClose();
   };
 
   return (
@@ -152,6 +154,21 @@ export function SettingsDialog({
             <span className="font-medium">Gentle reminders on Home</span>
             <span className="block text-xs text-ink-faint">
               When junk files were last cleared a month ago or more, and when a graphics driver is more than six months old.
+            </span>
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={keepRunning}
+            onChange={(e) => setKeepRunning(e.target.checked)}
+            className="mt-1 accent-accent"
+          />
+          <span>
+            <span className="font-medium">Keep running by the clock when the window closes</span>
+            <span className="block text-xs text-ink-faint">
+              Closing the window frees what the window itself uses; Gaming Mode and memory cleaning carry on. Open it again
+              from the icon by the clock or the desktop shortcut, or choose Quit PeakTweaks there to end it.
             </span>
           </span>
         </label>

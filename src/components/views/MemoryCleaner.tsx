@@ -158,10 +158,16 @@ export function MemoryCleaner() {
   );
 }
 
+/** The percentages offered (`memory::MIN_CLEAN_PERCENT` to
+ * `MAX_CLEAN_PERCENT`); the engine uses 85 until one is picked. */
+const PERCENTS = [60, 65, 70, 75, 80, 85, 90, 95];
+const DEFAULT_PERCENT = 85;
+
 /** "Clean memory during games" (Kegan, 2026-10-10: Mem Reduct's automatic
- * cleaning). The game watcher cleans by itself while a known game runs, on
- * the engine's limits (`memory::auto_clean_due`); each game's report counts
- * the cleans. A preference, saved like the other while-you-play switches. */
+ * cleaning; 2026-10-24: past a chosen percentage, also in the background).
+ * The game watcher cleans by itself on the engine's limits
+ * (`memory::auto_clean_due`); each game's report counts the cleans made
+ * while it ran. Preferences, saved like the other while-you-play switches. */
 function AutoClean() {
   const settings = useStore((s) => s.settings);
   const settingsOp = useStore((s) => s.settingsOp);
@@ -170,14 +176,18 @@ function AutoClean() {
   const { saveSettings } = useActions();
   const [saving, setSaving] = useState(false);
   const [failedHere, setFailedHere] = useState(false);
+  const percentId = useId();
   if (!settings) return null;
   const on = settings.memoryAutoClean;
-  const flip = async (next: boolean) => {
+  const always = settings.memoryCleanAlways;
+  const percent = settings.memoryCleanAtPercent ?? DEFAULT_PERCENT;
+  const save = async (next: Partial<typeof settings>) => {
     setSaving(true);
     setFailedHere(false);
-    setFailedHere(!(await saveSettings({ ...settings, memoryAutoClean: next }, settings)));
+    setFailedHere(!(await saveSettings({ ...settings, ...next }, settings)));
     setSaving(false);
   };
+  const flip = (next: boolean) => save({ memoryAutoClean: next });
   const cleans = play?.memoryCleans ?? 0;
   return (
     <div className="mt-4 border-t border-line pt-4">
@@ -189,13 +199,45 @@ function AutoClean() {
         onChange={(next) => void flip(next)}
         badge={on && play?.game ? <StatusBadge tone="ok">On now</StatusBadge> : null}
       >
-        While a game runs, empties the standby list as the button does, whenever less than 1 GB is free (Available less
-        Files kept in memory) and Windows keeps more than 1 GB of files in memory: at most once a minute, and not while
-        Proof records. Files the game read recently
-        are let go too, so it may read some of them from the drive again. Each game's report in While you play says how
-        often it cleaned.
+        While a game runs, empties the standby list as the button does, whenever memory is fuller than the percentage
+        below or less than 1 GB is free, and Windows keeps more than 1 GB of files in memory: at most once a minute, and
+        not while Proof records. Files the game read recently are let go too, so it may read some of them from the drive
+        again. Each game's report in While you play says how often it cleaned.
         {on && play?.game && cleans > 0 && ` Cleaned ${cleans === 1 ? "once" : `${cleans.toLocaleString()} times`} so far in this game.`}
       </SwitchRow>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <label htmlFor={percentId}>Clean when memory is this full</label>
+        <select
+          id={percentId}
+          value={percent}
+          disabled={settingsOp.status === "running"}
+          onChange={(e) => void save({ memoryCleanAtPercent: Number(e.target.value) })}
+          className="rounded-md border border-line bg-surface-0 px-2 py-1 text-sm"
+        >
+          {PERCENTS.map((p) => (
+            <option key={p} value={p}>
+              {p}%
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="mt-1 text-xs text-ink-faint">
+        Counted as everything but free memory, so files Windows keeps in memory count as full. Task Manager's "In use"
+        leaves those out, so it shows less.
+      </p>
+      <div className="mt-3">
+        <SwitchRow
+          label="Also when no game is running"
+          checked={always}
+          disabled={settingsOp.status === "running"}
+          busy={saving}
+          onChange={(next) => void save({ memoryCleanAlways: next })}
+          badge={always && !play?.game ? <StatusBadge tone="ok">On now</StatusBadge> : null}
+        >
+          The same cleaning between games, at most once every five minutes, while PeakTweaks runs, also with its window
+          closed.
+        </SwitchRow>
+      </div>
       {failedHere && settingsOp.status === "failed" && (
         <div className="mt-3">
           <ErrorCallout text={explain(settingsOp.error)} technical={technical} />

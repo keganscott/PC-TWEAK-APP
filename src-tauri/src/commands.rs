@@ -166,6 +166,7 @@ pub async fn set_settings(
             None => settings,
         };
         let out = e.set_settings(wanted);
+        crate::tray::set_quit_on_close(e.settings().quit_on_close);
         Ok((out, e.settings().gaming_mode, crate::tray::next_seq()))
     })
     .await?;

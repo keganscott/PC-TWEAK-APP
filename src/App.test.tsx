@@ -495,6 +495,23 @@ describe("App", () => {
     expect(within(section).getAllByText("On now")).toHaveLength(2);
   });
 
+  it("Tools cleans memory past a chosen percentage, and also with no game running when asked", async () => {
+    const backend = createMockBackend();
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await goTo("Tools");
+    const panel = await screen.findByRole("region", { name: "Clean memory" });
+    const percent = within(panel).getByRole("combobox", { name: "Clean when memory is this full" }) as HTMLSelectElement;
+    expect(percent.value).toBe("85");
+    await userEvent.selectOptions(percent, "90");
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ memoryCleanAtPercent: 90 }), expect.anything());
+    const always = within(panel).getByRole("switch", { name: "Also when no game is running" }) as HTMLInputElement;
+    expect(always.checked).toBe(false);
+    await userEvent.click(always);
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ memoryCleanAlways: true }), expect.anything());
+  });
+
   it("Tools turns on Clean memory during games, which needs no restore point, and counts its cleans", async () => {
     const backend = createMockBackend({ playing: "fortnite" });
     const save = vi.spyOn(backend, "setSettings");
@@ -1450,6 +1467,20 @@ describe("review regressions", () => {
     expect((within(dialog).getByLabelText(/Technical/) as HTMLInputElement).checked).toBe(true);
     await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("Settings keeps PeakTweaks running by the clock when the window closes, unless that is turned off", async () => {
+    const backend = createMockBackend();
+    const save = vi.spyOn(backend, "setSettings");
+    renderApp(backend);
+    await screen.findByRole("heading", { name: "Home", level: 1 });
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const keep = within(dialog).getByRole("checkbox", { name: /Keep running by the clock when the window closes/ }) as HTMLInputElement;
+    expect(keep.checked).toBe(true);
+    await userEvent.click(keep);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ quitOnClose: true }), expect.anything());
   });
 
   it("Home waits for the first check before offering to make a restore point", async () => {

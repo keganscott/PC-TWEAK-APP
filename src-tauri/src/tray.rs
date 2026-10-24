@@ -1,7 +1,14 @@
-//! The icon by the clock while PeakTweaks is open (game plan new idea 12):
-//! Gaming Mode on or off, and a way back to the window. Closing the window
-//! still quits the app; the icon goes with it. Nothing here that cannot be
-//! undone: Undo all stays in Backups, behind its confirmation.
+//! The icon by the clock while PeakTweaks runs (game plan new idea 12):
+//! Gaming Mode on or off, a way back to the window, and Quit. Nothing here
+//! that cannot be undone: Undo all stays in Backups, behind its confirmation.
+//!
+//! **Closing the window** (Kegan, 2026-10-24: "go in the background ... not
+//! exhausting more resources"): the window and its WebView2 processes close,
+//! which frees their memory, but PeakTweaks keeps running here, so the game
+//! watcher carries on with Gaming Mode and memory cleaning. Open makes a new
+//! window. Quit, or the setting "Quit when the window closes"
+//! (`Settings::quit_on_close`), ends PeakTweaks. Without an icon or an
+//! engine there is nothing to run in the background, so closing quits.
 //!
 //! Gaming Mode is the same setting as the switch in Tools, saved through the
 //! engine (`Engine::set_settings`, so turning it off mid-game puts its changes
@@ -10,7 +17,7 @@
 //! here follows (`sync`). Hovering the icon says which game is running and
 //! whether Gaming Mode's changes are in effect (`show_play`).
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
@@ -25,6 +32,25 @@ use crate::commands::SharedEngine;
 
 const GAMING: &str = "gaming_mode";
 const OPEN: &str = "open";
+const QUIT: &str = "quit";
+
+/// `Settings::quit_on_close`, kept here so closing the window never waits
+/// for the engine lock.
+static QUIT_ON_CLOSE: AtomicBool = AtomicBool::new(false);
+/// The icon and the engine both exist, so running on with no window is useful.
+static CAN_RUN_ON: AtomicBool = AtomicBool::new(false);
+/// Quit was chosen in the menu.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// Follow a saved `Settings::quit_on_close`.
+pub fn set_quit_on_close(quit: bool) {
+    QUIT_ON_CLOSE.store(quit, Ordering::SeqCst);
+}
+
+/// Whether the last window closing should leave PeakTweaks running.
+pub fn keep_running_without_window() -> bool {
+    CAN_RUN_ON.load(Ordering::SeqCst) && !QUIT_ON_CLOSE.load(Ordering::SeqCst) && !QUITTING.load(Ordering::SeqCst)
+}
 
 /// The menu's Gaming Mode item, kept so its tick can follow the setting,
 /// and the number of the newest save it shows.
@@ -46,13 +72,20 @@ pub fn next_seq() -> u64 {
 /// Put the icon by the clock. Without an engine Gaming Mode is greyed out,
 /// and the icon still brings the window back with its reason.
 pub fn build(app: &tauri::App, engine: Option<SharedEngine>) -> tauri::Result<()> {
-    let on = engine
-        .as_ref()
-        .and_then(|e| e.lock().ok().map(|e| e.settings().gaming_mode))
-        .unwrap_or(false);
+    let saved = engine.as_ref().and_then(|e| e.lock().ok().map(|e| e.settings()));
+    let on = saved.as_ref().is_some_and(|s| s.gaming_mode);
+    set_quit_on_close(saved.as_ref().is_some_and(|s| s.quit_on_close));
     let gaming = CheckMenuItem::with_id(app, GAMING, "Gaming Mode", engine.is_some(), on, None::<&str>)?;
     let open = MenuItem::with_id(app, OPEN, "Open PeakTweaks", true, None::<&str>)?;
-    let menu = MenuBuilder::new(app).item(&gaming).separator().item(&open).build()?;
+    let quit = MenuItem::with_id(app, QUIT, "Quit PeakTweaks", true, None::<&str>)?;
+    let menu = MenuBuilder::new(app)
+        .item(&gaming)
+        .separator()
+        .item(&open)
+        .item(&quit)
+        .build()?;
+    let window_engine = engine.clone();
+    let has_engine = engine.is_some();
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("PeakTweaks")
         .menu(&menu)
@@ -63,13 +96,18 @@ pub fn build(app: &tauri::App, engine: Option<SharedEngine>) -> tauri::Result<()
                     toggle_gaming_mode(app.clone(), engine);
                 }
             }
-            OPEN => show_window(app),
+            OPEN => show_window(app, window_engine.clone()),
+            QUIT => {
+                QUITTING.store(true, Ordering::SeqCst);
+                app.exit(0);
+            }
             _ => {}
         });
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+    CAN_RUN_ON.store(has_engine, Ordering::SeqCst);
     app.manage(Tray {
         gaming,
         shown: Mutex::new(0),
@@ -162,12 +200,37 @@ fn tooltip(status: &PlayStatus) -> String {
     format!("PeakTweaks: {game} running, {state}")
 }
 
-fn show_window(app: &AppHandle) {
+/// Bring the window back, or make a new one if it was closed: from the
+/// window settings in `tauri.conf.json`, placed where it was last closed.
+/// Made on a thread of its own: on Windows, making a window from a menu
+/// handler on the window thread can deadlock, and the place is read under
+/// the engine lock.
+pub fn show_window(app: &AppHandle, engine: Option<SharedEngine>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        return;
     }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let Some(config) = app.config().app.windows.iter().find(|w| w.label == "main").cloned() else {
+            return;
+        };
+        let window = match tauri::WebviewWindowBuilder::from_config(&app, &config).and_then(|b| b.build()) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("the window could not be opened again: {e}");
+                return;
+            }
+        };
+        let store = engine
+            .and_then(|e| e.lock().ok().map(|e| e.window_store()))
+            .unwrap_or_default();
+        // Places and shows it; the tracker made at start keeps following it.
+        drop(crate::window_place::restore(&window, store));
+        let _ = window.set_focus();
+    });
 }
 
 #[cfg(test)]

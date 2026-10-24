@@ -1,0 +1,13 @@
+{
+  "name": "PresentMon console application",
+  "version": "2.6.0",
+  "tag": "v2.6.0",
+  "url": "https://github.com/GameTechDev/PresentMon/releases/download/v2.6.0/PresentMon-2.6.0-x64.exe",
+  "file": "PresentMon-x64.exe",
+  "sha256": "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af",
+  "size": 980320,
+  "signer": "Intel Corporation",
+  "license": "MIT",
+  "licenseFile": "LICENSE.txt",
+  "obtained": "2026-09-29, downloaded through a TLS proxy; the hash has not been compared with a second independent source (see docs/NOTES.md N32)"
+}

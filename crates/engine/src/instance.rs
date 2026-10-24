@@ -8,6 +8,12 @@
 //! protected data folder for as long as it lives, and a second engine refuses
 //! to start. The operating system drops the lock when the process ends, even
 //! after a crash, so a stale lock cannot block the next start.
+//!
+//! PeakTweaks keeps running by the clock after its window closes, so a second
+//! start is usually someone wanting the window back. It looks whether the lock
+//! is held (`held_elsewhere`); if so it asks the running copy to show its
+//! window (`show::ask`) and ends. The lock decides, not the signal, so a
+//! program that made the signal first cannot keep PeakTweaks from starting.
 
 use std::fs::{File, OpenOptions, TryLockError};
 
@@ -45,6 +51,75 @@ impl InstanceLock {
     }
 }
 
+/// Whether another engine holds the lock now. A quick look: a lock taken
+/// here is let go at once.
+pub fn held_elsewhere(dir: &TrustedDir) -> bool {
+    matches!(InstanceLock::acquire(dir), Err(EngineError::AlreadyRunning))
+}
+
+/// The "show your window" signal between a second start and the running copy:
+/// a named Windows event in this sign-in session.
+pub mod show {
+    #[cfg(windows)]
+    use windows::core::w;
+    #[cfg(windows)]
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    #[cfg(windows)]
+    use windows::Win32::System::Threading::{
+        CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE,
+    };
+
+    /// Ask the running copy to show its window. False when there is no
+    /// running copy listening.
+    #[cfg(windows)]
+    pub fn ask() -> bool {
+        unsafe {
+            let Ok(event) = OpenEventW(EVENT_MODIFY_STATE, false, w!("Local\\PeakTweaks.ShowWindow")) else {
+                return false;
+            };
+            let sent = SetEvent(event).is_ok();
+            let _ = CloseHandle(event);
+            sent
+        }
+    }
+
+    /// Call `on_ask` each time a second start asks, on a thread of its own,
+    /// for as long as the process runs.
+    #[cfg(windows)]
+    pub fn listen(on_ask: impl Fn() + Send + 'static) -> crate::error::Result<()> {
+        let event = unsafe { CreateEventW(None, false, false, w!("Local\\PeakTweaks.ShowWindow")) }.map_err(|e| {
+            crate::error::EngineError::Internal {
+                detail: format!("the show-window signal could not be made: {e}"),
+            }
+        })?;
+        // A handle is a number; it lives as long as the process.
+        let raw = event.0 as usize;
+        std::thread::Builder::new()
+            .name("show-window".into())
+            .spawn(move || loop {
+                let event = HANDLE(raw as *mut core::ffi::c_void);
+                if unsafe { WaitForSingleObject(event, INFINITE) }.0 != 0 {
+                    return;
+                }
+                on_ask();
+            })
+            .map_err(|e| crate::error::EngineError::Internal {
+                detail: format!("the show-window thread did not start: {e}"),
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    pub fn ask() -> bool {
+        false
+    }
+
+    #[cfg(not(windows))]
+    pub fn listen(_on_ask: impl Fn() + Send + 'static) -> crate::error::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +137,15 @@ mod tests {
 
         drop(first);
         InstanceLock::acquire(&trusted).expect("free again once the first engine is gone");
+    }
+
+    #[test]
+    fn a_look_at_the_lock_sees_a_running_engine_and_leaves_a_free_lock_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let trusted = TrustedDir::insecure_for_tests(dir.path());
+        assert!(!held_elsewhere(&trusted));
+        let running = InstanceLock::acquire(&trusted).expect("the look let the lock go");
+        assert!(held_elsewhere(&trusted));
+        drop(running);
     }
 }

@@ -77,15 +77,22 @@ fn record_startup_failure(error: &peaktweaks_engine::error::EngineError) {
     }
 }
 
+/// A second start while PeakTweaks runs by the clock: ask the running copy to
+/// show its window, and end before opening anything (`instance::show`).
+fn hand_over_to_running_copy() -> bool {
+    use peaktweaks_engine::instance;
+    let Ok(dir) = peaktweaks_engine::secure_dir::TrustedDir::ensure_program_data() else {
+        return false;
+    };
+    instance::held_elsewhere(&dir) && instance::show::ask()
+}
+
 fn main() {
+    if hand_over_to_running_copy() {
+        return;
+    }
     prepare_webview2_data_dir();
     tauri::Builder::default()
-        // First, so a second start ends here before it opens an engine: the
-        // running PeakTweaks brings its window back (or makes a new one).
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let engine = tauri::Manager::try_state::<commands::EngineHandle>(app).and_then(|h| h.shared());
-            tray::show_window(app, engine);
-        }))
         .setup(|app| {
             let handle = match start_engine() {
                 Ok(engine) => commands::EngineHandle::ready(engine),
@@ -115,7 +122,14 @@ fn main() {
             // Started after the icon exists, so the icon hears of the first
             // game it sees.
             if let Some(engine) = handle.shared() {
-                play::start(app.handle().clone(), engine, status.clone());
+                play::start(app.handle().clone(), engine.clone(), status.clone());
+                // A second start asks for the window (`hand_over_to_running_copy`).
+                let shown = app.handle().clone();
+                if let Err(e) = peaktweaks_engine::instance::show::listen(move || {
+                    tray::show_window(&shown, Some(engine.clone()));
+                }) {
+                    eprintln!("{e}");
+                }
             }
             tauri::Manager::manage(app, handle);
             tauri::Manager::manage(app, status);

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PeakTweaks logo sheet</title>
+<link rel="stylesheet" href="fonts/local.css" />
+<style>
+  :root { --violet: #7e3bed; --lime: #c6ff34; --line: rgba(255,255,255,.08); --t2: rgba(255,255,255,.62); --t3: rgba(255,255,255,.42); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: #000; color: #fff; font-family: "Plus Jakarta Sans", sans-serif; padding: 40px 48px; display: flex; flex-direction: column; gap: 26px; -webkit-font-smoothing: antialiased; }
+  .lines { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 1px, transparent 1px 7px); }
+  .head { display: flex; justify-content: space-between; align-items: baseline; }
+  .head h1 { font-size: 26px; font-weight: 800; letter-spacing: -.03em; }
+  .head span { color: var(--t3); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .label { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; color: var(--t3); }
+  .cands { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .cand { border: 1px solid var(--line); border-radius: 16px; height: 380px; padding: 20px; display: flex; flex-direction: column; background: #0a0a0c; position: relative; }
+  .cand.pick { border-color: var(--violet); }
+  .cand .badge { position: absolute; top: 18px; right: 18px; background: var(--lime); color: #000; font-size: 11px; font-weight: 800; padding: 5px 9px; border-radius: 6px; }
+  .cand .big { flex: 1; display: grid; place-items: center; }
+  .cand .foot { display: flex; justify-content: space-between; align-items: flex-end; }
+  .cand b { font-size: 15px; font-weight: 800; display: block; }
+  .cand p { color: var(--t2); font-size: 12.5px; margin-top: 3px; }
+  .lock { display: flex; align-items: center; gap: 10px; }
+  .word { font-family: "Exo 2", sans-serif; font-weight: 800; font-size: 15px; letter-spacing: .06em; }
+  .word span { font-weight: 500; opacity: .62; }
+  .row { display: grid; grid-template-columns: repeat(4, 1fr) 1.3fr; gap: 16px; }
+  .tile { height: 300px; border-radius: 16px; display: grid; place-items: center; position: relative; overflow: hidden; }
+  .tile .cap { position: absolute; left: 14px; bottom: 12px; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+  .t-black { background-color: #000; border: 1px solid var(--line); }
+  .t-violet { background: var(--violet); }
+  .t-white { background: #fff; }
+  .t-lime { background: var(--lime); }
+  .icon { width: 96px; height: 96px; border-radius: 22px; display: grid; place-items: center; }
+  .sizes { border: 1px solid var(--line); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+  .sizes .s { display: flex; align-items: flex-end; gap: 22px; }
+  .sizes .w { display: flex; flex-direction: column; gap: 14px; margin-top: auto; }
+  .onwhite { background: #fff; color: #000; border-radius: 10px; padding: 12px 14px; }
+  .onwhite .word span { opacity: .55; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="peak" viewBox="0 0 32 32">
+      <polygon points="16,3 30.5,28 23.2,28 16,15.6 8.8,28 1.5,28" fill="#7e3bed" />
+      <polygon points="16,20.6 20.3,28 11.7,28" fill="#c6ff34" />
+    </symbol>
+    <symbol id="peak-mono-w" viewBox="0 0 32 32">
+      <polygon points="16,3 30.5,28 23.2,28 16,15.6 8.8,28 1.5,28" fill="#fff" />
+      <polygon points="16,20.6 20.3,28 11.7,28" fill="#c6ff34" />
+    </symbol>
+    <symbol id="peak-on-violet" viewBox="0 0 32 32">
+      <polygon points="16,3 30.5,28 23.2,28 16,15.6 8.8,28 1.5,28" fill="#fff" />
+      <polygon points="16,20.6 20.3,28 11.7,28" fill="#c6ff34" />
+    </symbol>
+    <symbol id="peak-on-lime" viewBox="0 0 32 32">
+      <polygon points="16,3 30.5,28 23.2,28 16,15.6 8.8,28 1.5,28" fill="#000" />
+      <polygon points="16,20.6 20.3,28 11.7,28" fill="#7e3bed" />
+    </symbol>
+    <symbol id="rank" viewBox="0 0 32 32">
+      <path d="M3.5 29L16 16.5 28.5 29" fill="none" stroke="#7e3bed" stroke-width="5.2" />
+      <path d="M7.5 13.5L16 5 24.5 13.5" fill="none" stroke="#c6ff34" stroke-width="5.2" />
+    </symbol>
+    <symbol id="play" viewBox="0 0 32 32">
+      <rect x="5" y="3" width="6.4" height="26" fill="#7e3bed" />
+      <polygon points="11.4,3 27.5,11.5 11.4,20" fill="#c6ff34" />
+    </symbol>
+  </defs>
+</svg>
+
+<div class="head"><h1>PeakTweaks logo</h1><span>Black &middot; Violet &middot; White &middot; Lime</span></div>
+
+<div class="cands">
+  <div class="cand pick lines">
+    <span class="badge">My pick</span>
+    <span class="label">A &middot; Summit</span>
+    <div class="big"><svg width="180" height="180"><use href="#peak" /></svg></div>
+    <div class="foot"><div><b>A peak with a lime summit inside</b><p>Reads at 16 px. The lime part is the change you make.</p></div><div class="lock"><svg width="26" height="26"><use href="#peak" /></svg></div></div>
+  </div>
+  <div class="cand">
+    <span class="label">B &middot; Rank</span>
+    <div class="big"><svg width="180" height="180"><use href="#rank" /></svg></div>
+    <div class="foot"><div><b>Two stacked chevrons</b><p>Gaming rank badge feel. Busier at small sizes.</p></div><div class="lock"><svg width="26" height="26"><use href="#rank" /></svg></div></div>
+  </div>
+  <div class="cand">
+    <span class="label">C &middot; Play P</span>
+    <div class="big"><svg width="180" height="180"><use href="#play" /></svg></div>
+    <div class="foot"><div><b>A P made from a play button</b><p>Strong letter mark, less about &ldquo;peak&rdquo;.</p></div><div class="lock"><svg width="26" height="26"><use href="#play" /></svg></div></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="tile t-black lines"><div class="icon" style="background:#0d0d10;border:1px solid rgba(255,255,255,.1)"><svg width="58" height="58"><use href="#peak" /></svg></div><span class="cap" style="color:rgba(255,255,255,.5)">APP ICON &middot; BLACK</span></div>
+  <div class="tile t-violet"><svg width="96" height="96"><use href="#peak-on-violet" /></svg><span class="cap" style="color:rgba(255,255,255,.75)">ON VIOLET</span></div>
+  <div class="tile t-white"><svg width="96" height="96"><use href="#peak" /></svg><span class="cap" style="color:rgba(0,0,0,.5)">ON WHITE</span></div>
+  <div class="tile t-lime"><svg width="96" height="96"><use href="#peak-on-lime" /></svg><span class="cap" style="color:rgba(0,0,0,.55)">ON LIME</span></div>
+  <div class="sizes">
+    <span class="label">Small sizes and wordmark</span>
+    <div class="s"><svg width="16" height="16"><use href="#peak" /></svg><svg width="24" height="24"><use href="#peak" /></svg><svg width="32" height="32"><use href="#peak" /></svg><svg width="48" height="48"><use href="#peak" /></svg></div>
+    <div class="w">
+      <div class="lock"><svg width="28" height="28"><use href="#peak" /></svg><span class="word">PEAK<span>TWEAKS</span></span></div>
+      <div class="lock onwhite"><svg width="28" height="28"><use href="#peak" /></svg><span class="word">PEAK<span>TWEAKS</span></span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

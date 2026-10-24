@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PeakTweaks mockup C: Paper</title>
+<link rel="stylesheet" href="fonts/local.css" />
+<style>
+  :root {
+    --bg: #f3f3ef;
+    --paper: #ffffff;
+    --ink: #111214;
+    --muted: #63666d;
+    --faint: #9a9da3;
+    --line: #e3e3dd;
+    --accent: #2f4bff;
+    --ok: #12804f;
+    --warn: #b45309;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    width: 1440px; height: 900px; overflow: hidden; background: var(--bg); color: var(--ink);
+    font-family: "Inter", sans-serif; font-size: 14px; letter-spacing: -.005em;
+    display: grid; grid-template-columns: 220px 1fr;
+  }
+  .mono { font-family: "JetBrains Mono", monospace; font-feature-settings: "tnum"; letter-spacing: -.02em; }
+  aside { padding: 30px 22px; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -.02em; padding-left: 8px; }
+  .logo i { width: 18px; height: 18px; background: var(--ink); display: block; transform: rotate(45deg); border-radius: 3px; position: relative; }
+  .logo i::after { content: ""; position: absolute; inset: 5px; background: var(--accent); border-radius: 1px; }
+  nav { margin-top: 40px; display: flex; flex-direction: column; gap: 2px; }
+  nav a { padding: 9px 12px; border-radius: 8px; color: var(--muted); font-weight: 500; display: flex; justify-content: space-between; align-items: center; }
+  nav a.on { background: var(--ink); color: #fff; }
+  nav a span { font-size: 12px; color: var(--faint); }
+  nav a.on span { color: #9aa3ff; }
+  .plan { margin-top: auto; border-top: 1px solid var(--line); padding: 16px 8px 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .plan b { color: var(--ink); }
+  main { padding: 34px 44px; display: flex; flex-direction: column; gap: 26px; position: relative; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 13px; }
+  .topbar .chips { display: flex; gap: 8px; }
+  .chip { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 6px 12px; display: flex; gap: 8px; align-items: center; color: var(--ink); font-weight: 500; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  .hero { display: grid; grid-template-columns: 1fr 380px; gap: 40px; align-items: end; }
+  .hero h1 { font-size: 64px; line-height: 1; font-weight: 700; letter-spacing: -.045em; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero p { margin-top: 14px; color: var(--muted); font-size: 16px; }
+  .safety { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 6px 20px; }
+  .safety .line { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-top: 1px solid var(--line); }
+  .safety .line:first-child { border-top: 0; }
+  .safety b { font-weight: 600; display: block; }
+  .safety small { color: var(--muted); font-size: 12.5px; }
+  .link { color: var(--accent); font-weight: 600; font-size: 13px; }
+  .strip { display: grid; grid-template-columns: repeat(5, 1fr); background: var(--paper); border: 1px solid var(--line); border-radius: 16px; }
+  .cell { padding: 18px 20px; border-left: 1px solid var(--line); }
+  .cell:first-child { border-left: 0; }
+  .cell i { font-style: normal; font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .1em; font-weight: 600; }
+  .cell b { display: block; font-size: 30px; font-weight: 500; margin-top: 8px; }
+  .cell b small { font-size: 15px; color: var(--faint); font-weight: 400; }
+  .cell span { color: var(--muted); font-size: 12.5px; }
+  .cell.flag b { color: var(--warn); }
+  .cols { display: grid; grid-template-columns: 1fr 380px; gap: 40px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; }
+  .list { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; }
+  .item { display: grid; grid-template-columns: 36px 1fr 110px 20px; align-items: center; gap: 12px; padding: 15px 20px; border-top: 1px solid var(--line); }
+  .item:first-child { border-top: 0; }
+  .item .n { color: var(--faint); }
+  .item b { font-weight: 600; }
+  .item p { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .who { font-size: 12px; font-weight: 600; color: var(--warn); }
+  .who.hw { color: #4b5563; }
+  .who.ok { color: var(--ok); }
+  .arrow { color: var(--faint); }
+  .auto { background: var(--ink); color: #fff; border-radius: 16px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+  .auto h3 { font-size: 22px; letter-spacing: -.02em; }
+  .auto p { color: #a7aab2; line-height: 1.5; }
+  .auto ol { padding-left: 18px; color: #d3d5db; line-height: 1.9; font-size: 13px; }
+  .go { background: var(--accent); color: #fff; border-radius: 10px; padding: 13px; text-align: center; font-weight: 600; }
+  .ghost { color: #c7cad1; text-align: center; font-size: 13px; }
+  .tag { position: absolute; right: 44px; bottom: 16px; font-size: 11px; color: var(--faint); letter-spacing: .08em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<aside>
+  <div class="logo"><i></i>peaktweaks</div>
+  <nav>
+    <a class="on">Home <span>3</span></a>
+    <a>Games <span>2</span></a>
+    <a>Tools</a>
+    <a>Proof</a>
+    <a>Backups <span>2</span></a>
+    <a>Settings</a>
+  </nav>
+  <div class="plan"><b>Starter</b> &middot; free<br />Collects no data.<br />Every change can be undone.</div>
+</aside>
+
+<main>
+  <div class="topbar">
+    <span>Monday evening &middot; checked 18:04</span>
+    <div class="chips">
+      <span class="chip"><span class="dot"></span>Restore point #142</span>
+      <span class="chip">Check again</span>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <h1><em>3 things</em> worth<br />a look on this PC.</h1>
+      <p>Windows 11 Pro &middot; Mid rig &middot; 8 checks already fine</p>
+    </div>
+    <div class="safety">
+      <div class="line"><div><b>Restore point ready</b><small>#142 &middot; made today 18:04</small></div><span class="link">Details</span></div>
+      <div class="line"><div><b>2 changes applied</b><small>Recorded first, each can be undone</small></div><span class="link">Undo all</span></div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="cell"><i>Processor</i><b class="mono">8<small>/16</small></b><span>Ryzen 7 7800X3D</span></div>
+    <div class="cell"><i>Graphics</i><b class="mono">12<small> GB</small></b><span>RTX 4070</span></div>
+    <div class="cell flag"><i>Memory</i><b class="mono">4800<small> / 6000</small></b><span>32 GB &middot; MT/s, below rated</span></div>
+    <div class="cell flag"><i>Display</i><b class="mono">60<small> / 165 Hz</small></b><span>1920&times;1080</span></div>
+    <div class="cell"><i>Windows drive</i><b class="mono">NVMe</b><span>Samsung 990 Pro</span></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <h2>Worth a look <span>Who acts</span></h2>
+      <div class="list">
+        <div class="item"><span class="n mono">01</span><div><b>The display runs at 60 Hz; it offers 165 Hz</b><p>Windows Settings &gt; Display &gt; Advanced display</p></div><span class="who">You, 1 minute</span><span class="arrow">&rarr;</span></div>
+        <div class="item"><span class="n mono">02</span><div><b>Memory runs below its rated speed</b><p>XMP or EXPO is a BIOS setting. PeakTweaks never writes to the BIOS.</p></div><span class="who">You, in BIOS</span><span class="arrow">&rarr;</span></div>
+        <div class="item"><span class="n mono">03</span><div><b>Fortnite is on a hard drive</b><p>D: &middot; the Windows drive is an SSD with room</p></div><span class="who hw">Move the game</span><span class="arrow">&rarr;</span></div>
+      </div>
+    </div>
+    <div class="auto">
+      <h3>Auto</h3>
+      <p>The safe set for a Mid rig, in one go:</p>
+      <ol><li>Check the restore point</li><li>Apply the safe changes</li><li>Check this PC again</li><li>Show what changed, with Undo</li></ol>
+      <div class="go">Run Auto</div>
+      <div class="ghost">Review the list first</div>
+    </div>
+  </div>
+  <div class="tag">Mockup &middot; sample data</div>
+</main>
+</body>
+</html>
